@@ -144,7 +144,9 @@ export async function listAssessmentRecords(database?: AppDatabase): Promise<Per
   const rows = await db.getAllAsync<AssessmentRow>(
     `SELECT *
       FROM assessments
-      ORDER BY COALESCE(submitted_at, updated_at) DESC`,
+      ORDER BY
+        CASE status WHEN 'completed' THEN 0 ELSE 1 END ASC,
+        COALESCE(submitted_at, updated_at) DESC`,
   );
 
   return rows.map(rowToRecord).filter((record): record is PersistedAssessmentRecord => record !== null);

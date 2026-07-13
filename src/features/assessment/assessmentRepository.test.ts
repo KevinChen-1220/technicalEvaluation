@@ -72,9 +72,14 @@ function createMemoryDatabase(): AppDatabase {
       }
     },
     async getAllAsync() {
-      return Array.from(assessmentRows.values()).sort((left, right) =>
-        (right.submitted_at ?? right.updated_at).localeCompare(left.submitted_at ?? left.updated_at),
-      ) as never[];
+      return Array.from(assessmentRows.values()).sort((left, right) => {
+        const statusOrder = (left.status === 'completed' ? 0 : 1) - (right.status === 'completed' ? 0 : 1);
+        if (statusOrder !== 0) {
+          return statusOrder;
+        }
+
+        return (right.submitted_at ?? right.updated_at).localeCompare(left.submitted_at ?? left.updated_at);
+      }) as never[];
     },
     async getFirstAsync(sql, ...params) {
       if (sql.includes('FROM assessments WHERE id = ?')) {
@@ -176,5 +181,35 @@ describe('assessment repository', () => {
     });
 
     expect((await listAssessmentRecords(database)).map((record) => record.id)).toEqual(['newer', 'older']);
+  });
+
+  it('lists completed records before newer drafts', async () => {
+    const database = createMemoryDatabase();
+    const result = scoreAssessment(samplePaper, {
+      paperId: samplePaper.id,
+      answers: {},
+      submittedAt: '2026-07-13T08:05:00.000Z',
+    });
+    await createAssessmentDraft({
+      database,
+      paper: samplePaper,
+      createdAt: '2026-07-13T08:00:00.000Z',
+      id: 'completed',
+    });
+    await completeAssessment({
+      database,
+      id: 'completed',
+      answers: {},
+      result,
+      submittedAt: '2026-07-13T08:05:00.000Z',
+    });
+    await createAssessmentDraft({
+      database,
+      paper: samplePaper,
+      createdAt: '2026-07-13T09:00:00.000Z',
+      id: 'draft',
+    });
+
+    expect((await listAssessmentRecords(database)).map((record) => record.id)).toEqual(['completed', 'draft']);
   });
 });

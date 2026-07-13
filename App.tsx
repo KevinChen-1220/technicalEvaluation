@@ -144,17 +144,20 @@ export default function App() {
   function toggleAnswer(optionId: string) {
     if (!currentQuestion) return;
 
-    const current = answers[currentQuestion.id] ?? [];
-    const next =
-      currentQuestion.type === 'multiple_choice'
-        ? current.includes(optionId)
-          ? current.filter((id) => id !== optionId)
-          : [...current, optionId]
-        : [optionId];
-    const nextAnswers = { ...answers, [currentQuestion.id]: next };
+    setAnswers((previous) => {
+      const current = previous[currentQuestion.id] ?? [];
+      const next =
+        currentQuestion.type === 'multiple_choice'
+          ? current.includes(optionId)
+            ? current.filter((id) => id !== optionId)
+            : [...current, optionId]
+          : [optionId];
+      const nextAnswers = { ...previous, [currentQuestion.id]: next };
 
-    setAnswers(nextAnswers);
-    void persistCurrentAnswers(nextAnswers);
+      void persistCurrentAnswers(nextAnswers);
+
+      return nextAnswers;
+    });
   }
 
   async function submitAnswers() {
