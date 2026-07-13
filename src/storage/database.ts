@@ -12,6 +12,9 @@ export type AppDatabase = {
 let databasePromise: Promise<AppDatabase> | null = null;
 
 export function getAppDatabase(): Promise<AppDatabase> {
-  databasePromise ??= openDatabaseAsync('skill_scope.db');
+  if (!databasePromise) {
+    databasePromise = openDatabaseAsync('skill_scope.db');
+  }
+
   return databasePromise;
 }
