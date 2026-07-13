@@ -68,14 +68,6 @@ export type AssessmentResult = {
   wrongQuestionIds: string[];
 };
 
-export type AssessmentHistoryRecord = {
-  id: string;
-  paper: AssessmentPaper;
-  answers: Record<string, string[]>;
-  result: AssessmentResult;
-  submittedAt: string;
-};
-
 export type AssessmentRecordStatus = 'draft' | 'completed';
 
 export type PersistedAssessmentRecord = {

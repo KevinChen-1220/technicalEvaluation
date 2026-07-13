@@ -11,11 +11,16 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import {
+  completeAssessment,
+  createAssessmentDraft,
+  listAssessmentRecords,
+  updateAssessmentAnswers,
+} from './src/features/assessment/assessmentRepository';
 import { generateAssessment } from './src/features/assessment/generator';
-import { createHistoryRecord, loadAssessmentHistory, saveAssessmentHistoryRecord } from './src/features/assessment/historyStore';
 import { samplePaper } from './src/features/assessment/samplePaper';
 import { scoreAssessment } from './src/features/assessment/scoring';
-import type { AssessmentHistoryRecord, AssessmentPaper, AssessmentQuestion, AssessmentResult } from './src/features/assessment/types';
+import type { AssessmentPaper, AssessmentQuestion, AssessmentResult, PersistedAssessmentRecord } from './src/features/assessment/types';
 import { loadModelConfig, saveModelConfig } from './src/features/config/secureConfigStore';
 import { type ModelConfig, validateModelConfig } from './src/features/config/modelConfig';
 import { createChatCompletion } from './src/services/aiClient';
@@ -38,7 +43,8 @@ export default function App() {
   const [answers, setAnswers] = useState<Record<string, string[]>>({});
   const [result, setResult] = useState<AssessmentResult | null>(null);
   const [resultMode, setResultMode] = useState<ResultMode>('current');
-  const [history, setHistory] = useState<AssessmentHistoryRecord[]>([]);
+  const [history, setHistory] = useState<PersistedAssessmentRecord[]>([]);
+  const [currentRecordId, setCurrentRecordId] = useState<string | null>(null);
   const [questionIndex, setQuestionIndex] = useState(0);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
@@ -49,7 +55,7 @@ export default function App() {
     loadModelConfig().then((saved) => {
       if (saved) setConfig(saved);
     });
-    loadAssessmentHistory().then(setHistory);
+    refreshHistory();
   }, []);
 
   const currentQuestion = paper.questions[questionIndex];
@@ -103,7 +109,7 @@ export default function App() {
     setGenerationError(null);
     try {
       const generated = await generateAssessment({ topic, questionCount, notes }, config);
-      beginAssessment(generated);
+      await beginAssessment(generated);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown generation error.';
       setGenerationError(questionCount === 100 ? `${message} Try 50 questions if the provider truncated the output.` : message);
@@ -112,34 +118,43 @@ export default function App() {
     }
   }
 
-  function beginAssessment(nextPaper: AssessmentPaper) {
+  async function beginAssessment(nextPaper: AssessmentPaper) {
     setPaper(nextPaper);
     setAnswers({});
     setResult(null);
     setResultMode('current');
     setQuestionIndex(0);
     setReviewQuestionId(null);
+
+    try {
+      const draft = await createAssessmentDraft({ paper: nextPaper });
+      setCurrentRecordId(draft.id);
+      setHistory(await listAssessmentRecords());
+    } catch {
+      setCurrentRecordId(null);
+      Alert.alert('Draft not saved', 'The assessment opened, but it could not be saved to the local database.');
+    }
     setScreen('answer');
   }
 
   function startSamplePaper() {
-    beginAssessment(samplePaper);
+    void beginAssessment(samplePaper);
   }
 
   function toggleAnswer(optionId: string) {
     if (!currentQuestion) return;
 
-    setAnswers((previous) => {
-      const current = previous[currentQuestion.id] ?? [];
-      const next =
-        currentQuestion.type === 'multiple_choice'
-          ? current.includes(optionId)
-            ? current.filter((id) => id !== optionId)
-            : [...current, optionId]
-          : [optionId];
+    const current = answers[currentQuestion.id] ?? [];
+    const next =
+      currentQuestion.type === 'multiple_choice'
+        ? current.includes(optionId)
+          ? current.filter((id) => id !== optionId)
+          : [...current, optionId]
+        : [optionId];
+    const nextAnswers = { ...answers, [currentQuestion.id]: next };
 
-      return { ...previous, [currentQuestion.id]: next };
-    });
+    setAnswers(nextAnswers);
+    void persistCurrentAnswers(nextAnswers);
   }
 
   async function submitAnswers() {
@@ -151,34 +166,53 @@ export default function App() {
 
     const submittedAt = new Date().toISOString();
     const nextResult = scoreAssessment(paper, { paperId: paper.id, answers, submittedAt });
-    const record = createHistoryRecord(paper, answers, nextResult, submittedAt);
 
     setResult(nextResult);
     setResultMode('current');
     setScreen('result');
 
     try {
-      const nextHistory = await saveAssessmentHistoryRecord(record);
-      setHistory(nextHistory);
+      const recordId = currentRecordId ?? (await createAssessmentDraft({ paper })).id;
+      setCurrentRecordId(recordId);
+      await completeAssessment({ id: recordId, answers, result: nextResult, submittedAt });
+      setHistory(await listAssessmentRecords());
     } catch {
       Alert.alert('History not saved', 'Your result is available now, but it could not be saved to local history.');
     }
   }
 
-  function openHistoryRecord(record: AssessmentHistoryRecord) {
+  function openHistoryRecord(record: PersistedAssessmentRecord) {
     setPaper(record.paper);
     setAnswers(record.answers);
     setResult(record.result);
-    setResultMode('history');
+    setResultMode(record.status === 'completed' ? 'history' : 'current');
     setQuestionIndex(0);
     setReviewQuestionId(null);
+    setCurrentRecordId(record.id);
     setActiveTab('history');
-    setScreen('result');
+    setScreen(record.status === 'completed' && record.result ? 'result' : 'answer');
   }
 
   function closeResult() {
     setScreen('main');
     setActiveTab(resultMode === 'history' ? 'history' : 'assess');
+  }
+
+  async function refreshHistory() {
+    setHistory(await listAssessmentRecords());
+  }
+
+  async function persistCurrentAnswers(nextAnswers: Record<string, string[]>) {
+    if (!currentRecordId) {
+      return;
+    }
+
+    try {
+      await updateAssessmentAnswers({ id: currentRecordId, answers: nextAnswers });
+      setHistory(await listAssessmentRecords());
+    } catch {
+      Alert.alert('Answer not saved', 'Your answer is selected on screen, but it could not be saved to the local database.');
+    }
   }
 
   return (
@@ -230,7 +264,7 @@ export default function App() {
                 </View>
 
                 <Section title="Completed Assessments">
-                  {history.length === 0 ? <Text style={styles.notice}>No completed assessments yet.</Text> : null}
+                  {history.length === 0 ? <Text style={styles.notice}>No saved assessments yet.</Text> : null}
                   {history.map((record) => (
                     <HistoryRow key={record.id} record={record} onPress={() => openHistoryRecord(record)} />
                   ))}
@@ -454,17 +488,17 @@ function TabButton({ label, active, onPress }: { label: string; active: boolean;
   );
 }
 
-function HistoryRow({ record, onPress }: { record: AssessmentHistoryRecord; onPress: () => void }) {
+function HistoryRow({ record, onPress }: { record: PersistedAssessmentRecord; onPress: () => void }) {
   return (
     <Pressable onPress={onPress} style={styles.historyRow}>
       <View style={styles.historyText}>
         <Text style={styles.historyTitle}>{record.paper.topic}</Text>
         <Text style={styles.notice}>
-          {formatDate(record.submittedAt)} / {record.result.correctCount}/{record.result.totalQuestions} correct
+          {formatDate(record.submittedAt ?? record.updatedAt)} / {record.status === 'completed' && record.result ? `${record.result.correctCount}/${record.result.totalQuestions} correct` : 'In progress'}
         </Text>
       </View>
       <View style={styles.scorePill}>
-        <Text style={styles.scorePillText}>{record.result.accuracy}%</Text>
+        <Text style={styles.scorePillText}>{record.status === 'completed' && record.result ? `${record.result.accuracy}%` : 'Draft'}</Text>
       </View>
     </Pressable>
   );

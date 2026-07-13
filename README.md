@@ -6,7 +6,7 @@ SkillScope is an Expo mobile app for generating ability assessments from any top
 
 - OpenAI-compatible configuration: Base URL, API Key, Model
 - Dedicated Settings tab for model provider configuration
-- Local history for completed assessments
+- SQLite-backed local history and in-progress assessment drafts
 - No backend service
 - 50-question and 100-question assessment generation
 - Single-choice, multiple-choice, and true/false questions
@@ -14,10 +14,11 @@ SkillScope is an Expo mobile app for generating ability assessments from any top
 - Knowledge-point breakdown
 - Wrong-answer review with detailed explanations
 - History replay with previous selections, correct answers, and explanations
+- Draft recovery for generated assessments before submission
 
 ## Privacy Model
 
-The app does not run a backend. Your API key is stored on device with Expo SecureStore. Assessment topics and generation prompts are sent directly from your device to the model provider you configure.
+The app does not run a backend. Assessment drafts, answers, results, and non-secret model settings are stored in a local SQLite database. Your API key is stored with Expo SecureStore when available, with a local fallback for web preview environments. Assessment topics and generation prompts are sent directly from your device to the model provider you configure.
 
 ## Development
 
