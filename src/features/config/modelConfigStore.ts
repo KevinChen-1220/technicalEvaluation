@@ -1,3 +1,4 @@
+import * as SecureStore from 'expo-secure-store';
 import { getAppDatabase, type AppDatabase } from '../../storage/database';
 import type { ModelConfig } from './modelConfig';
 
@@ -113,7 +114,7 @@ async function setStoredSecret(key: string, value: string, options: ModelConfigS
 }
 
 async function getDefaultSecureStore(): Promise<SecureKeyStore> {
-  return import('expo-secure-store');
+  return SecureStore;
 }
 
 const defaultFallbackStore: FallbackStore = {
