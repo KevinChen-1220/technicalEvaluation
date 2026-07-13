@@ -75,3 +75,16 @@ export type AssessmentHistoryRecord = {
   result: AssessmentResult;
   submittedAt: string;
 };
+
+export type AssessmentRecordStatus = 'draft' | 'completed';
+
+export type PersistedAssessmentRecord = {
+  id: string;
+  paper: AssessmentPaper;
+  answers: Record<string, string[]>;
+  result: AssessmentResult | null;
+  status: AssessmentRecordStatus;
+  createdAt: string;
+  updatedAt: string;
+  submittedAt: string | null;
+};
