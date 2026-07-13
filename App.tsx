@@ -1,5 +1,5 @@
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -12,26 +12,33 @@ import {
   View,
 } from 'react-native';
 import { generateAssessment } from './src/features/assessment/generator';
+import { createHistoryRecord, loadAssessmentHistory, saveAssessmentHistoryRecord } from './src/features/assessment/historyStore';
 import { samplePaper } from './src/features/assessment/samplePaper';
 import { scoreAssessment } from './src/features/assessment/scoring';
-import type { AssessmentPaper, AssessmentQuestion, AssessmentResult, AssessmentSession } from './src/features/assessment/types';
+import type { AssessmentHistoryRecord, AssessmentPaper, AssessmentQuestion, AssessmentResult } from './src/features/assessment/types';
 import { loadModelConfig, saveModelConfig } from './src/features/config/secureConfigStore';
 import { type ModelConfig, validateModelConfig } from './src/features/config/modelConfig';
 import { createChatCompletion } from './src/services/aiClient';
 import { theme } from './src/theme';
 
-type Screen = 'create' | 'settings' | 'answer' | 'result' | 'review';
+type MainTab = 'assess' | 'history' | 'settings';
+type Screen = 'main' | 'answer' | 'result' | 'review';
+type ResultMode = 'current' | 'history';
 
 const emptyConfig: ModelConfig = { baseUrl: '', apiKey: '', model: '' };
 
 export default function App() {
-  const [screen, setScreen] = useState<Screen>('create');
+  const [screen, setScreen] = useState<Screen>('main');
+  const [activeTab, setActiveTab] = useState<MainTab>('assess');
   const [config, setConfig] = useState<ModelConfig>(emptyConfig);
   const [topic, setTopic] = useState('iOS development capability');
   const [notes, setNotes] = useState('Balance fundamentals, debugging, architecture, and edge cases.');
   const [questionCount, setQuestionCount] = useState<50 | 100>(50);
   const [paper, setPaper] = useState<AssessmentPaper>(samplePaper);
   const [answers, setAnswers] = useState<Record<string, string[]>>({});
+  const [result, setResult] = useState<AssessmentResult | null>(null);
+  const [resultMode, setResultMode] = useState<ResultMode>('current');
+  const [history, setHistory] = useState<AssessmentHistoryRecord[]>([]);
   const [questionIndex, setQuestionIndex] = useState(0);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
@@ -42,10 +49,9 @@ export default function App() {
     loadModelConfig().then((saved) => {
       if (saved) setConfig(saved);
     });
+    loadAssessmentHistory().then(setHistory);
   }, []);
 
-  const session: AssessmentSession = useMemo(() => ({ paperId: paper.id, answers }), [answers, paper.id]);
-  const result: AssessmentResult = useMemo(() => scoreAssessment(paper, session), [paper, session]);
   const currentQuestion = paper.questions[questionIndex];
   const reviewQuestion = paper.questions.find((question) => question.id === reviewQuestionId) ?? paper.questions[0];
   const configIsReady = validateModelConfig(config).ok;
@@ -58,7 +64,6 @@ export default function App() {
     }
     await saveModelConfig(config);
     Alert.alert('Configuration saved', 'Your API key stays on this device and is sent only to your configured provider.');
-    setScreen('create');
   }
 
   async function handleTestConnection() {
@@ -86,6 +91,7 @@ export default function App() {
     const validation = validateModelConfig(config);
     if (!validation.ok) {
       Alert.alert('Add model configuration first', validation.errors.join('\n'));
+      setActiveTab('settings');
       return;
     }
     if (!topic.trim()) {
@@ -97,10 +103,7 @@ export default function App() {
     setGenerationError(null);
     try {
       const generated = await generateAssessment({ topic, questionCount, notes }, config);
-      setPaper(generated);
-      setAnswers({});
-      setQuestionIndex(0);
-      setScreen('answer');
+      beginAssessment(generated);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Unknown generation error.';
       setGenerationError(questionCount === 100 ? `${message} Try 50 questions if the provider truncated the output.` : message);
@@ -109,12 +112,18 @@ export default function App() {
     }
   }
 
-  function startSamplePaper() {
-    setPaper(samplePaper);
+  function beginAssessment(nextPaper: AssessmentPaper) {
+    setPaper(nextPaper);
     setAnswers({});
+    setResult(null);
+    setResultMode('current');
     setQuestionIndex(0);
     setReviewQuestionId(null);
     setScreen('answer');
+  }
+
+  function startSamplePaper() {
+    beginAssessment(samplePaper);
   }
 
   function toggleAnswer(optionId: string) {
@@ -133,77 +142,146 @@ export default function App() {
     });
   }
 
-  function submitAnswers() {
+  async function submitAnswers() {
     const unanswered = paper.questions.filter((question) => !answers[question.id]?.length);
     if (unanswered.length > 0) {
       Alert.alert('Keep going', `${unanswered.length} questions still need an answer.`);
       return;
     }
+
+    const submittedAt = new Date().toISOString();
+    const nextResult = scoreAssessment(paper, { paperId: paper.id, answers, submittedAt });
+    const record = createHistoryRecord(paper, answers, nextResult, submittedAt);
+
+    setResult(nextResult);
+    setResultMode('current');
     setScreen('result');
+
+    try {
+      const nextHistory = await saveAssessmentHistoryRecord(record);
+      setHistory(nextHistory);
+    } catch {
+      Alert.alert('History not saved', 'Your result is available now, but it could not be saved to local history.');
+    }
+  }
+
+  function openHistoryRecord(record: AssessmentHistoryRecord) {
+    setPaper(record.paper);
+    setAnswers(record.answers);
+    setResult(record.result);
+    setResultMode('history');
+    setQuestionIndex(0);
+    setReviewQuestionId(null);
+    setActiveTab('history');
+    setScreen('result');
+  }
+
+  function closeResult() {
+    setScreen('main');
+    setActiveTab(resultMode === 'history' ? 'history' : 'assess');
   }
 
   return (
     <SafeAreaView style={styles.safeArea}>
       <StatusBar style="dark" />
-      <ScrollView contentContainerStyle={styles.container}>
-        {screen === 'create' && (
-          <View style={styles.stack}>
-            <View style={styles.header}>
-              <Text style={styles.kicker}>SkillScope</Text>
-              <Text style={styles.title}>Dynamic ability assessment</Text>
-              <Text style={styles.notice}>
-                Topics and generated prompts are sent directly to the provider you configure. No backend is used.
-              </Text>
-            </View>
-
-            <Section title="Assessment Brief">
-              <View style={styles.configStatus}>
-                <View style={styles.configText}>
-                  <Text style={styles.label}>Model Provider</Text>
+      {screen === 'main' ? (
+        <View style={styles.appShell}>
+          <ScrollView contentContainerStyle={styles.container}>
+            {activeTab === 'assess' ? (
+              <View style={styles.stack}>
+                <View style={styles.header}>
+                  <Text style={styles.kicker}>SkillScope</Text>
+                  <Text style={styles.title}>Dynamic ability assessment</Text>
                   <Text style={styles.notice}>
-                    {configIsReady ? `Configured: ${config.model}` : 'Configure a provider once before generating assessments.'}
+                    Topics and generated prompts are sent directly to the provider you configure. No backend is used.
                   </Text>
                 </View>
-                <Button label="Settings" onPress={() => setScreen('settings')} tone="secondary" />
-              </View>
-              <Input label="Topic" value={topic} onChangeText={setTopic} placeholder="Backend architecture capability" />
-              <Input label="Notes" value={notes} onChangeText={setNotes} placeholder="Optional focus areas" multiline />
-              <View style={styles.segment}>
-                <Chip label="50" active={questionCount === 50} onPress={() => setQuestionCount(50)} />
-                <Chip label="100" active={questionCount === 100} onPress={() => setQuestionCount(100)} />
-              </View>
-              {generationError ? <Text style={styles.error}>{generationError}</Text> : null}
-              <Button label={isGenerating ? 'Generating' : 'Generate'} onPress={handleGenerate} disabled={isGenerating} />
-              {isGenerating ? <ActivityIndicator color={theme.colors.accent} /> : null}
-              <Button label="Use Sample Paper" onPress={startSamplePaper} tone="secondary" />
-            </Section>
-          </View>
-        )}
 
-        {screen === 'settings' && (
-          <View style={styles.stack}>
-            <View style={styles.header}>
-              <Text style={styles.kicker}>Settings</Text>
-              <Text style={styles.title}>Model provider</Text>
-              <Text style={styles.notice}>
-                Enter an OpenAI-compatible endpoint once. The API key is saved locally with Expo SecureStore.
-              </Text>
-            </View>
-
-            <Section title="Connection">
-              <Input label="Base URL" value={config.baseUrl} onChangeText={(baseUrl) => setConfig((value) => ({ ...value, baseUrl }))} placeholder="https://api.openai.com/v1" />
-              <Input label="API Key" value={config.apiKey} onChangeText={(apiKey) => setConfig((value) => ({ ...value, apiKey }))} placeholder="sk-..." secureTextEntry />
-              <Input label="Model" value={config.model} onChangeText={(model) => setConfig((value) => ({ ...value, model }))} placeholder="gpt-4.1-mini" />
-              <View style={styles.row}>
-                <Button label="Save" onPress={handleSaveConfig} />
-                <Button label={isTesting ? 'Testing' : 'Test'} onPress={handleTestConnection} tone="secondary" disabled={isTesting} />
-                <Button label="Back" onPress={() => setScreen('create')} tone="secondary" />
+                <Section title="Assessment Brief">
+                  <View style={styles.configStatus}>
+                    <View style={styles.configText}>
+                      <Text style={styles.label}>Model Provider</Text>
+                      <Text style={styles.notice}>
+                        {configIsReady ? `Configured: ${config.model}` : 'Configure a provider once before generating assessments.'}
+                      </Text>
+                    </View>
+                    <Button label="Settings" onPress={() => setActiveTab('settings')} tone="secondary" />
+                  </View>
+                  <Input label="Topic" value={topic} onChangeText={setTopic} placeholder="Backend architecture capability" />
+                  <Input label="Notes" value={notes} onChangeText={setNotes} placeholder="Optional focus areas" multiline />
+                  <View style={styles.segment}>
+                    <Chip label="50" active={questionCount === 50} onPress={() => setQuestionCount(50)} />
+                    <Chip label="100" active={questionCount === 100} onPress={() => setQuestionCount(100)} />
+                  </View>
+                  {generationError ? <Text style={styles.error}>{generationError}</Text> : null}
+                  <Button label={isGenerating ? 'Generating' : 'Generate'} onPress={handleGenerate} disabled={isGenerating} />
+                  {isGenerating ? <ActivityIndicator color={theme.colors.accent} /> : null}
+                  <Button label="Use Sample Paper" onPress={startSamplePaper} tone="secondary" />
+                </Section>
               </View>
-            </Section>
-          </View>
-        )}
+            ) : null}
 
-        {screen === 'answer' && currentQuestion && (
+            {activeTab === 'history' ? (
+              <View style={styles.stack}>
+                <View style={styles.header}>
+                  <Text style={styles.kicker}>History</Text>
+                  <Text style={styles.title}>Past attempts</Text>
+                  <Text style={styles.notice}>Open a completed assessment to review your choices, correct answers, and explanations.</Text>
+                </View>
+
+                <Section title="Completed Assessments">
+                  {history.length === 0 ? <Text style={styles.notice}>No completed assessments yet.</Text> : null}
+                  {history.map((record) => (
+                    <HistoryRow key={record.id} record={record} onPress={() => openHistoryRecord(record)} />
+                  ))}
+                </Section>
+              </View>
+            ) : null}
+
+            {activeTab === 'settings' ? (
+              <View style={styles.stack}>
+                <View style={styles.header}>
+                  <Text style={styles.kicker}>Settings</Text>
+                  <Text style={styles.title}>Model provider</Text>
+                  <Text style={styles.notice}>
+                    Enter an OpenAI-compatible endpoint once. The API key is saved locally with Expo SecureStore.
+                  </Text>
+                </View>
+
+                <Section title="Connection">
+                  <Input
+                    label="Base URL"
+                    value={config.baseUrl}
+                    onChangeText={(baseUrl) => setConfig((value) => ({ ...value, baseUrl }))}
+                    placeholder="https://api.openai.com/v1"
+                  />
+                  <Input
+                    label="API Key"
+                    value={config.apiKey}
+                    onChangeText={(apiKey) => setConfig((value) => ({ ...value, apiKey }))}
+                    placeholder="sk-..."
+                    secureTextEntry
+                  />
+                  <Input
+                    label="Model"
+                    value={config.model}
+                    onChangeText={(model) => setConfig((value) => ({ ...value, model }))}
+                    placeholder="gpt-4.1-mini"
+                  />
+                  <View style={styles.row}>
+                    <Button label="Save" onPress={handleSaveConfig} />
+                    <Button label={isTesting ? 'Testing' : 'Test'} onPress={handleTestConnection} tone="secondary" disabled={isTesting} />
+                  </View>
+                </Section>
+              </View>
+            ) : null}
+          </ScrollView>
+          <TabBar activeTab={activeTab} onChange={setActiveTab} />
+        </View>
+      ) : null}
+
+      {screen === 'answer' && currentQuestion ? (
+        <ScrollView contentContainerStyle={styles.container}>
           <View style={styles.stack}>
             <Text style={styles.kicker}>{paper.topic}</Text>
             <Text style={styles.progress}>
@@ -224,12 +302,15 @@ export default function App() {
                 <Button label="Next" onPress={() => setQuestionIndex((index) => Math.min(paper.questions.length - 1, index + 1))} />
               )}
             </View>
+            <Button label="Exit" onPress={() => setScreen('main')} tone="secondary" />
           </View>
-        )}
+        </ScrollView>
+      ) : null}
 
-        {screen === 'result' && (
+      {screen === 'result' && result ? (
+        <ScrollView contentContainerStyle={styles.container}>
           <View style={styles.stack}>
-            <Text style={styles.kicker}>Result</Text>
+            <Text style={styles.kicker}>{resultMode === 'history' ? 'History Result' : 'Result'}</Text>
             <Text style={styles.title}>{result.level.title}</Text>
             <Text style={styles.score}>
               {result.score}/{result.totalQuestions} / {result.accuracy}%
@@ -259,21 +340,24 @@ export default function App() {
                 ) : null;
               })}
             </Section>
-            <Button label="Create Another" onPress={() => setScreen('create')} tone="secondary" />
+            <Button label={resultMode === 'history' ? 'Back to History' : 'Create Another'} onPress={closeResult} tone="secondary" />
           </View>
-        )}
+        </ScrollView>
+      ) : null}
 
-        {screen === 'review' && reviewQuestion && (
+      {screen === 'review' && reviewQuestion ? (
+        <ScrollView contentContainerStyle={styles.container}>
           <View style={styles.stack}>
             <Text style={styles.kicker}>{reviewQuestion.knowledgePoint}</Text>
             <Text style={styles.question}>{reviewQuestion.prompt}</Text>
+            <Text style={styles.metric}>Difficulty: {reviewQuestion.difficulty}</Text>
             <Text style={styles.metric}>Your answer: {formatOptions(reviewQuestion, answers[reviewQuestion.id] ?? [])}</Text>
             <Text style={styles.metric}>Correct answer: {formatOptions(reviewQuestion, reviewQuestion.correctOptionIds)}</Text>
             <Text style={styles.notice}>{reviewQuestion.explanation}</Text>
             <Button label="Back to Results" onPress={() => setScreen('result')} />
           </View>
-        )}
-      </ScrollView>
+        </ScrollView>
+      ) : null}
     </SafeAreaView>
   );
 }
@@ -345,13 +429,57 @@ function Option({ label, active, onPress }: { label: string; active: boolean; on
   );
 }
 
+function TabBar({ activeTab, onChange }: { activeTab: MainTab; onChange: (tab: MainTab) => void }) {
+  return (
+    <View style={styles.tabBar}>
+      <TabButton label="Assess" active={activeTab === 'assess'} onPress={() => onChange('assess')} />
+      <TabButton label="History" active={activeTab === 'history'} onPress={() => onChange('history')} />
+      <TabButton label="Settings" active={activeTab === 'settings'} onPress={() => onChange('settings')} />
+    </View>
+  );
+}
+
+function TabButton({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={[styles.tabButton, active ? styles.activeTabButton : null]}>
+      <Text style={[styles.tabButtonText, active ? styles.activeTabButtonText : null]}>{label}</Text>
+    </Pressable>
+  );
+}
+
+function HistoryRow({ record, onPress }: { record: AssessmentHistoryRecord; onPress: () => void }) {
+  return (
+    <Pressable onPress={onPress} style={styles.historyRow}>
+      <View style={styles.historyText}>
+        <Text style={styles.historyTitle}>{record.paper.topic}</Text>
+        <Text style={styles.notice}>
+          {formatDate(record.submittedAt)} / {record.result.correctCount}/{record.result.totalQuestions} correct
+        </Text>
+      </View>
+      <View style={styles.scorePill}>
+        <Text style={styles.scorePillText}>{record.result.accuracy}%</Text>
+      </View>
+    </Pressable>
+  );
+}
+
 function formatOptions(question: AssessmentQuestion, ids: string[]): string {
   return ids.map((id) => question.options.find((option) => option.id === id)?.text ?? id).join(', ') || 'No answer';
 }
 
+function formatDate(value: string): string {
+  return new Date(value).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+}
+
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: theme.colors.canvas },
-  container: { gap: theme.spacing.lg, padding: theme.spacing.lg },
+  appShell: { flex: 1 },
+  container: { gap: theme.spacing.lg, padding: theme.spacing.lg, paddingBottom: theme.spacing.xl + 72 },
   stack: { gap: theme.spacing.md },
   header: { gap: theme.spacing.sm, paddingBottom: theme.spacing.sm },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.sm },
@@ -359,13 +487,13 @@ const styles = StyleSheet.create({
   configText: { flex: 1, minWidth: 220 },
   segment: { alignSelf: 'flex-start', backgroundColor: theme.colors.accentSoft, borderRadius: theme.radius.pill, flexDirection: 'row', gap: theme.spacing.xs, padding: 4 },
   kicker: { color: theme.colors.accent, fontSize: 13, fontWeight: '800', letterSpacing: 0, textTransform: 'uppercase' },
-  title: { color: theme.colors.ink, fontSize: 34, fontWeight: '800', lineHeight: 40 },
-  question: { color: theme.colors.ink, fontSize: 26, fontWeight: '800', lineHeight: 32 },
+  title: { color: theme.colors.ink, fontSize: 32, fontWeight: '800', lineHeight: 38 },
+  question: { color: theme.colors.ink, fontSize: 24, fontWeight: '800', lineHeight: 31 },
   progress: { color: theme.colors.muted, fontSize: 14, fontWeight: '700' },
   notice: { color: theme.colors.muted, fontSize: 15, lineHeight: 22 },
   error: { color: theme.colors.danger, fontSize: 14, fontWeight: '700', lineHeight: 20 },
   section: { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, borderRadius: theme.radius.card, borderWidth: 1, gap: theme.spacing.md, padding: theme.spacing.lg },
-  sectionTitle: { color: theme.colors.ink, fontSize: 21, fontWeight: '800' },
+  sectionTitle: { color: theme.colors.ink, fontSize: 20, fontWeight: '800' },
   label: { color: theme.colors.muted, fontSize: 12, fontWeight: '800', letterSpacing: 0, marginBottom: 6, textTransform: 'uppercase' },
   input: { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, borderRadius: theme.radius.control, borderWidth: 1, color: theme.colors.ink, fontSize: 16, minHeight: 46, paddingHorizontal: theme.spacing.md, paddingVertical: theme.spacing.sm },
   textArea: { minHeight: 86, textAlignVertical: 'top' },
@@ -383,4 +511,39 @@ const styles = StyleSheet.create({
   optionText: { color: theme.colors.ink, fontSize: 16, lineHeight: 22 },
   score: { color: theme.colors.gold, fontSize: 34, fontWeight: '800' },
   metric: { color: theme.colors.ink, fontSize: 16, lineHeight: 23 },
+  tabBar: {
+    alignItems: 'center',
+    backgroundColor: theme.colors.surface,
+    borderColor: theme.colors.border,
+    borderTopWidth: 1,
+    bottom: 0,
+    flexDirection: 'row',
+    gap: theme.spacing.xs,
+    justifyContent: 'space-around',
+    left: 0,
+    paddingHorizontal: theme.spacing.md,
+    paddingTop: theme.spacing.sm,
+    paddingBottom: theme.spacing.md,
+    position: 'absolute',
+    right: 0,
+  },
+  tabButton: { alignItems: 'center', borderRadius: theme.radius.control, flex: 1, minHeight: 44, justifyContent: 'center' },
+  activeTabButton: { backgroundColor: theme.colors.accentSoft },
+  tabButtonText: { color: theme.colors.muted, fontSize: 13, fontWeight: '800' },
+  activeTabButtonText: { color: theme.colors.ink },
+  historyRow: {
+    alignItems: 'center',
+    backgroundColor: theme.colors.canvas,
+    borderColor: theme.colors.border,
+    borderRadius: theme.radius.card,
+    borderWidth: 1,
+    flexDirection: 'row',
+    gap: theme.spacing.md,
+    justifyContent: 'space-between',
+    padding: theme.spacing.md,
+  },
+  historyText: { flex: 1, gap: 3 },
+  historyTitle: { color: theme.colors.ink, fontSize: 16, fontWeight: '800', lineHeight: 22 },
+  scorePill: { backgroundColor: theme.colors.gold, borderRadius: theme.radius.pill, minWidth: 58, paddingHorizontal: theme.spacing.sm, paddingVertical: theme.spacing.xs },
+  scorePillText: { color: theme.colors.surface, fontSize: 13, fontWeight: '800', textAlign: 'center' },
 });

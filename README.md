@@ -5,13 +5,15 @@ SkillScope is an Expo mobile app for generating ability assessments from any top
 ## Features
 
 - OpenAI-compatible configuration: Base URL, API Key, Model
-- Dedicated Settings screen for model provider configuration
+- Dedicated Settings tab for model provider configuration
+- Local history for completed assessments
 - No backend service
 - 50-question and 100-question assessment generation
 - Single-choice, multiple-choice, and true/false questions
 - Local scoring after generation
 - Knowledge-point breakdown
 - Wrong-answer review with detailed explanations
+- History replay with previous selections, correct answers, and explanations
 
 ## Privacy Model
 
