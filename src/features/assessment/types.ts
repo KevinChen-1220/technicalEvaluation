@@ -67,3 +67,11 @@ export type AssessmentResult = {
   knowledgePointResults: KnowledgePointResult[];
   wrongQuestionIds: string[];
 };
+
+export type AssessmentHistoryRecord = {
+  id: string;
+  paper: AssessmentPaper;
+  answers: Record<string, string[]>;
+  result: AssessmentResult;
+  submittedAt: string;
+};
