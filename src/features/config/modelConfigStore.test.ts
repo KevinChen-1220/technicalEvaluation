@@ -117,4 +117,22 @@ describe('model config store', () => {
       model: 'legacy-model',
     });
   });
+
+  it('loads legacy config from fallback storage when secure storage returns empty', async () => {
+    const database = createMemoryDatabase();
+    const secureStore = createMemorySecureStore();
+    const fallbackStore = createMemoryFallbackStore({
+      skill_scope_model_config: JSON.stringify({
+        baseUrl: 'https://legacy-fallback.example.com/v1',
+        apiKey: 'sk-legacy-fallback',
+        model: 'legacy-fallback-model',
+      }),
+    });
+
+    await expect(loadModelConfig({ database, secureStore, fallbackStore })).resolves.toEqual({
+      baseUrl: 'https://legacy-fallback.example.com/v1',
+      apiKey: 'sk-legacy-fallback',
+      model: 'legacy-fallback-model',
+    });
+  });
 });

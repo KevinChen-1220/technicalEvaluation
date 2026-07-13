@@ -138,6 +138,58 @@ export async function completeAssessment({
   return getAssessmentRecord(id, db);
 }
 
+export async function importCompletedAssessmentRecord({
+  database,
+  id,
+  paper,
+  answers,
+  result,
+  submittedAt,
+}: RepositoryOptions & {
+  id: string;
+  paper: AssessmentPaper;
+  answers: Record<string, string[]>;
+  result: AssessmentResult;
+  submittedAt: string;
+}): Promise<PersistedAssessmentRecord> {
+  const db = database ?? (await getAppDatabase());
+  await ensureAssessmentSchema(db);
+  await db.runAsync(
+    `INSERT INTO assessments (
+      id,
+      paper_json,
+      answers_json,
+      result_json,
+      status,
+      created_at,
+      updated_at,
+      submitted_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      paper_json = excluded.paper_json,
+      answers_json = excluded.answers_json,
+      result_json = excluded.result_json,
+      status = excluded.status,
+      updated_at = excluded.updated_at,
+      submitted_at = excluded.submitted_at`,
+    id,
+    JSON.stringify(paper),
+    JSON.stringify(answers),
+    JSON.stringify(result),
+    'completed',
+    submittedAt,
+    submittedAt,
+    submittedAt,
+  );
+
+  const record = await getAssessmentRecord(id, db);
+  if (!record) {
+    throw new Error('Imported assessment could not be loaded after save.');
+  }
+
+  return record;
+}
+
 export async function listAssessmentRecords(database?: AppDatabase): Promise<PersistedAssessmentRecord[]> {
   const db = database ?? (await getAppDatabase());
   await ensureAssessmentSchema(db);

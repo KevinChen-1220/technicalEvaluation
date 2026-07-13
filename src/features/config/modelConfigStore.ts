@@ -64,7 +64,13 @@ export async function loadModelConfig(options: ModelConfigStoreOptions = {}): Pr
     };
   }
 
-  return loadLegacyModelConfig(options);
+  const legacyConfig = await loadLegacyModelConfig(options);
+  if (!legacyConfig) {
+    return null;
+  }
+
+  await saveModelConfig(legacyConfig, options);
+  return legacyConfig;
 }
 
 async function ensureModelSettingsSchema(database: AppDatabase): Promise<void> {
@@ -96,7 +102,8 @@ async function getStoredSecret(key: string, options: ModelConfigStoreOptions): P
 
   try {
     const secureStore = options.secureStore ?? (await getDefaultSecureStore());
-    return await secureStore.getItemAsync(key);
+    const secureValue = await secureStore.getItemAsync(key);
+    return secureValue ?? fallbackStore.getItem(key);
   } catch {
     return fallbackStore.getItem(key);
   }

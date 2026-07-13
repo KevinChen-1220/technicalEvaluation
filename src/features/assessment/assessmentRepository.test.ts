@@ -3,6 +3,7 @@ import { samplePaper } from './samplePaper';
 import {
   completeAssessment,
   createAssessmentDraft,
+  importCompletedAssessmentRecord,
   listAssessmentRecords,
   updateAssessmentAnswers,
 } from './assessmentRepository';
@@ -211,5 +212,31 @@ describe('assessment repository', () => {
     });
 
     expect((await listAssessmentRecords(database)).map((record) => record.id)).toEqual(['completed', 'draft']);
+  });
+
+  it('imports a legacy completed history record into sqlite', async () => {
+    const database = createMemoryDatabase();
+    const result = scoreAssessment(samplePaper, {
+      paperId: samplePaper.id,
+      answers: { q1: ['B'] },
+      submittedAt: '2026-07-13T08:10:00.000Z',
+    });
+
+    const imported = await importCompletedAssessmentRecord({
+      database,
+      id: 'legacy-1',
+      paper: samplePaper,
+      answers: { q1: ['B'] },
+      result,
+      submittedAt: '2026-07-13T08:10:00.000Z',
+    });
+
+    expect(imported).toMatchObject({
+      id: 'legacy-1',
+      status: 'completed',
+      result,
+      submittedAt: '2026-07-13T08:10:00.000Z',
+    });
+    expect(await listAssessmentRecords(database)).toHaveLength(1);
   });
 });

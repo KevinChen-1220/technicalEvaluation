@@ -18,6 +18,7 @@ import {
   updateAssessmentAnswers,
 } from './src/features/assessment/assessmentRepository';
 import { generateAssessment } from './src/features/assessment/generator';
+import { migrateLegacyAssessmentHistory } from './src/features/assessment/legacyHistoryMigration';
 import { samplePaper } from './src/features/assessment/samplePaper';
 import { scoreAssessment } from './src/features/assessment/scoring';
 import type { AssessmentPaper, AssessmentQuestion, AssessmentResult, PersistedAssessmentRecord } from './src/features/assessment/types';
@@ -202,6 +203,7 @@ export default function App() {
   }
 
   async function refreshHistory() {
+    await migrateLegacyAssessmentHistory();
     setHistory(await listAssessmentRecords());
   }
 
