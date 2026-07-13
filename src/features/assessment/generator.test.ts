@@ -53,6 +53,15 @@ describe('extractJsonObject', () => {
   it('throws when provider text does not contain a JSON object', () => {
     expect(() => extractJsonObject('no json here')).toThrow('Model response did not contain a JSON object.');
   });
+
+  it('throws a targeted error when provider text is HTML or XML instead of JSON', () => {
+    expect(() => extractJsonObject('<html><body>Login required</body></html>')).toThrow(
+      'Model response looked like HTML/XML instead of assessment JSON. Check the provider endpoint and model response format.',
+    );
+    expect(() => extractJsonObject('<?xml version="1.0"?><error>blocked</error>')).toThrow(
+      'Model response looked like HTML/XML instead of assessment JSON. Check the provider endpoint and model response format.',
+    );
+  });
 });
 
 describe('generateAssessment', () => {

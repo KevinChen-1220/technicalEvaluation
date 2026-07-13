@@ -20,7 +20,7 @@ import { type ModelConfig, validateModelConfig } from './src/features/config/mod
 import { createChatCompletion } from './src/services/aiClient';
 import { theme } from './src/theme';
 
-type Screen = 'create' | 'answer' | 'result' | 'review';
+type Screen = 'create' | 'settings' | 'answer' | 'result' | 'review';
 
 const emptyConfig: ModelConfig = { baseUrl: '', apiKey: '', model: '' };
 
@@ -48,6 +48,7 @@ export default function App() {
   const result: AssessmentResult = useMemo(() => scoreAssessment(paper, session), [paper, session]);
   const currentQuestion = paper.questions[questionIndex];
   const reviewQuestion = paper.questions.find((question) => question.id === reviewQuestionId) ?? paper.questions[0];
+  const configIsReady = validateModelConfig(config).ok;
 
   async function handleSaveConfig() {
     const validation = validateModelConfig(config);
@@ -57,6 +58,7 @@ export default function App() {
     }
     await saveModelConfig(config);
     Alert.alert('Configuration saved', 'Your API key stays on this device and is sent only to your configured provider.');
+    setScreen('create');
   }
 
   async function handleTestConnection() {
@@ -154,17 +156,16 @@ export default function App() {
               </Text>
             </View>
 
-            <Section title="Model Provider">
-              <Input label="Base URL" value={config.baseUrl} onChangeText={(baseUrl) => setConfig((value) => ({ ...value, baseUrl }))} placeholder="https://api.openai.com/v1" />
-              <Input label="API Key" value={config.apiKey} onChangeText={(apiKey) => setConfig((value) => ({ ...value, apiKey }))} placeholder="sk-..." secureTextEntry />
-              <Input label="Model" value={config.model} onChangeText={(model) => setConfig((value) => ({ ...value, model }))} placeholder="gpt-4.1-mini" />
-              <View style={styles.row}>
-                <Button label="Save" onPress={handleSaveConfig} tone="secondary" />
-                <Button label={isTesting ? 'Testing' : 'Test'} onPress={handleTestConnection} tone="secondary" disabled={isTesting} />
-              </View>
-            </Section>
-
             <Section title="Assessment Brief">
+              <View style={styles.configStatus}>
+                <View style={styles.configText}>
+                  <Text style={styles.label}>Model Provider</Text>
+                  <Text style={styles.notice}>
+                    {configIsReady ? `Configured: ${config.model}` : 'Configure a provider once before generating assessments.'}
+                  </Text>
+                </View>
+                <Button label="Settings" onPress={() => setScreen('settings')} tone="secondary" />
+              </View>
               <Input label="Topic" value={topic} onChangeText={setTopic} placeholder="Backend architecture capability" />
               <Input label="Notes" value={notes} onChangeText={setNotes} placeholder="Optional focus areas" multiline />
               <View style={styles.segment}>
@@ -175,6 +176,29 @@ export default function App() {
               <Button label={isGenerating ? 'Generating' : 'Generate'} onPress={handleGenerate} disabled={isGenerating} />
               {isGenerating ? <ActivityIndicator color={theme.colors.accent} /> : null}
               <Button label="Use Sample Paper" onPress={startSamplePaper} tone="secondary" />
+            </Section>
+          </View>
+        )}
+
+        {screen === 'settings' && (
+          <View style={styles.stack}>
+            <View style={styles.header}>
+              <Text style={styles.kicker}>Settings</Text>
+              <Text style={styles.title}>Model provider</Text>
+              <Text style={styles.notice}>
+                Enter an OpenAI-compatible endpoint once. The API key is saved locally with Expo SecureStore.
+              </Text>
+            </View>
+
+            <Section title="Connection">
+              <Input label="Base URL" value={config.baseUrl} onChangeText={(baseUrl) => setConfig((value) => ({ ...value, baseUrl }))} placeholder="https://api.openai.com/v1" />
+              <Input label="API Key" value={config.apiKey} onChangeText={(apiKey) => setConfig((value) => ({ ...value, apiKey }))} placeholder="sk-..." secureTextEntry />
+              <Input label="Model" value={config.model} onChangeText={(model) => setConfig((value) => ({ ...value, model }))} placeholder="gpt-4.1-mini" />
+              <View style={styles.row}>
+                <Button label="Save" onPress={handleSaveConfig} />
+                <Button label={isTesting ? 'Testing' : 'Test'} onPress={handleTestConnection} tone="secondary" disabled={isTesting} />
+                <Button label="Back" onPress={() => setScreen('create')} tone="secondary" />
+              </View>
             </Section>
           </View>
         )}
@@ -331,6 +355,8 @@ const styles = StyleSheet.create({
   stack: { gap: theme.spacing.md },
   header: { gap: theme.spacing.sm, paddingBottom: theme.spacing.sm },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.sm },
+  configStatus: { alignItems: 'flex-start', flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.md, justifyContent: 'space-between' },
+  configText: { flex: 1, minWidth: 220 },
   segment: { alignSelf: 'flex-start', backgroundColor: theme.colors.accentSoft, borderRadius: theme.radius.pill, flexDirection: 'row', gap: theme.spacing.xs, padding: 4 },
   kicker: { color: theme.colors.accent, fontSize: 13, fontWeight: '800', letterSpacing: 0, textTransform: 'uppercase' },
   title: { color: theme.colors.ink, fontSize: 34, fontWeight: '800', lineHeight: 40 },

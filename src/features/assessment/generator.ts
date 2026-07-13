@@ -49,14 +49,28 @@ ${notes}`;
 }
 
 export function extractJsonObject(content: string): unknown {
-  const start = content.indexOf('{');
-  const end = content.lastIndexOf('}');
+  const trimmed = content.trim();
+
+  if (looksLikeMarkup(trimmed)) {
+    throw new Error('Model response looked like HTML/XML instead of assessment JSON. Check the provider endpoint and model response format.');
+  }
+
+  const start = trimmed.indexOf('{');
+  const end = trimmed.lastIndexOf('}');
 
   if (start === -1 || end === -1 || end < start) {
     throw new Error('Model response did not contain a JSON object.');
   }
 
-  return JSON.parse(content.slice(start, end + 1));
+  try {
+    return JSON.parse(trimmed.slice(start, end + 1));
+  } catch {
+    throw new Error('Model response contained a JSON-looking block, but it was not valid JSON.');
+  }
+}
+
+function looksLikeMarkup(content: string): boolean {
+  return /^<(?:!doctype\s+html|html|body|head|script|xml|\?xml|[a-z][\w:-]*\b)/i.test(content);
 }
 
 export async function generateAssessment(

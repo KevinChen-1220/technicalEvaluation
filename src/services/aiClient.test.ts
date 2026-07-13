@@ -15,7 +15,8 @@ describe('createChatCompletion', () => {
   it('sends an OpenAI-compatible chat completion request and returns message content', async () => {
     const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue({
       ok: true,
-      json: async () => ({ choices: [{ message: { content: '{"ok":true}' } }] }),
+      headers: new Headers({ 'Content-Type': 'application/json' }),
+      text: async () => JSON.stringify({ choices: [{ message: { content: '{"ok":true}' } }] }),
     } as Response);
 
     await expect(createChatCompletion(config, [{ role: 'user', content: 'Generate a paper.' }])).resolves.toBe('{"ok":true}');
@@ -23,6 +24,7 @@ describe('createChatCompletion', () => {
     expect(fetchMock).toHaveBeenCalledWith('https://api.example.com/v1/chat/completions', {
       method: 'POST',
       headers: {
+        Accept: 'application/json',
         Authorization: 'Bearer sk-test',
         'Content-Type': 'application/json',
       },
@@ -38,16 +40,31 @@ describe('createChatCompletion', () => {
     jest.spyOn(global, 'fetch').mockResolvedValue({
       ok: false,
       status: 401,
+      headers: new Headers({ 'Content-Type': 'application/json' }),
       text: async () => 'invalid api key',
     } as Response);
 
     await expect(createChatCompletion(config, [])).rejects.toThrow('Model provider returned 401: invalid api key');
   });
 
+  it('throws a readable error when the provider returns an HTML page instead of JSON', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'Content-Type': 'text/html; charset=utf-8' }),
+      text: async () => '<html><body>Not Found</body></html>',
+    } as Response);
+
+    await expect(createChatCompletion(config, [])).rejects.toThrow(
+      'Model provider returned text/html instead of JSON. Check that Base URL points to an OpenAI-compatible /v1 endpoint.',
+    );
+  });
+
   it('throws when no message content is returned', async () => {
     jest.spyOn(global, 'fetch').mockResolvedValue({
       ok: true,
-      json: async () => ({ choices: [] }),
+      headers: new Headers({ 'Content-Type': 'application/json' }),
+      text: async () => JSON.stringify({ choices: [] }),
     } as Response);
 
     await expect(createChatCompletion(config, [])).rejects.toThrow('Model provider did not return message content.');
