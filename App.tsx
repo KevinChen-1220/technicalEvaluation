@@ -285,9 +285,14 @@ export default function App() {
           <View style={styles.stack}>
             <Text style={styles.kicker}>{paper.topic}</Text>
             <Text style={styles.progress}>
-              Question {questionIndex + 1} of {paper.questions.length} / {currentQuestion.difficulty} / {currentQuestion.knowledgePoint}
+              Question {questionIndex + 1} of {paper.questions.length}
             </Text>
-            <Text style={styles.question}>{currentQuestion.prompt}</Text>
+            <Text style={styles.question}>
+              {questionIndex + 1}. {currentQuestion.prompt}
+            </Text>
+            <Text style={styles.questionMeta}>
+              {currentQuestion.difficulty} · {currentQuestion.knowledgePoint}
+            </Text>
             <View style={styles.stack}>
               {currentQuestion.options.map((option) => {
                 const active = answers[currentQuestion.id]?.includes(option.id) ?? false;
@@ -348,9 +353,11 @@ export default function App() {
       {screen === 'review' && reviewQuestion ? (
         <ScrollView contentContainerStyle={styles.container}>
           <View style={styles.stack}>
-            <Text style={styles.kicker}>{reviewQuestion.knowledgePoint}</Text>
+            <Text style={styles.kicker}>Review</Text>
             <Text style={styles.question}>{reviewQuestion.prompt}</Text>
-            <Text style={styles.metric}>Difficulty: {reviewQuestion.difficulty}</Text>
+            <Text style={styles.questionMeta}>
+              {reviewQuestion.difficulty} · {reviewQuestion.knowledgePoint}
+            </Text>
             <Text style={styles.metric}>Your answer: {formatOptions(reviewQuestion, answers[reviewQuestion.id] ?? [])}</Text>
             <Text style={styles.metric}>Correct answer: {formatOptions(reviewQuestion, reviewQuestion.correctOptionIds)}</Text>
             <Text style={styles.notice}>{reviewQuestion.explanation}</Text>
@@ -489,6 +496,7 @@ const styles = StyleSheet.create({
   kicker: { color: theme.colors.accent, fontSize: 13, fontWeight: '800', letterSpacing: 0, textTransform: 'uppercase' },
   title: { color: theme.colors.ink, fontSize: 32, fontWeight: '800', lineHeight: 38 },
   question: { color: theme.colors.ink, fontSize: 24, fontWeight: '800', lineHeight: 31 },
+  questionMeta: { color: theme.colors.muted, fontSize: 14, fontWeight: '700', lineHeight: 20 },
   progress: { color: theme.colors.muted, fontSize: 14, fontWeight: '700' },
   notice: { color: theme.colors.muted, fontSize: 15, lineHeight: 22 },
   error: { color: theme.colors.danger, fontSize: 14, fontWeight: '700', lineHeight: 20 },
