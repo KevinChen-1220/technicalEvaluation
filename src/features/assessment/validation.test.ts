@@ -64,6 +64,34 @@ describe('validateAssessmentPaper', () => {
     });
   });
 
+  it('rejects questions without prompt text, knowledge point, and option text', () => {
+    const invalidPaper = {
+      ...validGeneratedPaper,
+      questions: [
+        {
+          ...validGeneratedPaper.questions[0]!,
+          prompt: '',
+          knowledgePoint: '',
+          options: [
+            { id: 'A', text: '' },
+            { id: 'B', text: 'Valid option' },
+          ],
+          correctOptionIds: ['B'],
+        },
+        ...validGeneratedPaper.questions.slice(1),
+      ],
+    };
+
+    expect(validateAssessmentPaper(invalidPaper)).toEqual({
+      ok: false,
+      errors: [
+        'Question q1 prompt is required.',
+        'Question q1 knowledgePoint is required.',
+        'Question q1 option A text is required.',
+      ],
+    });
+  });
+
   it('rejects scoring levels that do not cover 0 through 100 percent', () => {
     const invalidPaper = {
       ...validGeneratedPaper,

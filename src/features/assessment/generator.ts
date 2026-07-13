@@ -31,11 +31,27 @@ The JSON must match this TypeScript shape:
       { "minPercent": 80, "maxPercent": 100, "title": "Advanced", "summary": "..." }
     ]
   },
-  "questions": []
+  "questions": [
+    {
+      "id": "q1",
+      "type": "single_choice",
+      "difficulty": "easy",
+      "knowledgePoint": "Concise skill area",
+      "prompt": "Full question text shown to the user",
+      "options": [
+        { "id": "A", "text": "First answer option" },
+        { "id": "B", "text": "Second answer option" }
+      ],
+      "correctOptionIds": ["A"],
+      "explanation": "Detailed explanation of the correct answer"
+    }
+  ]
 }
 
 Requirements:
 - Generate exactly ${request.questionCount} questions.
+- Every question must include a non-empty prompt field containing the full question text.
+- Every question must include non-empty option text for each answer option.
 - Mix these question types: single_choice, multiple_choice, true_false.
 - Use stable option IDs such as A, B, C, and D.
 - Include correctOptionIds for every question.

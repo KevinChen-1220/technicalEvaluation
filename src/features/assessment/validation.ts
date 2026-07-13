@@ -45,6 +45,10 @@ function validateQuestion(question: AssessmentQuestion, errors: string[]): void 
   const label = question?.id || 'unknown';
   const optionIds = new Set(Array.isArray(question.options) ? question.options.map((option) => option.id) : []);
 
+  if (!question.prompt?.trim()) {
+    errors.push(`Question ${label} prompt is required.`);
+  }
+
   if (!supportedTypes.has(question.type)) {
     errors.push(`Question ${label} has unsupported type ${String(question.type)}.`);
   }
@@ -53,8 +57,18 @@ function validateQuestion(question: AssessmentQuestion, errors: string[]): void 
     errors.push(`Question ${label} has unsupported difficulty ${String(question.difficulty)}.`);
   }
 
+  if (!question.knowledgePoint?.trim()) {
+    errors.push(`Question ${label} knowledgePoint is required.`);
+  }
+
   if (!Array.isArray(question.options) || question.options.length < 2) {
     errors.push(`Question ${label} must have at least two options.`);
+  } else {
+    for (const option of question.options) {
+      if (!option.text?.trim()) {
+        errors.push(`Question ${label} option ${option.id || 'unknown'} text is required.`);
+      }
+    }
   }
 
   if (!Array.isArray(question.correctOptionIds)) {
