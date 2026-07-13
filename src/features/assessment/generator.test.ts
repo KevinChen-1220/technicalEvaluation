@@ -35,6 +35,8 @@ describe('buildAssessmentPrompt', () => {
     expect(prompt).toContain('single_choice');
     expect(prompt).toContain('multiple_choice');
     expect(prompt).toContain('true_false');
+    expect(prompt).toContain('"prompt": "Full question text shown to the user"');
+    expect(prompt).toContain('Every question must include a non-empty prompt field');
     expect(prompt).toContain('correctOptionIds');
     expect(prompt).toContain('detailed explanation');
     expect(prompt).toContain('cover 0 through 100 percent without gaps');

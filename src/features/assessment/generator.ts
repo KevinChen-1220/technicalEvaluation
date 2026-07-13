@@ -51,6 +51,7 @@ The JSON must match this TypeScript shape:
 Requirements:
 - Generate exactly ${request.questionCount} questions.
 - Every question must include a non-empty prompt field containing the full question text.
+- Use the exact field name "prompt" for the question text. Do not use "question", "title", or "text" for the question prompt.
 - Every question must include non-empty option text for each answer option.
 - Mix these question types: single_choice, multiple_choice, true_false.
 - Use stable option IDs such as A, B, C, and D.
