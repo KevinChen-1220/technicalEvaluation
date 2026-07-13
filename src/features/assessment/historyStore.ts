@@ -1,6 +1,7 @@
 import type { AssessmentHistoryRecord, AssessmentPaper, AssessmentResult } from './types';
 
 const historyKey = 'skill_scope_assessment_history';
+const memoryHistoryStorage = new Map<string, string>();
 
 export type HistoryStorage = {
   getItem(key: string): Promise<string | null>;
@@ -32,7 +33,7 @@ export async function loadAssessmentHistory(
     }
 
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed : [];
+    return Array.isArray(parsed) ? parsed.filter(isAssessmentHistoryRecord) : [];
   } catch {
     return [];
   }
@@ -53,7 +54,7 @@ export async function saveAssessmentHistoryRecord(
 const defaultHistoryStorage: HistoryStorage = {
   async getItem(key) {
     if (typeof globalThis.localStorage === 'undefined') {
-      return null;
+      return memoryHistoryStorage.get(key) ?? null;
     }
 
     return globalThis.localStorage.getItem(key);
@@ -61,6 +62,36 @@ const defaultHistoryStorage: HistoryStorage = {
   async setItem(key, value) {
     if (typeof globalThis.localStorage !== 'undefined') {
       globalThis.localStorage.setItem(key, value);
+      return;
     }
+
+    memoryHistoryStorage.set(key, value);
   },
 };
+
+function isAssessmentHistoryRecord(value: unknown): value is AssessmentHistoryRecord {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+
+  const candidate = value as Partial<AssessmentHistoryRecord>;
+
+  return (
+    typeof candidate.id === 'string' &&
+    typeof candidate.submittedAt === 'string' &&
+    !!candidate.paper &&
+    typeof candidate.paper === 'object' &&
+    typeof candidate.paper.id === 'string' &&
+    Array.isArray(candidate.paper.questions) &&
+    !!candidate.result &&
+    typeof candidate.result === 'object' &&
+    typeof candidate.result.score === 'number' &&
+    typeof candidate.result.accuracy === 'number' &&
+    Array.isArray(candidate.result.questionResults) &&
+    Array.isArray(candidate.result.knowledgePointResults) &&
+    Array.isArray(candidate.result.wrongQuestionIds) &&
+    !!candidate.answers &&
+    typeof candidate.answers === 'object' &&
+    !Array.isArray(candidate.answers)
+  );
+}

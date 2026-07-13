@@ -71,4 +71,47 @@ describe('assessment history store', () => {
 
     await expect(loadAssessmentHistory(storage)).resolves.toEqual([]);
   });
+
+  it('filters malformed records from parseable persisted history', async () => {
+    const valid = createHistoryRecord(
+      samplePaper,
+      {},
+      scoreAssessment(samplePaper, { paperId: samplePaper.id, answers: {}, submittedAt: '2026-07-13T09:00:00.000Z' }),
+      '2026-07-13T09:00:00.000Z',
+    );
+    const storage = createMemoryStorage({
+      skill_scope_assessment_history: JSON.stringify([null, {}, valid]),
+    });
+
+    await expect(loadAssessmentHistory(storage)).resolves.toEqual([valid]);
+  });
+
+  it('uses an in-memory fallback when localStorage is unavailable', async () => {
+    const previousLocalStorage = globalThis.localStorage;
+
+    try {
+      Object.defineProperty(globalThis, 'localStorage', {
+        configurable: true,
+        value: undefined,
+      });
+      jest.resetModules();
+      const fallbackStore = await import('./historyStore');
+      const record = fallbackStore.createHistoryRecord(
+        samplePaper,
+        {},
+        scoreAssessment(samplePaper, { paperId: samplePaper.id, answers: {}, submittedAt: '2026-07-13T10:00:00.000Z' }),
+        '2026-07-13T10:00:00.000Z',
+      );
+
+      await fallbackStore.saveAssessmentHistoryRecord(record);
+
+      await expect(fallbackStore.loadAssessmentHistory()).resolves.toEqual([record]);
+    } finally {
+      Object.defineProperty(globalThis, 'localStorage', {
+        configurable: true,
+        value: previousLocalStorage,
+      });
+      jest.resetModules();
+    }
+  });
 });
