@@ -3,6 +3,7 @@ import { join } from 'node:path';
 
 const distDir = join(process.cwd(), 'dist');
 const expected = {
+  assetPrefix: '/technicalEvaluation/',
   canonicalUrl: 'https://kevinchen-1220.github.io/technicalEvaluation/',
   description:
     'Generate 50- or 100-question skill assessments with your own OpenAI-compatible model, then score and review them locally.',
@@ -60,10 +61,36 @@ check(
   `dist/index.html must link manifest ${expected.manifestUrl}.`,
 );
 check(html.includes('<div id="root"></div>'), 'dist/index.html must include <div id="root"></div>.');
-check(
-  /(?:src|href)="\/technicalEvaluation\//.test(html),
-  'dist/index.html assets must use the /technicalEvaluation/ repository prefix.',
+
+const sourceReferences = [...html.matchAll(/<([a-z][\w-]*)\b[^>]*?\ssrc\s*=(["'])([^"']+)\2[^>]*>/gi)].map(
+  ([, tagName, , source]) => ({ source, tagName: tagName.toLowerCase() }),
 );
+const runtimeScriptReferences = sourceReferences.filter(
+  ({ source, tagName }) => tagName === 'script' && source.includes('/_expo/'),
+);
+
+check(
+  runtimeScriptReferences.length > 0,
+  'dist/index.html must include a generated Expo runtime script src.',
+);
+
+for (const { source } of runtimeScriptReferences) {
+  check(
+    source.startsWith(expected.assetPrefix),
+    `dist/index.html generated runtime script src "${source}" must use the ${expected.assetPrefix} prefix.`,
+  );
+}
+
+for (const { source, tagName } of sourceReferences) {
+  const isRuntimeScript = tagName === 'script' && source.includes('/_expo/');
+  const isRootRelative = source.startsWith('/') && !source.startsWith('//');
+  if (!isRuntimeScript && isRootRelative) {
+    check(
+      source.startsWith(expected.assetPrefix),
+      `dist/index.html root-relative ${tagName} src "${source}" must use the ${expected.assetPrefix} prefix.`,
+    );
+  }
+}
 
 if (manifestText) {
   try {

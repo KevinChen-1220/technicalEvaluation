@@ -283,7 +283,8 @@ export default function App() {
                   <Text style={styles.kicker}>Settings</Text>
                   <Text style={styles.title}>Model provider</Text>
                   <Text style={styles.notice}>
-                    Enter an OpenAI-compatible endpoint once. The API key is saved locally with Expo SecureStore.
+                    Enter an OpenAI-compatible endpoint once. Native apps store your API key with Expo SecureStore when
+                    available; web may fall back to browser-local storage and should be used only on a trusted device.
                   </Text>
                 </View>
 
