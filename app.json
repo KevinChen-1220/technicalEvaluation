@@ -3,6 +3,7 @@
     "name": "SkillScope",
     "slug": "dynamic-assessment-app",
     "version": "1.0.0",
+    "description": "Generate local-first skill assessments with your own OpenAI-compatible model.",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "assetBundlePatterns": [
@@ -16,8 +17,13 @@
         "backgroundColor": "#EEF2EA"
       }
     },
+    "experiments": {
+      "baseUrl": "/technicalEvaluation"
+    },
     "web": {
-      "bundler": "metro"
+      "bundler": "metro",
+      "output": "single",
+      "favicon": "./public/icon-192.png"
     },
     "plugins": [
       "expo-sqlite",

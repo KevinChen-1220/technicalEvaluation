@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://kevinchen-1220.github.io/technicalEvaluation/sitemap.xml
