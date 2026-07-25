@@ -12,7 +12,7 @@
 
 ## Demo
 
-The intended public web demo is [SkillScope on GitHub Pages](https://kevinchen-1220.github.io/technicalEvaluation/). It will be available after the repository is public and GitHub Pages deployment is configured.
+Try the public web demo at [SkillScope on GitHub Pages](https://kevinchen-1220.github.io/technicalEvaluation/).
 
 ## What It Does
 
@@ -34,7 +34,7 @@ Use the web experience only on a trusted personal device. Do not save a provider
 
 ## Prerequisites
 
-- Node.js 20 or later, including npm
+- Node.js 22 or later, including npm
 - An OpenAI-compatible provider endpoint, API key, and model name to generate new assessments
 - Expo Go or a local Android/iOS development environment when running on a device
 
@@ -99,7 +99,7 @@ npm run verify:web
 
 ## Project Status
 
-SkillScope is preparing for an open-source web release. Native App Store and Google Play releases have not been published.
+SkillScope is open source, with the GitHub Pages web demo as its current public release. Native App Store and Google Play releases have not been published.
 
 ## Contributing, Security, And License
 

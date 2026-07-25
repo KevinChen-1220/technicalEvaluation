@@ -262,7 +262,7 @@ git commit -m "docs: prepare SkillScope public README"
 
 - [ ] **Step 1: Add continuous integration**
 
-Configure CI for pushes to `main` and pull requests. Use Node 20 with npm cache,
+Configure CI for pushes to `main` and pull requests. Use Node 22 with npm cache,
 then run:
 
 ```yaml
@@ -278,11 +278,12 @@ Set minimal `contents: read` permissions and concurrency cancellation.
 - [ ] **Step 2: Add GitHub Pages deployment**
 
 Configure a workflow for pushes to `main` and manual dispatch. The build job
-checks out source, uses Node 20, runs `npm ci`, tests, type checking, web build,
-and metadata verification, then uses `actions/configure-pages`,
-`actions/upload-pages-artifact` with `dist`, and `actions/deploy-pages`. Grant
-only `contents: read`, `pages: write`, and `id-token: write`; use the
-`github-pages` environment.
+checks out source, uses Node 22, runs `npm ci`, tests, type checking, web build,
+and metadata verification, then uses `actions/configure-pages@v6`,
+`actions/upload-pages-artifact@v5` with `dist`, and
+`actions/deploy-pages@v5`. Give the build job exactly `contents: read` and
+`pages: read`; isolate `pages: write` and `id-token: write` to the deploy job;
+use the `github-pages` environment.
 
 - [ ] **Step 3: Add Dependabot**
 
@@ -369,7 +370,22 @@ gh repo view KevinChen-1220/technicalEvaluation --json visibility,url
 
 Expected: `visibility` is `PUBLIC`.
 
-- [ ] **Step 5: Configure repository discovery metadata**
+- [ ] **Step 5: Enable and verify private vulnerability reporting**
+
+Enable the private reporting channel documented in `SECURITY.md`:
+
+```powershell
+gh api --method PUT repos/KevinChen-1220/technicalEvaluation/private-vulnerability-reporting
+gh api repos/KevinChen-1220/technicalEvaluation/private-vulnerability-reporting --jq '.enabled'
+```
+
+Open the authenticated private report form at
+`https://github.com/KevinChen-1220/technicalEvaluation/security/advisories/new`
+and confirm that the vulnerability report form renders.
+
+Expected: the API reports `true` and the private report form is reachable.
+
+- [ ] **Step 6: Configure repository discovery metadata**
 
 Set:
 
@@ -379,13 +395,13 @@ Set:
   `openai-compatible`, `sqlite`, `local-first`
 - features: issues enabled, wiki disabled
 
-- [ ] **Step 6: Enable Pages through GitHub Actions**
+- [ ] **Step 7: Enable Pages through GitHub Actions**
 
 Use the GitHub Pages API to create or update the Pages site with
 `build_type: workflow`. If the first Pages workflow has not started
 automatically, dispatch `.github/workflows/pages.yml`.
 
-- [ ] **Step 7: Observe remote checks**
+- [ ] **Step 8: Observe remote checks**
 
 Watch the CI and Pages runs to terminal status:
 
@@ -398,7 +414,7 @@ KevinChen-1220/technicalEvaluation --exit-status`.
 
 Expected: CI and Pages finish successfully.
 
-- [ ] **Step 8: Verify the public release**
+- [ ] **Step 9: Verify the public release**
 
 Verify unauthenticated HTTP 200 access to:
 
@@ -413,7 +429,7 @@ repository-prefixed bundle URLs. Confirm GitHub detects MIT and displays the
 description, homepage, topics, contributing guide, code of conduct, and security
 policy.
 
-- [ ] **Step 9: Record final state**
+- [ ] **Step 10: Record final state**
 
 Report the public repository URL, live demo URL, final commit, workflow results,
 local verification totals, and any residual limitations. Do not claim GitHub
