@@ -1,0 +1,55 @@
+name: Bug report
+description: Report a reproducible problem in SkillScope.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time to help improve SkillScope.
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Tell us the smallest set of steps that reproduces the problem.
+      placeholder: |
+        1. Open ...
+        2. Tap ...
+        3. Observe ...
+    validations:
+      required: true
+  - type: textarea
+    id: platform
+    attributes:
+      label: Platform
+      description: Specify the operating system and app or web environment.
+      placeholder: iOS 18, Android 15, or web
+    validations:
+      required: true
+  - type: input
+    id: device-browser
+    attributes:
+      label: Browser or device
+      description: Provide the browser and version, or device model.
+      placeholder: Chrome 136 on Windows 11 or iPhone 16
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy confirmation
+      options:
+        - label: I confirm that this report does not contain API keys, tokens, or other secrets.
+          required: true

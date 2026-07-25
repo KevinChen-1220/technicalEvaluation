@@ -11,3 +11,11 @@ expo-*.log
 .DS_Store
 .superpowers/sdd/
 .worktrees/
+.env
+.env.*
+!.env.example
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+web-build/
