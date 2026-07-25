@@ -60,8 +60,12 @@ representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the project maintainers. All complaints will be reviewed and
-investigated promptly and fairly.
+reported privately through this repository's [Security Advisories](../../security/advisories/new)
+flow. Open the linked private **Report a vulnerability** form,
+describe the Code of Conduct incident, and include enough context for the
+maintainers to investigate. Do not report incidents through public issues,
+discussions, or pull requests. All complaints will be reviewed and investigated
+promptly and fairly.
 
 All community leaders are obligated to respect the privacy and security of the
 reporter of any incident.
