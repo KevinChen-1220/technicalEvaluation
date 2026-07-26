@@ -50,6 +50,11 @@ The JSON must match this TypeScript shape:
 
 Requirements:
 - Generate exactly ${request.questionCount} questions.
+- Use the topic field as the sole source of truth for the output language of every user-facing value, including topic, scoring titles and summaries, knowledge points, question prompts, option text, and explanations.
+- Additional notes must not change the output language, even when they are written in a different language.
+- For Chinese input, use Simplified Chinese. For English input, use English. For any other language, preserve the topic language.
+- Do not default to Chinese when the topic is not Chinese.
+- Keep JSON property names, enum values, and option IDs in English. Do not translate machine-readable values such as single_choice, multiple_choice, true_false, easy, medium, hard, A, B, C, or D.
 - Every question must include a non-empty prompt field containing the full question text.
 - Use the exact field name "prompt" for the question text. Do not use "question", "title", or "text" for the question prompt.
 - Every question must include non-empty option text for each answer option.

@@ -17,6 +17,7 @@ import {
   listAssessmentRecords,
   updateAssessmentAnswers,
 } from './src/features/assessment/assessmentRepository';
+import { defaultAssessmentBrief } from './src/features/assessment/assessmentBriefDefaults';
 import { generateAssessment } from './src/features/assessment/generator';
 import { migrateLegacyAssessmentHistory } from './src/features/assessment/legacyHistoryMigration';
 import { samplePaper } from './src/features/assessment/samplePaper';
@@ -37,8 +38,8 @@ export default function App() {
   const [screen, setScreen] = useState<Screen>('main');
   const [activeTab, setActiveTab] = useState<MainTab>('assess');
   const [config, setConfig] = useState<ModelConfig>(emptyConfig);
-  const [topic, setTopic] = useState('iOS development capability');
-  const [notes, setNotes] = useState('Balance fundamentals, debugging, architecture, and edge cases.');
+  const [topic, setTopic] = useState(defaultAssessmentBrief.topic);
+  const [notes, setNotes] = useState(defaultAssessmentBrief.notes);
   const [questionCount, setQuestionCount] = useState<50 | 100>(50);
   const [paper, setPaper] = useState<AssessmentPaper>(samplePaper);
   const [answers, setAnswers] = useState<Record<string, string[]>>({});
@@ -246,8 +247,8 @@ export default function App() {
                     </View>
                     <Button label="Settings" onPress={() => setActiveTab('settings')} tone="secondary" />
                   </View>
-                  <Input label="Topic" value={topic} onChangeText={setTopic} placeholder="Backend architecture capability" />
-                  <Input label="Notes" value={notes} onChangeText={setNotes} placeholder="Optional focus areas" multiline />
+                  <Input label="Topic" value={topic} onChangeText={setTopic} placeholder="例如：后端架构能力" />
+                  <Input label="Notes" value={notes} onChangeText={setNotes} placeholder="可选：补充重点考察方向" multiline />
                   <View style={styles.segment}>
                     <Chip label="50" active={questionCount === 50} onPress={() => setQuestionCount(50)} />
                     <Chip label="100" active={questionCount === 100} onPress={() => setQuestionCount(100)} />

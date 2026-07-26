@@ -42,6 +42,42 @@ describe('buildAssessmentPrompt', () => {
     expect(prompt).toContain('cover 0 through 100 percent without gaps');
     expect(prompt).toContain('Return one JSON object only. Do not wrap it in Markdown.');
   });
+
+  it('uses the topic as the sole language source for Chinese, English, or other-language input', () => {
+    const chinesePrompt = buildAssessmentPrompt({
+      topic: 'iOS 开发能力',
+      questionCount: 50,
+      notes: 'Focus on concurrency and memory management.',
+    });
+    const englishPrompt = buildAssessmentPrompt({
+      topic: 'iOS development capability',
+      questionCount: 50,
+      notes: '重点考察并发与内存管理。',
+    });
+    const spanishPrompt = buildAssessmentPrompt({
+      topic: 'Arquitectura de backend',
+      questionCount: 50,
+      notes: '重点考察可扩展性。',
+    });
+
+    for (const prompt of [chinesePrompt, englishPrompt, spanishPrompt]) {
+      expect(prompt).toContain('Use the topic field as the sole source of truth for the output language');
+      expect(prompt).toContain('Additional notes must not change the output language');
+      expect(prompt).toContain('Chinese input, use Simplified Chinese');
+      expect(prompt).toContain('English input, use English');
+      expect(prompt).toContain('For any other language, preserve the topic language');
+      expect(prompt).toContain('Do not default to Chinese when the topic is not Chinese');
+      expect(prompt).toContain('Keep JSON property names, enum values, and option IDs in English');
+      expect(prompt).toContain('single_choice');
+      expect(prompt).toContain('"difficulty": "easy"');
+    }
+
+    expect(chinesePrompt).toContain('iOS 开发能力');
+    expect(chinesePrompt).toContain('Focus on concurrency and memory management.');
+    expect(englishPrompt).toContain('iOS development capability');
+    expect(englishPrompt).toContain('重点考察并发与内存管理。');
+    expect(spanishPrompt).toContain('Arquitectura de backend');
+  });
 });
 
 describe('extractJsonObject', () => {

@@ -3,8 +3,8 @@
 ## Goal
 
 Make Chinese the default assessment input language and ensure generated
-user-facing assessment content follows the language used in the topic and
-generation notes.
+user-facing assessment content follows the language used in the topic. Notes
+can refine content but do not change the output language.
 
 ## Root Cause
 
@@ -19,7 +19,8 @@ English assessment even when the topic is Chinese.
 - Initialize the notes with `兼顾基础知识、调试、架构和边界情况。`.
 - Use Chinese placeholders for the topic and notes inputs.
 - Add an explicit prompt requirement that all user-facing values follow the
-  language used by the topic and notes.
+  language used by the topic. The topic is the sole language source; notes do
+  not change the output language when they use a different language.
 - State that Chinese input must produce Simplified Chinese content.
 - State that English input must produce English content, and other languages
   must likewise be preserved.
@@ -44,5 +45,8 @@ JSON schema keys and enums remain stable.
 - Assert that the prompt requires Simplified Chinese user-facing content.
 - Add an English-input test that confirms the rule follows the input language
   instead of globally forcing Chinese.
+- Add another-language and mixed topic/notes test to confirm the topic has
+  priority and other languages are preserved.
+- Test the exported Chinese assessment defaults consumed by the creation page.
 - Assert that machine-readable JSON fields and enums stay unchanged.
 - Run the complete Jest suite, TypeScript check, and web build.
