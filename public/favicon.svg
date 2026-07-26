@@ -1,7 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
   <title id="title">SkillScope</title>
-  <rect width="64" height="64" rx="12" fill="#1E7A68" />
-  <circle cx="32" cy="32" r="19" fill="none" stroke="#FFFFFF" stroke-width="5" />
-  <path d="M19 32h5M40 32h5M32 19v5M32 40v5" fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-width="4" />
-  <path d="m23 32 6 6 13-15" fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-linejoin="round" stroke-width="5" />
+  <rect width="64" height="64" rx="12" fill="#1F7A68" />
+  <path d="M31 11a21 21 0 0 0-20 20h7a14 14 0 0 1 13-13zm2 0v7a14 14 0 0 1 13 13h7a21 21 0 0 0-20-20zM11 33a21 21 0 0 0 20 20v-7a14 14 0 0 1-13-13zm35 0a14 14 0 0 1-13 13v7a21 21 0 0 0 20-20z" fill="#FFFFFF" />
+  <path d="m22 32 7 7 14-16" fill="none" stroke="#FFFFFF" stroke-linecap="round" stroke-linejoin="round" stroke-width="7" />
 </svg>

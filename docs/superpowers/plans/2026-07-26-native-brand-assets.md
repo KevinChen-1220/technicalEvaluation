@@ -24,13 +24,13 @@
 - Create: `scripts/verify-native-assets.mjs`
 - Modify: `package.json`
 
-- [ ] **Step 1: Add the verifier and package script**
+- [x] **Step 1: Add the verifier and package script**
 
 Check Expo icon, iOS icon, Android icon, adaptive foreground, monochrome image,
 and splash image paths. Read PNG headers to require 1024x1024 native masters and
 alpha-capable color types for transparent assets.
 
-- [ ] **Step 2: Run the verifier and confirm failure**
+- [x] **Step 2: Run the verifier and confirm failure**
 
 Run: `npm run verify:assets`
 
@@ -46,17 +46,17 @@ Expected: FAIL because the native asset configuration is not present.
 - Modify: `public/icon-192.png`
 - Modify: `public/icon-512.png`
 
-- [ ] **Step 1: Generate the full application icon**
+- [x] **Step 1: Generate the full application icon**
 
 Use the built-in ImageGen tool with the approved geometric ring-and-check
 direction and no text.
 
-- [ ] **Step 2: Generate a chroma-key foreground**
+- [x] **Step 2: Generate a chroma-key foreground**
 
 Generate the same mark on a flat magenta background, remove the key locally,
 and verify transparent corners and safe-zone padding.
 
-- [ ] **Step 3: Derive remaining assets**
+- [x] **Step 3: Derive remaining assets**
 
 Create monochrome and splash assets from the foreground silhouette, and resize
 the full icon for Web/PWA.
@@ -66,17 +66,17 @@ the full icon for Web/PWA.
 **Files:**
 - Modify: `app.json`
 
-- [ ] **Step 1: Configure native icon and splash paths**
+- [x] **Step 1: Configure native icon and splash paths**
 
 Add top-level, iOS, Android, adaptive, monochrome, and splash configuration.
 
-- [ ] **Step 2: Run focused verification**
+- [x] **Step 2: Run focused verification**
 
 Run: `npm run verify:assets`
 
 Expected: PASS.
 
-- [ ] **Step 3: Run full verification**
+- [x] **Step 3: Run full verification**
 
 Run:
 

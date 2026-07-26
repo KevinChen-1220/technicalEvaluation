@@ -14,7 +14,7 @@ remains recognizable at small launcher-icon sizes.
 - Primary green: `#1F7A68`
 - Deep ink: `#17232C`
 - Splash background: `#F4F7F2`
-- Mark color: white
+- Mark color: white on launcher icons; primary green on the light splash screen
 - No text, letters, gradients, shadows, thin lines, or detailed illustration
 - Keep the important mark inside the Android adaptive-icon safe zone
 

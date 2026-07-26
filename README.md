@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/KevinChen-1220/technicalEvaluation/actions/workflows/ci.yml/badge.svg)](https://github.com/KevinChen-1220/technicalEvaluation/actions/workflows/ci.yml)
 [![Pages](https://github.com/KevinChen-1220/technicalEvaluation/actions/workflows/pages.yml/badge.svg)](https://github.com/KevinChen-1220/technicalEvaluation/actions/workflows/pages.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-1E7A68.svg)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-1F7A68.svg)](LICENSE)
 [![Expo SDK 53](https://img.shields.io/badge/Expo-SDK%2053-000020.svg?logo=expo)](https://expo.dev/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.8-3178C6.svg?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 

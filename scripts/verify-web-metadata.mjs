@@ -7,8 +7,10 @@ const expected = {
   canonicalUrl: 'https://kevinchen-1220.github.io/technicalEvaluation/',
   description:
     'Generate 50- or 100-question skill assessments with your own OpenAI-compatible model, then score and review them locally.',
+  faviconUrl: '/technicalEvaluation/favicon.svg',
   manifestUrl: '/technicalEvaluation/manifest.json',
   socialImageUrl: 'https://kevinchen-1220.github.io/technicalEvaluation/social-preview.png',
+  themeColor: '#1F7A68',
   title: 'SkillScope - AI-Powered Skill Assessments',
 };
 
@@ -29,11 +31,12 @@ async function readRequiredFile(filename) {
   }
 }
 
-const [html, manifestText, robots, sitemap] = await Promise.all([
+const [html, manifestText, robots, sitemap, favicon] = await Promise.all([
   readRequiredFile('index.html'),
   readRequiredFile('manifest.json'),
   readRequiredFile('robots.txt'),
   readRequiredFile('sitemap.xml'),
+  readRequiredFile('favicon.svg'),
 ]);
 
 check(
@@ -60,7 +63,16 @@ check(
   html.includes(`<link rel="manifest" href="${expected.manifestUrl}"`),
   `dist/index.html must link manifest ${expected.manifestUrl}.`,
 );
+check(
+  html.includes(`<link rel="icon" href="${expected.faviconUrl}" type="image/svg+xml"`),
+  `dist/index.html must link favicon ${expected.faviconUrl}.`,
+);
+check(
+  html.includes(`<meta name="theme-color" content="${expected.themeColor}"`),
+  `dist/index.html must set theme-color to ${expected.themeColor}.`,
+);
 check(html.includes('<div id="root"></div>'), 'dist/index.html must include <div id="root"></div>.');
+check(favicon.includes('<svg'), 'dist/favicon.svg must contain an SVG icon.');
 
 const sourceReferences = [...html.matchAll(/<([a-z][\w-]*)\b[^>]*?\ssrc\s*=(["'])([^"']+)\2[^>]*>/gi)].map(
   ([, tagName, , source]) => ({ source, tagName: tagName.toLowerCase() }),
@@ -99,7 +111,8 @@ if (manifestText) {
     check(manifest.start_url === '/technicalEvaluation/', 'dist/manifest.json start_url must be /technicalEvaluation/.');
     check(manifest.scope === '/technicalEvaluation/', 'dist/manifest.json scope must be /technicalEvaluation/.');
     check(manifest.display === 'standalone', 'dist/manifest.json display must be standalone.');
-    check(manifest.theme_color === '#1E7A68', 'dist/manifest.json theme_color must be #1E7A68.');
+    check(manifest.theme_color === '#1F7A68', 'dist/manifest.json theme_color must be #1F7A68.');
+    check(manifest.background_color === '#F4F7F2', 'dist/manifest.json background_color must be #F4F7F2.');
 
     const icons = Array.isArray(manifest.icons) ? manifest.icons : [];
     check(
