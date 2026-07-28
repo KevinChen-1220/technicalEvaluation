@@ -1,0 +1,149 @@
+import type { AssessmentRecordStatus, QuestionDifficulty } from '../features/assessment/types';
+
+export const zhCN = {
+  tabs: { assess: '测评', history: '历史', settings: '设置' },
+  assess: {
+    title: '智能技能测评',
+    notice: '测评主题和生成提示将直接发送到你配置的模型服务，本应用不经过后端服务器。',
+    section: '测评设置',
+    provider: '模型服务',
+    configureProvider: '生成测评前，请先完成一次模型配置。',
+    configured: (model: string) => `已配置：${model}`,
+    topic: '测评主题',
+    topicPlaceholder: '例如：后端架构能力',
+    notes: '补充说明',
+    notesPlaceholder: '可选：补充重点考察方向',
+    settings: '设置',
+    generating: '生成中…',
+    generate: '生成测评',
+    sample: '使用示例试卷',
+  },
+  history: {
+    kicker: '历史',
+    title: '测评记录',
+    notice: '查看过往答题记录、作答选择、正确答案和题目解析。',
+    section: '历史测评',
+    empty: '还没有保存的测评记录。',
+    draft: '草稿',
+  },
+  settings: {
+    kicker: '设置',
+    title: '模型配置',
+    notice:
+      '只需配置一次 OpenAI 兼容接口。原生应用会在可用时通过 Expo SecureStore 保存 API 密钥；网页端可能使用浏览器本地存储，请仅在可信设备上使用。',
+    section: '连接信息',
+    baseUrl: '接口地址（Base URL）',
+    apiKey: 'API 密钥',
+    model: '模型名称',
+    save: '保存配置',
+    testing: '测试中…',
+    test: '测试连接',
+  },
+  answer: {
+    previous: '上一题',
+    submit: '提交答案',
+    next: '下一题',
+    exit: '退出测评',
+  },
+  result: {
+    history: '历史结果',
+    current: '测评结果',
+    knowledgePoints: '知识点表现',
+    wrongQuestions: (count: number) => `错题（${count}）`,
+    noWrongAnswers: '没有错题。',
+    backToHistory: '返回历史',
+    createAnother: '再创建一份',
+  },
+  review: {
+    kicker: '题目解析',
+    yourAnswer: '你的答案：',
+    correctAnswer: '正确答案：',
+    back: '返回结果',
+    noAnswer: '未作答',
+  },
+  alerts: {
+    configAttention: '请检查模型配置',
+    configSaved: '配置已保存',
+    configSavedDetail: 'API 密钥仅保存在当前设备，并只会发送到你配置的模型服务。',
+    configRequired: '请先配置模型',
+    connectionWorks: '连接成功',
+    connectionWorksDetail: '模型服务已成功返回响应。',
+    connectionFailed: '连接失败',
+    unknownConnectionError: '未知连接错误。',
+    topicRequired: '请输入测评主题',
+    topicRequiredDetail: '请输入你希望测评的能力或知识领域。',
+    unknownGenerationError: '生成测评时发生未知错误。',
+    truncatedHint: '如果模型输出被截断，请尝试生成 50 道题。',
+    draftNotSaved: '草稿未保存',
+    draftNotSavedDetail: '测评已经打开，但未能保存到本地数据库。',
+    unanswered: '还有题目未作答',
+    unansweredDetail: (count: number) => `还有 ${count} 道题没有作答。`,
+    historyNotSaved: '结果未保存',
+    historyNotSavedDetail: '当前可以查看测评结果，但未能保存到本地历史记录。',
+    answerNotSaved: '答案未保存',
+    answerNotSavedDetail: '答案已在页面中选中，但未能保存到本地数据库。',
+  },
+} as const;
+
+const difficultyCopy: Record<QuestionDifficulty, string> = {
+  easy: '简单',
+  medium: '中等',
+  hard: '困难',
+};
+
+const exactErrors: Record<string, string> = {
+  'Base URL must be a valid URL.': '请输入有效的接口地址（Base URL）。',
+  'API Key is required.': '请输入 API 密钥。',
+  'Model is required.': '请输入模型名称。',
+  'Model provider did not return message content.': '模型服务没有返回消息内容。',
+  'Model response looked like HTML/XML instead of assessment JSON. Check the provider endpoint and model response format.':
+    '模型返回了 HTML/XML，而不是测评 JSON。请检查接口地址和模型输出格式。',
+  'Model response did not contain a JSON object.': '模型响应中没有找到 JSON 对象。',
+  'Model response contained a JSON-looking block, but it was not valid JSON.': '模型响应中包含类似 JSON 的内容，但格式无效。',
+};
+
+export function formatDifficulty(difficulty: QuestionDifficulty): string {
+  return difficultyCopy[difficulty];
+}
+
+export function formatQuestionProgress(current: number, total: number): string {
+  return `第 ${current} / ${total} 题`;
+}
+
+export function formatHistoryStatus(
+  status: AssessmentRecordStatus,
+  correctCount?: number,
+  totalQuestions?: number,
+): string {
+  return status === 'completed' && correctCount !== undefined && totalQuestions !== undefined
+    ? `答对 ${correctCount}/${totalQuestions} 题`
+    : '进行中';
+}
+
+export function formatChineseDate(value: string): string {
+  return new Date(value).toLocaleString('zh-CN', {
+    month: 'long',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
+export function localizeErrorMessage(message: string): string {
+  if (exactErrors[message]) return exactErrors[message];
+
+  const providerStatus = message.match(/^Model provider returned (\d+):\s*(.*)$/s);
+  if (providerStatus) return `模型服务返回 ${providerStatus[1]}：${providerStatus[2]}`;
+
+  const providerMediaType = message.match(/^Model provider returned (.+) instead of JSON\./s);
+  if (providerMediaType) return `模型服务返回了 ${providerMediaType[1]}，而不是 JSON。请检查接口地址是否指向 OpenAI 兼容的 /v1 端点。`;
+
+  const invalidJson = message.match(/^Model provider response was not valid JSON:\s*(.*)$/s);
+  if (invalidJson) return `模型服务返回的不是有效 JSON：${invalidJson[1]}`;
+
+  const invalidAssessment = message.match(/^Generated assessment is invalid:\s*(.*)$/s);
+  if (invalidAssessment) return `生成的测评数据不完整：${invalidAssessment[1]}`;
+
+  return message;
+}

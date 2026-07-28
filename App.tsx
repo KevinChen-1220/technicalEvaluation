@@ -25,6 +25,14 @@ import { scoreAssessment } from './src/features/assessment/scoring';
 import type { AssessmentPaper, AssessmentQuestion, AssessmentResult, PersistedAssessmentRecord } from './src/features/assessment/types';
 import { loadModelConfig, saveModelConfig } from './src/features/config/secureConfigStore';
 import { type ModelConfig, validateModelConfig } from './src/features/config/modelConfig';
+import {
+  formatChineseDate,
+  formatDifficulty,
+  formatHistoryStatus,
+  formatQuestionProgress,
+  localizeErrorMessage,
+  zhCN,
+} from './src/i18n/zhCN';
 import { createChatCompletion } from './src/services/aiClient';
 import { theme } from './src/theme';
 
@@ -67,29 +75,32 @@ export default function App() {
   async function handleSaveConfig() {
     const validation = validateModelConfig(config);
     if (!validation.ok) {
-      Alert.alert('Configuration needs attention', validation.errors.join('\n'));
+      Alert.alert(zhCN.alerts.configAttention, validation.errors.map(localizeErrorMessage).join('\n'));
       return;
     }
     await saveModelConfig(config);
-    Alert.alert('Configuration saved', 'Your API key stays on this device and is sent only to your configured provider.');
+    Alert.alert(zhCN.alerts.configSaved, zhCN.alerts.configSavedDetail);
   }
 
   async function handleTestConnection() {
     const validation = validateModelConfig(config);
     if (!validation.ok) {
-      Alert.alert('Add model configuration first', validation.errors.join('\n'));
+      Alert.alert(zhCN.alerts.configRequired, validation.errors.map(localizeErrorMessage).join('\n'));
       return;
     }
 
     setIsTesting(true);
     try {
       await createChatCompletion(config, [
-        { role: 'system', content: 'Reply with OK.' },
-        { role: 'user', content: 'Connection test.' },
+        { role: 'system', content: '只回复 OK。' },
+        { role: 'user', content: '连接测试。' },
       ]);
-      Alert.alert('Connection works', 'The configured provider returned a response.');
+      Alert.alert(zhCN.alerts.connectionWorks, zhCN.alerts.connectionWorksDetail);
     } catch (error) {
-      Alert.alert('Connection failed', error instanceof Error ? error.message : 'Unknown connection error.');
+      Alert.alert(
+        zhCN.alerts.connectionFailed,
+        error instanceof Error ? localizeErrorMessage(error.message) : zhCN.alerts.unknownConnectionError,
+      );
     } finally {
       setIsTesting(false);
     }
@@ -98,12 +109,12 @@ export default function App() {
   async function handleGenerate() {
     const validation = validateModelConfig(config);
     if (!validation.ok) {
-      Alert.alert('Add model configuration first', validation.errors.join('\n'));
+      Alert.alert(zhCN.alerts.configRequired, validation.errors.map(localizeErrorMessage).join('\n'));
       setActiveTab('settings');
       return;
     }
     if (!topic.trim()) {
-      Alert.alert('Topic required', 'Enter the capability you want to assess.');
+      Alert.alert(zhCN.alerts.topicRequired, zhCN.alerts.topicRequiredDetail);
       return;
     }
 
@@ -113,8 +124,8 @@ export default function App() {
       const generated = await generateAssessment({ topic, questionCount, notes }, config);
       await beginAssessment(generated);
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown generation error.';
-      setGenerationError(questionCount === 100 ? `${message} Try 50 questions if the provider truncated the output.` : message);
+      const message = error instanceof Error ? localizeErrorMessage(error.message) : zhCN.alerts.unknownGenerationError;
+      setGenerationError(questionCount === 100 ? `${message} ${zhCN.alerts.truncatedHint}` : message);
     } finally {
       setIsGenerating(false);
     }
@@ -134,7 +145,7 @@ export default function App() {
       setHistory(await listAssessmentRecords());
     } catch {
       setCurrentRecordId(null);
-      Alert.alert('Draft not saved', 'The assessment opened, but it could not be saved to the local database.');
+      Alert.alert(zhCN.alerts.draftNotSaved, zhCN.alerts.draftNotSavedDetail);
     }
     setScreen('answer');
   }
@@ -165,7 +176,7 @@ export default function App() {
   async function submitAnswers() {
     const unanswered = paper.questions.filter((question) => !answers[question.id]?.length);
     if (unanswered.length > 0) {
-      Alert.alert('Keep going', `${unanswered.length} questions still need an answer.`);
+      Alert.alert(zhCN.alerts.unanswered, zhCN.alerts.unansweredDetail(unanswered.length));
       return;
     }
 
@@ -182,7 +193,7 @@ export default function App() {
       await completeAssessment({ id: recordId, answers, result: nextResult, submittedAt });
       setHistory(await listAssessmentRecords());
     } catch {
-      Alert.alert('History not saved', 'Your result is available now, but it could not be saved to local history.');
+      Alert.alert(zhCN.alerts.historyNotSaved, zhCN.alerts.historyNotSavedDetail);
     }
   }
 
@@ -217,7 +228,7 @@ export default function App() {
       await updateAssessmentAnswers({ id: currentRecordId, answers: nextAnswers });
       setHistory(await listAssessmentRecords());
     } catch {
-      Alert.alert('Answer not saved', 'Your answer is selected on screen, but it could not be saved to the local database.');
+      Alert.alert(zhCN.alerts.answerNotSaved, zhCN.alerts.answerNotSavedDetail);
     }
   }
 
@@ -231,32 +242,30 @@ export default function App() {
               <View style={styles.stack}>
                 <View style={styles.header}>
                   <Text style={styles.kicker}>SkillScope</Text>
-                  <Text style={styles.title}>Dynamic ability assessment</Text>
-                  <Text style={styles.notice}>
-                    Topics and generated prompts are sent directly to the provider you configure. No backend is used.
-                  </Text>
+                  <Text style={styles.title}>{zhCN.assess.title}</Text>
+                  <Text style={styles.notice}>{zhCN.assess.notice}</Text>
                 </View>
 
-                <Section title="Assessment Brief">
+                <Section title={zhCN.assess.section}>
                   <View style={styles.configStatus}>
                     <View style={styles.configText}>
-                      <Text style={styles.label}>Model Provider</Text>
+                      <Text style={styles.label}>{zhCN.assess.provider}</Text>
                       <Text style={styles.notice}>
-                        {configIsReady ? `Configured: ${config.model}` : 'Configure a provider once before generating assessments.'}
+                        {configIsReady ? zhCN.assess.configured(config.model) : zhCN.assess.configureProvider}
                       </Text>
                     </View>
-                    <Button label="Settings" onPress={() => setActiveTab('settings')} tone="secondary" />
+                    <Button label={zhCN.assess.settings} onPress={() => setActiveTab('settings')} tone="secondary" />
                   </View>
-                  <Input label="Topic" value={topic} onChangeText={setTopic} placeholder="例如：后端架构能力" />
-                  <Input label="Notes" value={notes} onChangeText={setNotes} placeholder="可选：补充重点考察方向" multiline />
+                  <Input label={zhCN.assess.topic} value={topic} onChangeText={setTopic} placeholder={zhCN.assess.topicPlaceholder} />
+                  <Input label={zhCN.assess.notes} value={notes} onChangeText={setNotes} placeholder={zhCN.assess.notesPlaceholder} multiline />
                   <View style={styles.segment}>
                     <Chip label="50" active={questionCount === 50} onPress={() => setQuestionCount(50)} />
                     <Chip label="100" active={questionCount === 100} onPress={() => setQuestionCount(100)} />
                   </View>
                   {generationError ? <Text style={styles.error}>{generationError}</Text> : null}
-                  <Button label={isGenerating ? 'Generating' : 'Generate'} onPress={handleGenerate} disabled={isGenerating} />
+                  <Button label={isGenerating ? zhCN.assess.generating : zhCN.assess.generate} onPress={handleGenerate} disabled={isGenerating} />
                   {isGenerating ? <ActivityIndicator color={theme.colors.accent} /> : null}
-                  <Button label="Use Sample Paper" onPress={startSamplePaper} tone="secondary" />
+                  <Button label={zhCN.assess.sample} onPress={startSamplePaper} tone="secondary" />
                 </Section>
               </View>
             ) : null}
@@ -264,13 +273,13 @@ export default function App() {
             {activeTab === 'history' ? (
               <View style={styles.stack}>
                 <View style={styles.header}>
-                  <Text style={styles.kicker}>History</Text>
-                  <Text style={styles.title}>Past attempts</Text>
-                  <Text style={styles.notice}>Open a completed assessment to review your choices, correct answers, and explanations.</Text>
+                  <Text style={styles.kicker}>{zhCN.history.kicker}</Text>
+                  <Text style={styles.title}>{zhCN.history.title}</Text>
+                  <Text style={styles.notice}>{zhCN.history.notice}</Text>
                 </View>
 
-                <Section title="Completed Assessments">
-                  {history.length === 0 ? <Text style={styles.notice}>No saved assessments yet.</Text> : null}
+                <Section title={zhCN.history.section}>
+                  {history.length === 0 ? <Text style={styles.notice}>{zhCN.history.empty}</Text> : null}
                   {history.map((record) => (
                     <HistoryRow key={record.id} record={record} onPress={() => openHistoryRecord(record)} />
                   ))}
@@ -281,37 +290,34 @@ export default function App() {
             {activeTab === 'settings' ? (
               <View style={styles.stack}>
                 <View style={styles.header}>
-                  <Text style={styles.kicker}>Settings</Text>
-                  <Text style={styles.title}>Model provider</Text>
-                  <Text style={styles.notice}>
-                    Enter an OpenAI-compatible endpoint once. Native apps store your API key with Expo SecureStore when
-                    available; web may fall back to browser-local storage and should be used only on a trusted device.
-                  </Text>
+                  <Text style={styles.kicker}>{zhCN.settings.kicker}</Text>
+                  <Text style={styles.title}>{zhCN.settings.title}</Text>
+                  <Text style={styles.notice}>{zhCN.settings.notice}</Text>
                 </View>
 
-                <Section title="Connection">
+                <Section title={zhCN.settings.section}>
                   <Input
-                    label="Base URL"
+                    label={zhCN.settings.baseUrl}
                     value={config.baseUrl}
                     onChangeText={(baseUrl) => setConfig((value) => ({ ...value, baseUrl }))}
                     placeholder="https://api.openai.com/v1"
                   />
                   <Input
-                    label="API Key"
+                    label={zhCN.settings.apiKey}
                     value={config.apiKey}
                     onChangeText={(apiKey) => setConfig((value) => ({ ...value, apiKey }))}
                     placeholder="sk-..."
                     secureTextEntry
                   />
                   <Input
-                    label="Model"
+                    label={zhCN.settings.model}
                     value={config.model}
                     onChangeText={(model) => setConfig((value) => ({ ...value, model }))}
                     placeholder="gpt-4.1-mini"
                   />
                   <View style={styles.row}>
-                    <Button label="Save" onPress={handleSaveConfig} />
-                    <Button label={isTesting ? 'Testing' : 'Test'} onPress={handleTestConnection} tone="secondary" disabled={isTesting} />
+                    <Button label={zhCN.settings.save} onPress={handleSaveConfig} />
+                    <Button label={isTesting ? zhCN.settings.testing : zhCN.settings.test} onPress={handleTestConnection} tone="secondary" disabled={isTesting} />
                   </View>
                 </Section>
               </View>
@@ -326,13 +332,13 @@ export default function App() {
           <View style={styles.stack}>
             <Text style={styles.kicker}>{paper.topic}</Text>
             <Text style={styles.progress}>
-              Question {questionIndex + 1} of {paper.questions.length}
+              {formatQuestionProgress(questionIndex + 1, paper.questions.length)}
             </Text>
             <Text style={styles.question}>
               {questionIndex + 1}. {currentQuestion.prompt}
             </Text>
             <Text style={styles.questionMeta}>
-              {currentQuestion.difficulty} · {currentQuestion.knowledgePoint}
+              {formatDifficulty(currentQuestion.difficulty)} · {currentQuestion.knowledgePoint}
             </Text>
             <View style={styles.stack}>
               {currentQuestion.options.map((option) => {
@@ -341,14 +347,14 @@ export default function App() {
               })}
             </View>
             <View style={styles.row}>
-              <Button label="Previous" onPress={() => setQuestionIndex((index) => Math.max(0, index - 1))} tone="secondary" disabled={questionIndex === 0} />
+              <Button label={zhCN.answer.previous} onPress={() => setQuestionIndex((index) => Math.max(0, index - 1))} tone="secondary" disabled={questionIndex === 0} />
               {questionIndex === paper.questions.length - 1 ? (
-                <Button label="Submit" onPress={submitAnswers} />
+                <Button label={zhCN.answer.submit} onPress={submitAnswers} />
               ) : (
-                <Button label="Next" onPress={() => setQuestionIndex((index) => Math.min(paper.questions.length - 1, index + 1))} />
+                <Button label={zhCN.answer.next} onPress={() => setQuestionIndex((index) => Math.min(paper.questions.length - 1, index + 1))} />
               )}
             </View>
-            <Button label="Exit" onPress={() => setScreen('main')} tone="secondary" />
+            <Button label={zhCN.answer.exit} onPress={() => setScreen('main')} tone="secondary" />
           </View>
         </ScrollView>
       ) : null}
@@ -356,21 +362,21 @@ export default function App() {
       {screen === 'result' && result ? (
         <ScrollView contentContainerStyle={styles.container}>
           <View style={styles.stack}>
-            <Text style={styles.kicker}>{resultMode === 'history' ? 'History Result' : 'Result'}</Text>
+            <Text style={styles.kicker}>{resultMode === 'history' ? zhCN.result.history : zhCN.result.current}</Text>
             <Text style={styles.title}>{result.level.title}</Text>
             <Text style={styles.score}>
               {result.score}/{result.totalQuestions} / {result.accuracy}%
             </Text>
             <Text style={styles.notice}>{result.level.summary}</Text>
-            <Section title="Knowledge Points">
+            <Section title={zhCN.result.knowledgePoints}>
               {result.knowledgePointResults.map((item) => (
                 <Text key={item.knowledgePoint} style={styles.metric}>
                   {item.knowledgePoint}: {item.correct}/{item.total} ({item.accuracy}%)
                 </Text>
               ))}
             </Section>
-            <Section title={`Wrong Questions (${result.wrongQuestionIds.length})`}>
-              {result.wrongQuestionIds.length === 0 ? <Text style={styles.notice}>No wrong answers.</Text> : null}
+            <Section title={zhCN.result.wrongQuestions(result.wrongQuestionIds.length)}>
+              {result.wrongQuestionIds.length === 0 ? <Text style={styles.notice}>{zhCN.result.noWrongAnswers}</Text> : null}
               {result.wrongQuestionIds.map((id) => {
                 const question = paper.questions.find((item) => item.id === id);
                 return question ? (
@@ -386,7 +392,7 @@ export default function App() {
                 ) : null;
               })}
             </Section>
-            <Button label={resultMode === 'history' ? 'Back to History' : 'Create Another'} onPress={closeResult} tone="secondary" />
+            <Button label={resultMode === 'history' ? zhCN.result.backToHistory : zhCN.result.createAnother} onPress={closeResult} tone="secondary" />
           </View>
         </ScrollView>
       ) : null}
@@ -394,15 +400,15 @@ export default function App() {
       {screen === 'review' && reviewQuestion ? (
         <ScrollView contentContainerStyle={styles.container}>
           <View style={styles.stack}>
-            <Text style={styles.kicker}>Review</Text>
+            <Text style={styles.kicker}>{zhCN.review.kicker}</Text>
             <Text style={styles.question}>{reviewQuestion.prompt}</Text>
             <Text style={styles.questionMeta}>
-              {reviewQuestion.difficulty} · {reviewQuestion.knowledgePoint}
+              {formatDifficulty(reviewQuestion.difficulty)} · {reviewQuestion.knowledgePoint}
             </Text>
-            <Text style={styles.metric}>Your answer: {formatOptions(reviewQuestion, answers[reviewQuestion.id] ?? [])}</Text>
-            <Text style={styles.metric}>Correct answer: {formatOptions(reviewQuestion, reviewQuestion.correctOptionIds)}</Text>
+            <Text style={styles.metric}>{zhCN.review.yourAnswer}{formatOptions(reviewQuestion, answers[reviewQuestion.id] ?? [])}</Text>
+            <Text style={styles.metric}>{zhCN.review.correctAnswer}{formatOptions(reviewQuestion, reviewQuestion.correctOptionIds)}</Text>
             <Text style={styles.notice}>{reviewQuestion.explanation}</Text>
-            <Button label="Back to Results" onPress={() => setScreen('result')} />
+            <Button label={zhCN.review.back} onPress={() => setScreen('result')} />
           </View>
         </ScrollView>
       ) : null}
@@ -480,9 +486,9 @@ function Option({ label, active, onPress }: { label: string; active: boolean; on
 function TabBar({ activeTab, onChange }: { activeTab: MainTab; onChange: (tab: MainTab) => void }) {
   return (
     <View style={styles.tabBar}>
-      <TabButton label="Assess" active={activeTab === 'assess'} onPress={() => onChange('assess')} />
-      <TabButton label="History" active={activeTab === 'history'} onPress={() => onChange('history')} />
-      <TabButton label="Settings" active={activeTab === 'settings'} onPress={() => onChange('settings')} />
+      <TabButton label={zhCN.tabs.assess} active={activeTab === 'assess'} onPress={() => onChange('assess')} />
+      <TabButton label={zhCN.tabs.history} active={activeTab === 'history'} onPress={() => onChange('history')} />
+      <TabButton label={zhCN.tabs.settings} active={activeTab === 'settings'} onPress={() => onChange('settings')} />
     </View>
   );
 }
@@ -501,27 +507,18 @@ function HistoryRow({ record, onPress }: { record: PersistedAssessmentRecord; on
       <View style={styles.historyText}>
         <Text style={styles.historyTitle}>{record.paper.topic}</Text>
         <Text style={styles.notice}>
-          {formatDate(record.submittedAt ?? record.updatedAt)} / {record.status === 'completed' && record.result ? `${record.result.correctCount}/${record.result.totalQuestions} correct` : 'In progress'}
+          {formatChineseDate(record.submittedAt ?? record.updatedAt)} / {formatHistoryStatus(record.status, record.result?.correctCount, record.result?.totalQuestions)}
         </Text>
       </View>
       <View style={styles.scorePill}>
-        <Text style={styles.scorePillText}>{record.status === 'completed' && record.result ? `${record.result.accuracy}%` : 'Draft'}</Text>
+        <Text style={styles.scorePillText}>{record.status === 'completed' && record.result ? `${record.result.accuracy}%` : zhCN.history.draft}</Text>
       </View>
     </Pressable>
   );
 }
 
 function formatOptions(question: AssessmentQuestion, ids: string[]): string {
-  return ids.map((id) => question.options.find((option) => option.id === id)?.text ?? id).join(', ') || 'No answer';
-}
-
-function formatDate(value: string): string {
-  return new Date(value).toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+  return ids.map((id) => question.options.find((option) => option.id === id)?.text ?? id).join('、') || zhCN.review.noAnswer;
 }
 
 const styles = StyleSheet.create({

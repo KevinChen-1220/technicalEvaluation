@@ -21,7 +21,7 @@ describe('scoreAssessment', () => {
     expect(result.correctCount).toBe(3);
     expect(result.score).toBe(3);
     expect(result.accuracy).toBe(75);
-    expect(result.level.title).toBe('Proficient');
+    expect(result.level.title).toBe('熟练掌握');
     expect(result.wrongQuestionIds).toEqual(['q4']);
     expect(result.questionResults).toEqual([
       { questionId: 'q1', isCorrect: true, userOptionIds: ['B'], correctOptionIds: ['B'] },
@@ -30,9 +30,9 @@ describe('scoreAssessment', () => {
       { questionId: 'q4', isCorrect: false, userOptionIds: ['A', 'C'], correctOptionIds: ['A', 'B', 'C'] },
     ]);
     expect(result.knowledgePointResults).toEqual([
-      { knowledgePoint: 'Architecture', total: 1, correct: 1, accuracy: 100 },
-      { knowledgePoint: 'Concurrency', total: 2, correct: 1, accuracy: 50 },
-      { knowledgePoint: 'Memory', total: 1, correct: 1, accuracy: 100 },
+      { knowledgePoint: '并发编程', total: 2, correct: 1, accuracy: 50 },
+      { knowledgePoint: '内存管理', total: 1, correct: 1, accuracy: 100 },
+      { knowledgePoint: '应用架构', total: 1, correct: 1, accuracy: 100 },
     ]);
   });
 });

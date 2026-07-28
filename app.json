@@ -3,7 +3,7 @@
     "name": "SkillScope",
     "slug": "dynamic-assessment-app",
     "version": "1.0.0",
-    "description": "Generate local-first skill assessments with your own OpenAI-compatible model.",
+    "description": "使用自己的 OpenAI 兼容模型生成本地优先的技能测评。",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
     "icon": "./assets/icon.png",

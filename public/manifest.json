@@ -1,7 +1,7 @@
 {
   "name": "SkillScope",
   "short_name": "SkillScope",
-  "description": "Generate local-first skill assessments with your own OpenAI-compatible model.",
+  "description": "使用自己的 OpenAI 兼容模型生成本地优先的技能测评。",
   "start_url": "/technicalEvaluation/",
   "scope": "/technicalEvaluation/",
   "display": "standalone",

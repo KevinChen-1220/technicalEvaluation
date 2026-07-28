@@ -6,12 +6,12 @@ const expected = {
   assetPrefix: '/technicalEvaluation/',
   canonicalUrl: 'https://kevinchen-1220.github.io/technicalEvaluation/',
   description:
-    'Generate 50- or 100-question skill assessments with your own OpenAI-compatible model, then score and review them locally.',
+    '使用自己的 OpenAI 兼容模型生成 50 或 100 道技能测评题，并在本地完成答题、评分和复盘。',
   faviconUrl: '/technicalEvaluation/favicon.svg',
   manifestUrl: '/technicalEvaluation/manifest.json',
   socialImageUrl: 'https://kevinchen-1220.github.io/technicalEvaluation/social-preview.png',
   themeColor: '#1F7A68',
-  title: 'SkillScope - AI-Powered Skill Assessments',
+  title: 'SkillScope - AI 智能技能测评',
 };
 
 const failures = [];
@@ -39,6 +39,10 @@ const [html, manifestText, robots, sitemap, favicon] = await Promise.all([
   readRequiredFile('favicon.svg'),
 ]);
 
+check(
+  html.includes('<html lang="zh-CN">'),
+  'dist/index.html must set the document language to zh-CN.',
+);
 check(
   html.includes(`<title>${expected.title}</title>`),
   `dist/index.html must include the exact title "${expected.title}".`,
@@ -108,6 +112,10 @@ if (manifestText) {
   try {
     const manifest = JSON.parse(manifestText);
     check(manifest.name === 'SkillScope', 'dist/manifest.json name must be "SkillScope".');
+    check(
+      manifest.description === '使用自己的 OpenAI 兼容模型生成本地优先的技能测评。',
+      'dist/manifest.json must include the Chinese description.',
+    );
     check(manifest.start_url === '/technicalEvaluation/', 'dist/manifest.json start_url must be /technicalEvaluation/.');
     check(manifest.scope === '/technicalEvaluation/', 'dist/manifest.json scope must be /technicalEvaluation/.');
     check(manifest.display === 'standalone', 'dist/manifest.json display must be standalone.');
