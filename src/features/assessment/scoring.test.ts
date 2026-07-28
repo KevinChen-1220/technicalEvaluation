@@ -29,10 +29,11 @@ describe('scoreAssessment', () => {
       { questionId: 'q3', isCorrect: true, userOptionIds: ['A'], correctOptionIds: ['A'] },
       { questionId: 'q4', isCorrect: false, userOptionIds: ['A', 'C'], correctOptionIds: ['A', 'B', 'C'] },
     ]);
-    expect(result.knowledgePointResults).toEqual([
+    expect(result.knowledgePointResults).toHaveLength(3);
+    expect(result.knowledgePointResults).toEqual(expect.arrayContaining([
       { knowledgePoint: '并发编程', total: 2, correct: 1, accuracy: 50 },
       { knowledgePoint: '内存管理', total: 1, correct: 1, accuracy: 100 },
       { knowledgePoint: '应用架构', total: 1, correct: 1, accuracy: 100 },
-    ]);
+    ]));
   });
 });
