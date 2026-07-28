@@ -143,7 +143,28 @@ export function localizeErrorMessage(message: string): string {
   if (invalidJson) return `模型服务返回的不是有效 JSON：${invalidJson[1]}`;
 
   const invalidAssessment = message.match(/^Generated assessment is invalid:\s*(.*)$/s);
-  if (invalidAssessment) return `生成的测评数据不完整：${invalidAssessment[1]}`;
+  if (invalidAssessment) return `生成的测评数据不完整：${localizeValidationDetails(invalidAssessment[1] ?? '')}`;
 
   return message;
+}
+
+function localizeValidationDetails(details: string): string {
+  return details
+    .replace(/Question count must be 50 or 100\./g, '题目数量必须为 50 或 100 道。')
+    .replace(/Questions must be an array\./g, '题目列表必须是数组。')
+    .replace(/Expected (\d+) questions but received (\d+)\./g, '应生成 $1 道题，但实际收到 $2 道。')
+    .replace(/Scoring levels are required\./g, '缺少评分等级。')
+    .replace(/Scoring levels must cover 0 through 100 percent without gaps\./g, '评分等级必须连续覆盖 0% 到 100%。')
+    .replace(/Question ([^ ]+) prompt is required\./g, '第 $1 题缺少题目内容。')
+    .replace(/Question ([^ ]+) has unsupported type ([^.]+)\./g, '第 $1 题使用了不支持的题型 $2。')
+    .replace(/Question ([^ ]+) has unsupported difficulty ([^.]+)\./g, '第 $1 题使用了不支持的难度 $2。')
+    .replace(/Question ([^ ]+) knowledgePoint is required\./g, '第 $1 题缺少知识点。')
+    .replace(/Question ([^ ]+) must have at least two options\./g, '第 $1 题至少需要两个选项。')
+    .replace(/Question ([^ ]+) option ([^ ]+) text is required\./g, '第 $1 题的 $2 选项缺少内容。')
+    .replace(/Question ([^ ]+) correctOptionIds must be an array\./g, '第 $1 题的正确答案必须是数组。')
+    .replace(/Question ([^ ]+) correct option ([^ ]+) does not exist in options\./g, '第 $1 题的正确答案 $2 不在选项中。')
+    .replace(/Question ([^ ]+) (single_choice|true_false) questions must have exactly one correct option\./g, '第 $1 题必须且只能有一个正确选项。')
+    .replace(/Question ([^ ]+) multiple_choice questions must have at least one correct option\./g, '第 $1 题至少需要一个正确选项。')
+    .replace(/Question ([^ ]+) explanation is required\./g, '第 $1 题缺少答案解析。')
+    .replace(/。\s+/g, '。');
 }

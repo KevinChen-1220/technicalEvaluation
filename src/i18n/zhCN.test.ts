@@ -41,4 +41,12 @@ describe('zhCN interface copy', () => {
   it('keeps unknown provider details visible', () => {
     expect(localizeErrorMessage('custom provider failure')).toBe('custom provider failure');
   });
+
+  it('localizes generated assessment validation details', () => {
+    expect(
+      localizeErrorMessage(
+        'Generated assessment is invalid: Expected 50 questions but received 49. Question 1 prompt is required.',
+      ),
+    ).toBe('生成的测评数据不完整：应生成 50 道题，但实际收到 49 道。第 1 题缺少题目内容。');
+  });
 });
