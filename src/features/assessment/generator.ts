@@ -152,11 +152,19 @@ function parseAssessmentPaper(content: string): AssessmentPaper {
     throw new RetryableGenerationError(error instanceof Error ? error.message : String(error));
   }
 
-  const validation = validateAssessmentPaper(parsed);
+  try {
+    const validation = validateAssessmentPaper(parsed);
 
-  if (!validation.ok) {
-    throw new RetryableGenerationError(`Generated assessment is invalid: ${validation.errors.join(' ')}`);
+    if (!validation.ok) {
+      throw new RetryableGenerationError(`Generated assessment is invalid: ${validation.errors.join(' ')}`);
+    }
+
+    return validation.paper;
+  } catch (error) {
+    if (error instanceof RetryableGenerationError) {
+      throw error;
+    }
+
+    throw new RetryableGenerationError(error instanceof Error ? error.message : String(error));
   }
-
-  return validation.paper;
 }

@@ -161,6 +161,18 @@ describe('generateAssessment', () => {
     expect(retryPrompt).toContain('Regenerate the complete JSON object from scratch.');
   });
 
+  it('retries when validation throws for malformed question structures', async () => {
+    const completionFn = jest.fn()
+      .mockResolvedValueOnce(JSON.stringify({ ...validGeneratedPaper, questions: [null] }))
+      .mockResolvedValueOnce(JSON.stringify(validGeneratedPaper));
+
+    await expect(generateAssessment({ topic: 'iOS', questionCount: 50 }, config, completionFn)).resolves.toEqual(
+      validGeneratedPaper,
+    );
+
+    expect(completionFn).toHaveBeenCalledTimes(2);
+  });
+
   it('does not retry HTML or XML model output', async () => {
     const completionFn = jest.fn()
       .mockResolvedValueOnce('<html><body>Login required</body></html>')
