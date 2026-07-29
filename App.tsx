@@ -32,6 +32,7 @@ import {
 } from './src/i18n/zhCN';
 import { createChatCompletion } from './src/services/aiClient';
 import { LoadingDots } from './src/components/LoadingDots';
+import { shouldDimButton } from './src/components/loadingAnimation';
 import { ScreenScroll } from './src/components/ScreenScroll';
 import { theme } from './src/theme';
 
@@ -472,7 +473,7 @@ function Button({
   loading?: boolean;
 }) {
   return (
-    <Pressable onPress={onPress} disabled={disabled} style={[styles.button, tone === 'secondary' ? styles.secondaryButton : null, disabled ? styles.disabled : null]}>
+    <Pressable onPress={onPress} disabled={disabled} style={[styles.button, tone === 'secondary' ? styles.secondaryButton : null, shouldDimButton(disabled, loading) ? styles.disabled : null]}>
       <View style={styles.buttonContent}>
         <Text style={[styles.buttonText, tone === 'secondary' ? styles.secondaryButtonText : null]}>{label}</Text>
         {loading ? <LoadingDots /> : null}
