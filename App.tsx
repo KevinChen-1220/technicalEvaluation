@@ -4,13 +4,12 @@ import {
   ActivityIndicator,
   Alert,
   Pressable,
-  SafeAreaView,
-  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   completeAssessment,
   createAssessmentDraft,
@@ -34,6 +33,7 @@ import {
   zhCN,
 } from './src/i18n/zhCN';
 import { createChatCompletion } from './src/services/aiClient';
+import { ScreenScroll } from './src/components/ScreenScroll';
 import { theme } from './src/theme';
 
 type MainTab = 'assess' | 'history' | 'settings';
@@ -43,6 +43,15 @@ type ResultMode = 'current' | 'history';
 const emptyConfig: ModelConfig = { baseUrl: '', apiKey: '', model: '' };
 
 export default function App() {
+  return (
+    <SafeAreaProvider>
+      <AppContent />
+    </SafeAreaProvider>
+  );
+}
+
+function AppContent() {
+  const insets = useSafeAreaInsets();
   const [screen, setScreen] = useState<Screen>('main');
   const [activeTab, setActiveTab] = useState<MainTab>('assess');
   const [config, setConfig] = useState<ModelConfig>(emptyConfig);
@@ -233,11 +242,11 @@ export default function App() {
   }
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <View style={styles.safeArea}>
       <StatusBar style="dark" />
       {screen === 'main' ? (
         <View style={styles.appShell}>
-          <ScrollView contentContainerStyle={styles.container}>
+          <ScreenScroll hasTabs>
             {activeTab === 'assess' ? (
               <View style={styles.stack}>
                 <View style={styles.header}>
@@ -322,13 +331,13 @@ export default function App() {
                 </Section>
               </View>
             ) : null}
-          </ScrollView>
-          <TabBar activeTab={activeTab} onChange={setActiveTab} />
+          </ScreenScroll>
+          <TabBar activeTab={activeTab} bottom={insets.bottom} onChange={setActiveTab} />
         </View>
       ) : null}
 
       {screen === 'answer' && currentQuestion ? (
-        <ScrollView contentContainerStyle={styles.container}>
+        <ScreenScroll>
           <View style={styles.stack}>
             <Text style={styles.kicker}>{paper.topic}</Text>
             <Text style={styles.progress}>
@@ -356,11 +365,11 @@ export default function App() {
             </View>
             <Button label={zhCN.answer.exit} onPress={() => setScreen('main')} tone="secondary" />
           </View>
-        </ScrollView>
+        </ScreenScroll>
       ) : null}
 
       {screen === 'result' && result ? (
-        <ScrollView contentContainerStyle={styles.container}>
+        <ScreenScroll>
           <View style={styles.stack}>
             <Text style={styles.kicker}>{resultMode === 'history' ? zhCN.result.history : zhCN.result.current}</Text>
             <Text style={styles.title}>{result.level.title}</Text>
@@ -394,11 +403,11 @@ export default function App() {
             </Section>
             <Button label={resultMode === 'history' ? zhCN.result.backToHistory : zhCN.result.createAnother} onPress={closeResult} tone="secondary" />
           </View>
-        </ScrollView>
+        </ScreenScroll>
       ) : null}
 
       {screen === 'review' && reviewQuestion ? (
-        <ScrollView contentContainerStyle={styles.container}>
+        <ScreenScroll>
           <View style={styles.stack}>
             <Text style={styles.kicker}>{zhCN.review.kicker}</Text>
             <Text style={styles.question}>{reviewQuestion.prompt}</Text>
@@ -410,9 +419,9 @@ export default function App() {
             <Text style={styles.notice}>{reviewQuestion.explanation}</Text>
             <Button label={zhCN.review.back} onPress={() => setScreen('result')} />
           </View>
-        </ScrollView>
+        </ScreenScroll>
       ) : null}
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -483,9 +492,9 @@ function Option({ label, active, onPress }: { label: string; active: boolean; on
   );
 }
 
-function TabBar({ activeTab, onChange }: { activeTab: MainTab; onChange: (tab: MainTab) => void }) {
+function TabBar({ activeTab, bottom, onChange }: { activeTab: MainTab; bottom: number; onChange: (tab: MainTab) => void }) {
   return (
-    <View style={styles.tabBar}>
+    <View style={[styles.tabBar, { paddingBottom: theme.spacing.md + bottom }]}>
       <TabButton label={zhCN.tabs.assess} active={activeTab === 'assess'} onPress={() => onChange('assess')} />
       <TabButton label={zhCN.tabs.history} active={activeTab === 'history'} onPress={() => onChange('history')} />
       <TabButton label={zhCN.tabs.settings} active={activeTab === 'settings'} onPress={() => onChange('settings')} />
@@ -524,7 +533,6 @@ function formatOptions(question: AssessmentQuestion, ids: string[]): string {
 const styles = StyleSheet.create({
   safeArea: { flex: 1, backgroundColor: theme.colors.canvas },
   appShell: { flex: 1 },
-  container: { gap: theme.spacing.lg, padding: theme.spacing.lg, paddingBottom: theme.spacing.xl + 72 },
   stack: { gap: theme.spacing.md },
   header: { gap: theme.spacing.sm, paddingBottom: theme.spacing.sm },
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.sm },
@@ -569,7 +577,6 @@ const styles = StyleSheet.create({
     left: 0,
     paddingHorizontal: theme.spacing.md,
     paddingTop: theme.spacing.sm,
-    paddingBottom: theme.spacing.md,
     position: 'absolute',
     right: 0,
   },
