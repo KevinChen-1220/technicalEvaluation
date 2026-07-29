@@ -1,7 +1,6 @@
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState, type ReactNode } from 'react';
 import {
-  ActivityIndicator,
   Alert,
   Pressable,
   StyleSheet,
@@ -19,7 +18,6 @@ import {
 import { defaultAssessmentBrief } from './src/features/assessment/assessmentBriefDefaults';
 import { generateAssessment } from './src/features/assessment/generator';
 import { migrateLegacyAssessmentHistory } from './src/features/assessment/legacyHistoryMigration';
-import { samplePaper } from './src/features/assessment/samplePaper';
 import { scoreAssessment } from './src/features/assessment/scoring';
 import type { AssessmentPaper, AssessmentQuestion, AssessmentResult, PersistedAssessmentRecord } from './src/features/assessment/types';
 import { loadModelConfig, saveModelConfig } from './src/features/config/secureConfigStore';
@@ -33,6 +31,7 @@ import {
   zhCN,
 } from './src/i18n/zhCN';
 import { createChatCompletion } from './src/services/aiClient';
+import { LoadingDots } from './src/components/LoadingDots';
 import { ScreenScroll } from './src/components/ScreenScroll';
 import { theme } from './src/theme';
 
@@ -58,7 +57,7 @@ function AppContent() {
   const [topic, setTopic] = useState(defaultAssessmentBrief.topic);
   const [notes, setNotes] = useState(defaultAssessmentBrief.notes);
   const [questionCount, setQuestionCount] = useState<50 | 100>(50);
-  const [paper, setPaper] = useState<AssessmentPaper>(samplePaper);
+  const [paper, setPaper] = useState<AssessmentPaper | null>(null);
   const [answers, setAnswers] = useState<Record<string, string[]>>({});
   const [result, setResult] = useState<AssessmentResult | null>(null);
   const [resultMode, setResultMode] = useState<ResultMode>('current');
@@ -77,8 +76,8 @@ function AppContent() {
     refreshHistory();
   }, []);
 
-  const currentQuestion = paper.questions[questionIndex];
-  const reviewQuestion = paper.questions.find((question) => question.id === reviewQuestionId) ?? paper.questions[0];
+  const currentQuestion = paper?.questions[questionIndex];
+  const reviewQuestion = paper?.questions.find((question) => question.id === reviewQuestionId) ?? paper?.questions[0];
   const configIsReady = validateModelConfig(config).ok;
 
   async function handleSaveConfig() {
@@ -159,10 +158,6 @@ function AppContent() {
     setScreen('answer');
   }
 
-  function startSamplePaper() {
-    void beginAssessment(samplePaper);
-  }
-
   function toggleAnswer(optionId: string) {
     if (!currentQuestion) return;
 
@@ -183,6 +178,8 @@ function AppContent() {
   }
 
   async function submitAnswers() {
+    if (!paper) return;
+
     const unanswered = paper.questions.filter((question) => !answers[question.id]?.length);
     if (unanswered.length > 0) {
       Alert.alert(zhCN.alerts.unanswered, zhCN.alerts.unansweredDetail(unanswered.length));
@@ -272,9 +269,12 @@ function AppContent() {
                     <Chip label="100" active={questionCount === 100} onPress={() => setQuestionCount(100)} />
                   </View>
                   {generationError ? <Text style={styles.error}>{generationError}</Text> : null}
-                  <Button label={isGenerating ? zhCN.assess.generating : zhCN.assess.generate} onPress={handleGenerate} disabled={isGenerating} />
-                  {isGenerating ? <ActivityIndicator color={theme.colors.accent} /> : null}
-                  <Button label={zhCN.assess.sample} onPress={startSamplePaper} tone="secondary" />
+                  <Button
+                    label={isGenerating ? zhCN.assess.generating : zhCN.assess.generate}
+                    onPress={handleGenerate}
+                    disabled={isGenerating}
+                    loading={isGenerating}
+                  />
                 </Section>
               </View>
             ) : null}
@@ -336,7 +336,7 @@ function AppContent() {
         </View>
       ) : null}
 
-      {screen === 'answer' && currentQuestion ? (
+      {screen === 'answer' && paper && currentQuestion ? (
         <ScreenScroll>
           <View style={styles.stack}>
             <Text style={styles.kicker}>{paper.topic}</Text>
@@ -368,7 +368,7 @@ function AppContent() {
         </ScreenScroll>
       ) : null}
 
-      {screen === 'result' && result ? (
+      {screen === 'result' && paper && result ? (
         <ScreenScroll>
           <View style={styles.stack}>
             <Text style={styles.kicker}>{resultMode === 'history' ? zhCN.result.history : zhCN.result.current}</Text>
@@ -406,7 +406,7 @@ function AppContent() {
         </ScreenScroll>
       ) : null}
 
-      {screen === 'review' && reviewQuestion ? (
+      {screen === 'review' && paper && reviewQuestion ? (
         <ScreenScroll>
           <View style={styles.stack}>
             <Text style={styles.kicker}>{zhCN.review.kicker}</Text>
@@ -463,15 +463,20 @@ function Button({
   onPress,
   tone = 'primary',
   disabled = false,
+  loading = false,
 }: {
   label: string;
   onPress: () => void;
   tone?: 'primary' | 'secondary';
   disabled?: boolean;
+  loading?: boolean;
 }) {
   return (
     <Pressable onPress={onPress} disabled={disabled} style={[styles.button, tone === 'secondary' ? styles.secondaryButton : null, disabled ? styles.disabled : null]}>
-      <Text style={[styles.buttonText, tone === 'secondary' ? styles.secondaryButtonText : null]}>{label}</Text>
+      <View style={styles.buttonContent}>
+        <Text style={[styles.buttonText, tone === 'secondary' ? styles.secondaryButtonText : null]}>{label}</Text>
+        {loading ? <LoadingDots /> : null}
+      </View>
     </Pressable>
   );
 }
@@ -554,6 +559,7 @@ const styles = StyleSheet.create({
   button: { alignItems: 'center', backgroundColor: theme.colors.ink, borderRadius: theme.radius.control, minHeight: 46, justifyContent: 'center', paddingHorizontal: theme.spacing.lg, paddingVertical: 12 },
   secondaryButton: { backgroundColor: theme.colors.accentSoft },
   disabled: { opacity: 0.45 },
+  buttonContent: { alignItems: 'center', flexDirection: 'row', gap: theme.spacing.sm },
   buttonText: { color: theme.colors.surface, fontSize: 15, fontWeight: '800' },
   secondaryButtonText: { color: theme.colors.ink },
   chip: { alignItems: 'center', borderRadius: theme.radius.pill, minWidth: 58, paddingHorizontal: theme.spacing.md, paddingVertical: theme.spacing.sm },

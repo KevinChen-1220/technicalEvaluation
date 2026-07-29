@@ -16,7 +16,6 @@ export const zhCN = {
     settings: '设置',
     generating: '生成中…',
     generate: '生成测评',
-    sample: '使用示例试卷',
   },
   history: {
     kicker: '历史',
