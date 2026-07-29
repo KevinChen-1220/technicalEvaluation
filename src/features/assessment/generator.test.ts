@@ -88,6 +88,13 @@ describe('extractJsonObject', () => {
     });
   });
 
+  it('repairs common model JSON formatting mistakes', () => {
+    expect(extractJsonObject("```json\n{'id':'paper-1','questions':[],}\n```"))
+      .toEqual({ id: 'paper-1', questions: [] });
+    expect(extractJsonObject('{"id":"paper-1","questions":[]'))
+      .toEqual({ id: 'paper-1', questions: [] });
+  });
+
   it('throws when provider text does not contain a JSON object', () => {
     expect(() => extractJsonObject('no json here')).toThrow('Model response did not contain a JSON object.');
   });
@@ -122,5 +129,47 @@ describe('generateAssessment', () => {
     await expect(generateAssessment({ topic: 'iOS', questionCount: 50 }, config, completionFn)).rejects.toThrow(
       'Generated assessment is invalid: Expected 50 questions but received 0.',
     );
+  });
+
+  it('retries malformed model output with a corrective complete prompt', async () => {
+    const completionFn = jest.fn()
+      .mockResolvedValueOnce('{broken')
+      .mockResolvedValueOnce(JSON.stringify(validGeneratedPaper));
+
+    await expect(generateAssessment({ topic: 'iOS', questionCount: 50 }, config, completionFn)).resolves.toEqual(
+      validGeneratedPaper,
+    );
+
+    expect(completionFn).toHaveBeenCalledTimes(2);
+    const retryPrompt = completionFn.mock.calls[1]?.[1][1]?.content;
+    expect(retryPrompt).toContain('Generated assessment is invalid:');
+    expect(retryPrompt).toContain('Regenerate the complete JSON object from scratch.');
+  });
+
+  it('retries structurally invalid model output with its failure reason', async () => {
+    const completionFn = jest.fn()
+      .mockResolvedValueOnce(JSON.stringify({ ...validGeneratedPaper, questions: [] }))
+      .mockResolvedValueOnce(JSON.stringify(validGeneratedPaper));
+
+    await expect(generateAssessment({ topic: 'iOS', questionCount: 50 }, config, completionFn)).resolves.toEqual(
+      validGeneratedPaper,
+    );
+
+    expect(completionFn).toHaveBeenCalledTimes(2);
+    const retryPrompt = completionFn.mock.calls[1]?.[1][1]?.content;
+    expect(retryPrompt).toContain('Generated assessment is invalid: Expected 50 questions but received 0.');
+    expect(retryPrompt).toContain('Regenerate the complete JSON object from scratch.');
+  });
+
+  it('does not retry HTML or XML model output', async () => {
+    const completionFn = jest.fn()
+      .mockResolvedValueOnce('<html><body>Login required</body></html>')
+      .mockResolvedValueOnce(JSON.stringify(validGeneratedPaper));
+
+    await expect(generateAssessment({ topic: 'iOS', questionCount: 50 }, config, completionFn)).rejects.toThrow(
+      'Model response looked like HTML/XML instead of assessment JSON. Check the provider endpoint and model response format.',
+    );
+
+    expect(completionFn).toHaveBeenCalledTimes(1);
   });
 });

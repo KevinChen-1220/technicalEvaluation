@@ -1,4 +1,5 @@
 import { createChatCompletion, type ChatMessage } from '../../services/aiClient';
+import { jsonrepair } from 'jsonrepair';
 import type { ModelConfig } from '../config/modelConfig';
 import type { AssessmentPaper } from './types';
 import { validateAssessmentPaper } from './validation';
@@ -10,6 +11,10 @@ export type AssessmentGenerationRequest = {
 };
 
 export type CompletionFn = (config: ModelConfig, messages: ChatMessage[]) => Promise<string>;
+
+const MARKUP_RESPONSE_ERROR = 'Model response looked like HTML/XML instead of assessment JSON. Check the provider endpoint and model response format.';
+
+class RetryableGenerationError extends Error {}
 
 export function buildAssessmentPrompt(request: AssessmentGenerationRequest): string {
   const notes = request.notes?.trim() ? `\nAdditional generation notes: ${request.notes.trim()}` : '';
@@ -74,20 +79,26 @@ export function extractJsonObject(content: string): unknown {
   const trimmed = content.trim();
 
   if (looksLikeMarkup(trimmed)) {
-    throw new Error('Model response looked like HTML/XML instead of assessment JSON. Check the provider endpoint and model response format.');
+    throw new Error(MARKUP_RESPONSE_ERROR);
   }
 
   const start = trimmed.indexOf('{');
   const end = trimmed.lastIndexOf('}');
 
-  if (start === -1 || end === -1 || end < start) {
+  if (start === -1) {
     throw new Error('Model response did not contain a JSON object.');
   }
 
+  const candidate = end < start ? trimmed.slice(start) : trimmed.slice(start, end + 1);
+
   try {
-    return JSON.parse(trimmed.slice(start, end + 1));
+    return JSON.parse(candidate);
   } catch {
-    throw new Error('Model response contained a JSON-looking block, but it was not valid JSON.');
+    try {
+      return JSON.parse(jsonrepair(candidate));
+    } catch {
+      throw new Error('Model response contained a JSON-looking block, but it was not valid JSON.');
+    }
   }
 }
 
@@ -100,15 +111,51 @@ export async function generateAssessment(
   config: ModelConfig,
   completionFn: CompletionFn = createChatCompletion,
 ): Promise<AssessmentPaper> {
-  const content = await completionFn(config, [
-    { role: 'system', content: 'You generate deterministic, valid JSON assessment papers for mobile apps.' },
-    { role: 'user', content: buildAssessmentPrompt(request) },
-  ]);
-  const parsed = extractJsonObject(content);
+  let retryReason: string | undefined;
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const prompt = buildAssessmentPrompt(request);
+    const content = await completionFn(config, [
+      { role: 'system', content: 'You generate deterministic, valid JSON assessment papers for mobile apps.' },
+      {
+        role: 'user',
+        content: retryReason
+          ? `${prompt}\n\nThe previous response failed: ${retryReason}\nRegenerate the complete JSON object from scratch.`
+          : prompt,
+      },
+    ]);
+
+    try {
+      return parseAssessmentPaper(content);
+    } catch (error) {
+      if (!(error instanceof RetryableGenerationError) || attempt === 1) {
+        throw error;
+      }
+
+      retryReason = error.message;
+    }
+  }
+
+  throw new Error('Assessment generation did not return a result.');
+}
+
+function parseAssessmentPaper(content: string): AssessmentPaper {
+  let parsed: unknown;
+
+  try {
+    parsed = extractJsonObject(content);
+  } catch (error) {
+    if (error instanceof Error && error.message === MARKUP_RESPONSE_ERROR) {
+      throw error;
+    }
+
+    throw new RetryableGenerationError(error instanceof Error ? error.message : String(error));
+  }
+
   const validation = validateAssessmentPaper(parsed);
 
   if (!validation.ok) {
-    throw new Error(`Generated assessment is invalid: ${validation.errors.join(' ')}`);
+    throw new RetryableGenerationError(`Generated assessment is invalid: ${validation.errors.join(' ')}`);
   }
 
   return validation.paper;
