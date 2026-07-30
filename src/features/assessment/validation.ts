@@ -2,6 +2,8 @@ import type { AssessmentPaper, AssessmentQuestion, QuestionDifficulty, QuestionT
 
 const supportedTypes = new Set<QuestionType>(['single_choice', 'multiple_choice', 'true_false']);
 const supportedDifficulties = new Set<QuestionDifficulty>(['easy', 'medium', 'hard']);
+const minimumImageAspectRatio = 0.25;
+const maximumImageAspectRatio = 4;
 
 export type ValidationResult =
   | { ok: true; errors: []; paper: AssessmentPaper }
@@ -92,6 +94,143 @@ function validateQuestion(question: AssessmentQuestion, errors: string[]): void 
   if (!question.explanation?.trim()) {
     errors.push(`Question ${label} explanation is required.`);
   }
+
+  if (Object.prototype.hasOwnProperty.call(question, 'materials')) {
+    validateQuestionMaterials(question.materials, label, errors);
+  }
+}
+
+function validateQuestionMaterials(materials: unknown, label: string, errors: string[]): void {
+  if (!Array.isArray(materials)) {
+    errors.push(`Question ${label} materials must be an array.`);
+    return;
+  }
+
+  for (const [index, material] of materials.entries()) {
+    const materialLabel = `Question ${label} material ${index + 1}`;
+
+    if (!isRecord(material)) {
+      errors.push(`${materialLabel} must be a JSON object.`);
+      continue;
+    }
+
+    switch (material.type) {
+      case 'text':
+        if (!isNonEmptyString(material.text)) {
+          errors.push(`${materialLabel} text is required.`);
+        }
+        break;
+      case 'image':
+        validateImageMaterial(material, materialLabel, errors);
+        break;
+      case 'table':
+        validateTableMaterial(material, materialLabel, errors);
+        break;
+      case 'bar_chart':
+        validateBarChartMaterial(material, materialLabel, errors);
+        break;
+      default:
+        errors.push(`${materialLabel} has unsupported type ${String(material.type)}.`);
+    }
+  }
+}
+
+function validateImageMaterial(material: Record<string, unknown>, label: string, errors: string[]): void {
+  if (!isHttpsUri(material.uri)) {
+    errors.push(`${label} image uri must be a valid HTTPS URL.`);
+  }
+
+  if (!isNonEmptyString(material.alt)) {
+    errors.push(`${label} image alt is required.`);
+  }
+
+  if (material.caption !== undefined && !isNonEmptyString(material.caption)) {
+    errors.push(`${label} image caption must be non-empty when provided.`);
+  }
+
+  if (
+    material.aspectRatio !== undefined
+    && (typeof material.aspectRatio !== 'number'
+      || !Number.isFinite(material.aspectRatio)
+      || material.aspectRatio < minimumImageAspectRatio
+      || material.aspectRatio > maximumImageAspectRatio)
+  ) {
+    errors.push(`${label} image aspectRatio must be between ${minimumImageAspectRatio} and ${maximumImageAspectRatio}.`);
+  }
+}
+
+function validateTableMaterial(material: Record<string, unknown>, label: string, errors: string[]): void {
+  if (!isNonEmptyString(material.caption)) {
+    errors.push(`${label} table caption is required.`);
+  }
+
+  if (!Array.isArray(material.columns) || material.columns.length === 0) {
+    errors.push(`${label} table must have at least one column.`);
+  } else {
+    material.columns.forEach((column, index) => {
+      if (!isNonEmptyString(column)) {
+        errors.push(`${label} table column ${index + 1} text is required.`);
+      }
+    });
+  }
+
+  if (!Array.isArray(material.rows) || material.rows.length === 0) {
+    errors.push(`${label} table must have at least one row.`);
+    return;
+  }
+
+  material.rows.forEach((row, rowIndex) => {
+    if (!Array.isArray(row)) {
+      errors.push(`${label} table row ${rowIndex + 1} must be an array.`);
+      return;
+    }
+
+    if (Array.isArray(material.columns) && row.length !== material.columns.length) {
+      errors.push(`${label} table row ${rowIndex + 1} must have ${material.columns.length} cells.`);
+    }
+
+    row.forEach((cell, cellIndex) => {
+      if (!isNonEmptyString(cell)) {
+        errors.push(`${label} table row ${rowIndex + 1} cell ${cellIndex + 1} text is required.`);
+      }
+    });
+  });
+}
+
+function validateBarChartMaterial(material: Record<string, unknown>, label: string, errors: string[]): void {
+  if (!isNonEmptyString(material.title)) {
+    errors.push(`${label} bar_chart title is required.`);
+  }
+
+  if (!isNonEmptyString(material.unit)) {
+    errors.push(`${label} bar_chart unit is required.`);
+  }
+
+  if (!Array.isArray(material.items) || material.items.length < 2) {
+    errors.push(`${label} bar_chart must have at least two items.`);
+    return;
+  }
+
+  material.items.forEach((item, index) => {
+    const itemLabel = `${label} bar_chart item ${index + 1}`;
+
+    if (!isRecord(item)) {
+      errors.push(`${itemLabel} must be a JSON object.`);
+      return;
+    }
+
+    if (!isNonEmptyString(item.label)) {
+      errors.push(`${itemLabel} label is required.`);
+    }
+
+    if (typeof item.value !== 'number' || !Number.isFinite(item.value) || item.value < 0) {
+      errors.push(`${itemLabel} value must be greater than or equal to 0.`);
+    }
+
+    if (item.displayValue !== undefined && !isNonEmptyString(item.displayValue)) {
+      errors.push(`${itemLabel} displayValue must be non-empty when provided.`);
+    }
+  });
 }
 
 function levelsCoverFullRange(levels: ScoringLevel[]): boolean {
@@ -112,4 +251,17 @@ function levelsCoverFullRange(levels: ScoringLevel[]): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+function isHttpsUri(value: unknown): value is string {
+  if (typeof value !== 'string') return false;
+  try {
+    return new URL(value).protocol === 'https:';
+  } catch {
+    return false;
+  }
 }

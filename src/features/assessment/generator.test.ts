@@ -41,6 +41,12 @@ describe('buildAssessmentPrompt', () => {
     expect(prompt).toContain('detailed explanation');
     expect(prompt).toContain('cover 0 through 100 percent without gaps');
     expect(prompt).toContain('Return one JSON object only. Do not wrap it in Markdown.');
+    expect(prompt).toContain('"materials": [');
+    expect(prompt).toContain('"type": "table"');
+    expect(prompt).toContain('"type": "bar_chart"');
+    expect(prompt).toContain('Never invent an image URL');
+    expect(prompt).toContain('Use image blocks only when a real HTTPS image URL');
+    expect(prompt).toContain('Omit materials for an ordinary text-only question');
   });
 
   it('uses the topic as the sole language source for Chinese, English, or other-language input', () => {
@@ -121,6 +127,30 @@ describe('generateAssessment', () => {
       { role: 'system', content: 'You generate deterministic, valid JSON assessment papers for mobile apps.' },
       expect.objectContaining({ role: 'user', content: expect.stringContaining('iOS') }),
     ]);
+  });
+
+  it('preserves a valid table material from the generated paper', async () => {
+    const tableMaterial = {
+      type: 'table' as const,
+      caption: '各地区产值',
+      columns: ['地区', '2022', '2023'],
+      rows: [['甲', '120', '135'], ['乙', '98', '110']],
+    };
+    const generatedPaper: AssessmentPaper = {
+      ...validGeneratedPaper,
+      questions: [
+        { ...validGeneratedPaper.questions[0]!, materials: [tableMaterial] },
+        ...validGeneratedPaper.questions.slice(1),
+      ],
+    };
+
+    const result = await generateAssessment(
+      { topic: 'iOS', questionCount: 50 },
+      config,
+      jest.fn().mockResolvedValue(JSON.stringify(generatedPaper)),
+    );
+
+    expect(result.questions[0]?.materials).toEqual([tableMaterial]);
   });
 
   it('throws readable validation errors when generated JSON is invalid', async () => {

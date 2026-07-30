@@ -7,6 +7,43 @@ export type AssessmentOption = {
   text: string;
 };
 
+export type QuestionTextMaterial = {
+  type: 'text';
+  text: string;
+};
+
+export type QuestionImageMaterial = {
+  type: 'image';
+  uri: string;
+  alt: string;
+  caption?: string;
+  aspectRatio?: number;
+};
+
+export type QuestionTableMaterial = {
+  type: 'table';
+  caption: string;
+  columns: string[];
+  rows: string[][];
+};
+
+export type QuestionBarChartMaterial = {
+  type: 'bar_chart';
+  title: string;
+  unit: string;
+  items: Array<{
+    label: string;
+    value: number;
+    displayValue?: string;
+  }>;
+};
+
+export type QuestionMaterial =
+  | QuestionTextMaterial
+  | QuestionImageMaterial
+  | QuestionTableMaterial
+  | QuestionBarChartMaterial;
+
 export type AssessmentQuestion = {
   id: string;
   type: QuestionType;
@@ -16,6 +53,7 @@ export type AssessmentQuestion = {
   options: AssessmentOption[];
   correctOptionIds: string[];
   explanation: string;
+  materials?: QuestionMaterial[];
 };
 
 export type ScoringLevel = {

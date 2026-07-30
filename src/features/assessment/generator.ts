@@ -48,7 +48,32 @@ The JSON must match this TypeScript shape:
         { "id": "B", "text": "Second answer option" }
       ],
       "correctOptionIds": ["A"],
-      "explanation": "Detailed explanation of the correct answer"
+      "explanation": "Detailed explanation of the correct answer",
+      "materials": [
+        { "type": "text", "text": "Supporting material for the question" },
+        {
+          "type": "image",
+          "uri": "https://example.com/chart.png",
+          "alt": "Accessible image description",
+          "caption": "Image source or context",
+          "aspectRatio": 1.5
+        },
+        {
+          "type": "table",
+          "caption": "Table title",
+          "columns": ["Category", "Value"],
+          "rows": [["A", "120"], ["B", "110"]]
+        },
+        {
+          "type": "bar_chart",
+          "title": "Chart title",
+          "unit": "units",
+          "items": [
+            { "label": "A", "value": 120 },
+            { "label": "B", "value": 110, "displayValue": "110 units" }
+          ]
+        }
+      ]
     }
   ]
 }
@@ -72,6 +97,10 @@ Requirements:
 - Scoring levels must cover 0 through 100 percent without gaps.
 - Single choice and true/false questions must have exactly one correct answer.
 - Multiple choice questions must have at least one correct answer.
+- Materials are optional supporting blocks for a question. Omit materials for an ordinary text-only question.
+- Use text blocks for supporting context, table blocks for tabular data, and bar_chart blocks for comparable non-negative values.
+- Use image blocks only when a real HTTPS image URL is available. Never invent an image URL.
+- Keep material text, image alt text, captions, table captions and cells, chart titles, units, labels, and display values in the topic language.
 ${notes}`;
 }
 
