@@ -1,0 +1,14 @@
+{
+  "miniprogramRoot": "dist/",
+  "projectname": "dynamic-assessment-wechat",
+  "description": "动态技能测评微信小程序",
+  "appid": "touristappid",
+  "compileType": "miniprogram",
+  "setting": {
+    "es6": true,
+    "enhance": true,
+    "postcss": true,
+    "minified": true,
+    "urlCheck": true
+  }
+}

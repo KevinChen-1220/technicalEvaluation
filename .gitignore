@@ -12,6 +12,7 @@ expo-*.log
 .DS_Store
 .superpowers/sdd/
 .worktrees/
+apps/wechat/.swc/
 .env
 .env.*
 !.env.example
