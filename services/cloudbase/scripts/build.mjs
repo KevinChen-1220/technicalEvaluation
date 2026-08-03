@@ -8,6 +8,8 @@ const outputRoot = join(serviceRoot, 'dist');
 const functions = [
   'create-generation-job',
   'get-generation-job',
+  'get-assessment',
+  'update-assessment',
   'generation-worker',
 ];
 

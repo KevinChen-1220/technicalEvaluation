@@ -6,6 +6,7 @@ import {
   logger,
 } from 'wx-server-sdk';
 import { CloudBaseGenerationRepository } from './adapters/cloudBaseGenerationRepository';
+import { CloudBaseAssessmentRepository } from './adapters/cloudBaseAssessmentRepository';
 import { CloudBaseDailyQuota } from './adapters/cloudBaseDailyQuota';
 import { createOpenAICompletionClient, type FetchTransport } from './adapters/openAICompletionClient';
 import type { GenerationJobServiceDependencies } from './generation/jobService';
@@ -16,6 +17,18 @@ const dailyGenerationLimit = 5;
 let repository: CloudBaseGenerationRepository | undefined;
 let quota: CloudBaseDailyQuota | undefined;
 let currentDatabase: ReturnType<typeof database> | undefined;
+let assessmentRepository: CloudBaseAssessmentRepository | undefined;
+
+export function getAssessmentDependencies(): {
+  repository: CloudBaseAssessmentRepository;
+  clock: typeof systemClock;
+} {
+  return { repository: getAssessmentRepository(), clock: systemClock };
+}
+
+export function getAssessmentReadDependencies(): { repository: CloudBaseAssessmentRepository } {
+  return { repository: getAssessmentRepository() };
+}
 
 export function getGenerationJobDependencies(): GenerationJobServiceDependencies {
   return {
@@ -69,6 +82,13 @@ function getRepository(): CloudBaseGenerationRepository {
 function getQuota(): CloudBaseDailyQuota {
   if (quota === undefined) quota = new CloudBaseDailyQuota(getDatabase(), dailyGenerationLimit);
   return quota;
+}
+
+function getAssessmentRepository(): CloudBaseAssessmentRepository {
+  if (assessmentRepository === undefined) {
+    assessmentRepository = new CloudBaseAssessmentRepository(getDatabase());
+  }
+  return assessmentRepository;
 }
 
 function getDatabase(): ReturnType<typeof database> {
