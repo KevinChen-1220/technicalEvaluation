@@ -6,6 +6,7 @@ import {
   logger,
 } from 'wx-server-sdk';
 import { CloudBaseGenerationRepository } from './adapters/cloudBaseGenerationRepository';
+import { CloudBaseDailyQuota } from './adapters/cloudBaseDailyQuota';
 import { createOpenAICompletionClient, type FetchTransport } from './adapters/openAICompletionClient';
 import type { GenerationJobServiceDependencies } from './generation/jobService';
 import type { GenerationWorkerDependencies } from './generation/worker';
@@ -13,22 +14,23 @@ import type { GenerationWorkerDependencies } from './generation/worker';
 const dailyGenerationLimit = 5;
 
 let repository: CloudBaseGenerationRepository | undefined;
+let quota: CloudBaseDailyQuota | undefined;
+let currentDatabase: ReturnType<typeof database> | undefined;
 
 export function getGenerationJobDependencies(): GenerationJobServiceDependencies {
   return {
     repository: getRepository(),
     clock: systemClock,
     ids: serverIds,
-    quota: {
-      allows: async (_ownerOpenId, createdToday) => createdToday < dailyGenerationLimit,
-    },
+    quota: getQuota(),
   };
 }
 
 export function getGenerationWorkerDependencies(): GenerationWorkerDependencies {
+  const currentRepository = getRepository();
   const cloudLogger = logger();
   return {
-    repository: getRepository(),
+    repository: currentRepository,
     completionClient: createOpenAICompletionClient({
       environment: process.env,
       fetch: ((url, options) => fetch(url, options)) as FetchTransport,
@@ -52,14 +54,29 @@ const serverIds = {
   assessmentId(jobId: string): string {
     return `assessment-${digest(jobId)}`;
   },
+  quotaCounterId(ownerOpenId: string, utcDay: string): string {
+    return `quota-${digest(`${ownerOpenId}\0${utcDay}`)}`;
+  },
 };
 
 function getRepository(): CloudBaseGenerationRepository {
   if (repository === undefined) {
-    init({ env: DYNAMIC_CURRENT_ENV as unknown as string });
-    repository = new CloudBaseGenerationRepository(database());
+    repository = new CloudBaseGenerationRepository(getDatabase());
   }
   return repository;
+}
+
+function getQuota(): CloudBaseDailyQuota {
+  if (quota === undefined) quota = new CloudBaseDailyQuota(getDatabase(), dailyGenerationLimit);
+  return quota;
+}
+
+function getDatabase(): ReturnType<typeof database> {
+  if (currentDatabase === undefined) {
+    init({ env: DYNAMIC_CURRENT_ENV as unknown as string });
+    currentDatabase = database();
+  }
+  return currentDatabase;
 }
 
 function digest(value: string): string {

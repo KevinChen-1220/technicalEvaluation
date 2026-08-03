@@ -32,6 +32,15 @@
       }
     },
     {
+      "name": "daily_generation_quotas",
+      "documentSchemaVersion": 1,
+      "required": ["_id", "_openid", "schemaVersion", "utcDay", "count", "createdAt", "updatedAt"],
+      "properties": {
+        "utcDay": "date:YYYY-MM-DD",
+        "count": "integer:>=0"
+      }
+    },
+    {
       "name": "user_settings",
       "documentSchemaVersion": 1,
       "required": ["_id", "_openid", "schemaVersion", "locale", "privacyConsentVersion", "privacyConsentAt", "createdAt", "updatedAt"],

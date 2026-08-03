@@ -4,6 +4,7 @@ import type { GenerationJobRepository } from '../generation/jobService';
 import type {
   WorkerClaimInput,
   WorkerFailureInput,
+  WorkerLeaseInput,
   WorkerProgressInput,
   WorkerRepository,
 } from '../generation/worker';
@@ -19,25 +20,6 @@ export class CloudBaseGenerationRepository implements GenerationJobRepository, W
       .limit(1)
       .get();
     return firstJob(result);
-  }
-
-  async countCreatedByOwner(ownerOpenId: string, from: string, to: string): Promise<number> {
-    const range = this.database.command.gte(from).and(this.database.command.lt(to));
-    const result = await this.database.collection('generation_jobs')
-      .where({ _openid: ownerOpenId, createdAt: range })
-      .count();
-    return isCountResult(result) ? result.total : 0;
-  }
-
-  async createJob(job: GenerationJob): Promise<GenerationJob> {
-    try {
-      await this.database.collection('generation_jobs').add({ data: job });
-      return job;
-    } catch (error) {
-      const existing = await this.findOwnedJob(job._id, job._openid);
-      if (existing !== null && existing.clientRequestId === job.clientRequestId) return existing;
-      throw error;
-    }
   }
 
   async findOwnedJob(jobId: string, ownerOpenId: string): Promise<GenerationJob | null> {
@@ -95,6 +77,17 @@ export class CloudBaseGenerationRepository implements GenerationJobRepository, W
       .limit(1)
       .update({ data: {
         progress: input.progress,
+        leaseExpiresAt: input.leaseExpiresAt,
+        updatedAt: input.now,
+      } });
+    return isUpdateResult(result) && result.stats.updated === 1;
+  }
+
+  async renewLease(input: WorkerLeaseInput): Promise<boolean> {
+    const result = await this.database.collection('generation_jobs')
+      .where({ _id: input.jobId, status: 'running', leaseOwner: input.leaseOwner })
+      .limit(1)
+      .update({ data: {
         leaseExpiresAt: input.leaseExpiresAt,
         updatedAt: input.now,
       } });
@@ -187,10 +180,6 @@ function firstDocument(result: unknown): unknown {
 
 function isUpdateResult(result: unknown): result is { stats: { updated: number } } {
   return isRecord(result) && isRecord(result.stats) && typeof result.stats.updated === 'number';
-}
-
-function isCountResult(result: unknown): result is { total: number } {
-  return isRecord(result) && typeof result.total === 'number';
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

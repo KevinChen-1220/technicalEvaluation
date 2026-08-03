@@ -80,7 +80,7 @@ export function validateAssessmentPaper(input: unknown): ValidationResult {
 }
 
 function validateQuestion(question: AssessmentQuestion, errors: string[]): void {
-  const label = question?.id || 'unknown';
+  const label = isNonEmptyString(question.id) ? question.id : 'unknown';
   const optionIds = new Set(
     Array.isArray(question.options)
       ? question.options
@@ -94,7 +94,7 @@ function validateQuestion(question: AssessmentQuestion, errors: string[]): void 
     errors.push('Question ID is required.');
   }
 
-  if (!question.prompt?.trim()) {
+  if (!isNonEmptyString(question.prompt)) {
     errors.push(`Question ${label} prompt is required.`);
   }
 
@@ -106,7 +106,7 @@ function validateQuestion(question: AssessmentQuestion, errors: string[]): void 
     errors.push(`Question ${label} has unsupported difficulty ${String(question.difficulty)}.`);
   }
 
-  if (!question.knowledgePoint?.trim()) {
+  if (!isNonEmptyString(question.knowledgePoint)) {
     errors.push(`Question ${label} knowledgePoint is required.`);
   }
 
@@ -137,7 +137,7 @@ function validateQuestion(question: AssessmentQuestion, errors: string[]): void 
   } else {
     for (const optionId of question.correctOptionIds) {
       if (!optionIds.has(optionId)) {
-        errors.push(`Question ${label} correct option ${optionId} does not exist in options.`);
+        errors.push(`Question ${label} correct option ${String(optionId)} does not exist in options.`);
       }
     }
   }
@@ -150,7 +150,7 @@ function validateQuestion(question: AssessmentQuestion, errors: string[]): void 
     errors.push(`Question ${label} multiple_choice questions must have at least one correct option.`);
   }
 
-  if (!question.explanation?.trim()) {
+  if (!isNonEmptyString(question.explanation)) {
     errors.push(`Question ${label} explanation is required.`);
   }
 

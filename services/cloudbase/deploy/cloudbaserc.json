@@ -1,0 +1,29 @@
+{
+  "functionRoot": ".",
+  "functions": [
+    {
+      "name": "create-generation-job",
+      "dir": "./create-generation-job",
+      "handler": "index.main",
+      "runtime": "Nodejs20.19",
+      "timeout": 15,
+      "installDependency": true
+    },
+    {
+      "name": "get-generation-job",
+      "dir": "./get-generation-job",
+      "handler": "index.main",
+      "runtime": "Nodejs20.19",
+      "timeout": 15,
+      "installDependency": true
+    },
+    {
+      "name": "generation-worker",
+      "dir": "./generation-worker",
+      "handler": "index.main",
+      "runtime": "Nodejs20.19",
+      "timeout": 600,
+      "installDependency": true
+    }
+  ]
+}

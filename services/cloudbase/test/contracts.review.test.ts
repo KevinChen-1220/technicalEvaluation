@@ -61,6 +61,36 @@ function loadTrustedContextRuntime(): TrustedContextRuntime {
 }
 
 describe('CloudBase deployable configuration', () => {
+  test('declares the server-only daily quota counter collection and owner/day index', () => {
+    const collections = readJsonIfPresent(join(databaseDirectory, 'collections.json')) as {
+      collections?: Array<{ name?: string; required?: string[] }>;
+    };
+    const indexes = readJsonIfPresent(join(databaseDirectory, 'indexes.json')) as {
+      indexes?: Array<{ collection?: string; name?: string; keys?: Array<{ field?: string; order?: number }> }>;
+    };
+
+    expect(collections.collections).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: 'daily_generation_quotas',
+        required: expect.arrayContaining(['_id', '_openid', 'utcDay', 'count']),
+      }),
+    ]));
+    expect(indexes.indexes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        collection: 'daily_generation_quotas',
+        name: 'owner_utc_day',
+        keys: [
+          { field: '_openid', order: 1 },
+          { field: 'utcDay', order: 1 },
+        ],
+      }),
+    ]));
+    expect(readJsonIfPresent(join(securityRulesDirectory, 'daily_generation_quotas.json'))).toEqual({
+      read: false,
+      write: false,
+    });
+  });
+
   test('defines the generation API quota and idempotency query indexes', () => {
     const indexes = readJsonIfPresent(join(databaseDirectory, 'indexes.json')) as {
       indexes?: Array<{ name?: string; keys?: Array<{ field?: string; order?: number }> }>;

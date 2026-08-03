@@ -30,3 +30,5 @@ for (const functionName of functions) {
   });
   await copyFile(join(sourceDirectory, 'package.json'), join(outputDirectory, 'package.json'));
 }
+
+await copyFile(join(serviceRoot, 'deploy', 'cloudbaserc.json'), join(outputRoot, 'cloudbaserc.json'));

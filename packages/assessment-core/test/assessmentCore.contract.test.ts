@@ -75,6 +75,32 @@ describe('assessment-core public contract', () => {
     });
   });
 
+  it('returns errors instead of throwing for non-string question fields', () => {
+    const malformed = {
+      ...paper.questions[0]!,
+      prompt: 42,
+      knowledgePoint: 99,
+      explanation: false,
+      options: [
+        { id: 1, text: 2 },
+        null,
+      ],
+      correctOptionIds: [1],
+    };
+
+    expect(() => validateAssessmentQuestions([malformed])).not.toThrow();
+    expect(validateAssessmentQuestions([malformed])).toEqual({
+      ok: false,
+      errors: expect.arrayContaining([
+        'Question q1 prompt is required.',
+        'Question q1 knowledgePoint is required.',
+        'Question q1 explanation is required.',
+        'Question q1 option ID is required.',
+        'Question q1 option must be a JSON object.',
+      ]),
+    });
+  });
+
   it('scores exact answers through the public package export', () => {
     const result = scoreAssessment(paper, {
       paperId: paper.id,

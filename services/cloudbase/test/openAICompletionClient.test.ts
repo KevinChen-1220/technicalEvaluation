@@ -10,6 +10,10 @@ const request: CompletionBatchRequest = {
   includeScoring: true,
 };
 
+function callOptions(): { signal: AbortSignal } {
+  return { signal: new AbortController().signal };
+}
+
 describe('OpenAI-compatible completion client', () => {
   test.each(['LLM_BASE_URL', 'LLM_API_KEY', 'LLM_MODEL'] as const)(
     'fails safely when %s is missing',
@@ -27,6 +31,20 @@ describe('OpenAI-compatible completion client', () => {
       })).toThrow(expect.objectContaining({ code: 'CONFIGURATION_ERROR', retryable: false }));
     },
   );
+
+  test('rejects an HTTP provider base URL as configuration error', () => {
+    const fetch = jest.fn() as unknown as FetchTransport;
+
+    expect(() => createOpenAICompletionClient({
+      environment: {
+        LLM_BASE_URL: 'http://provider.example/v1',
+        LLM_API_KEY: 'server-secret',
+        LLM_MODEL: 'server-model',
+      },
+      fetch,
+    })).toThrow(expect.objectContaining({ code: 'CONFIGURATION_ERROR', retryable: false }));
+    expect(fetch).not.toHaveBeenCalled();
+  });
 
   test.each([
     ['https://provider.example/api', 'https://provider.example/api/v1/chat/completions'],
@@ -47,7 +65,7 @@ describe('OpenAI-compatible completion client', () => {
       fetch,
     });
 
-    await expect(client.complete(request)).resolves.toBe('{"questions":[]}');
+    await expect(client.complete(request, callOptions())).resolves.toBe('{"questions":[]}');
     expect(fetch).toHaveBeenCalledWith(expectedUrl, expect.objectContaining({
       method: 'POST',
       headers: {
@@ -71,7 +89,7 @@ describe('OpenAI-compatible completion client', () => {
 
     let received: unknown;
     try {
-      await client.complete(request);
+      await client.complete(request, callOptions());
     } catch (error) {
       received = error;
     }
@@ -83,5 +101,29 @@ describe('OpenAI-compatible completion client', () => {
     expect(serialized).not.toContain('private-provider');
     expect(serialized).not.toContain('private-key');
     expect(serialized).not.toContain('private-model');
+  });
+
+  test('passes the worker AbortSignal to fetch and safely maps abort rejection', async () => {
+    const controller = new AbortController();
+    const fetch = jest.fn((_url: string, init: { signal: AbortSignal }) => (
+      new Promise<never>((_resolve, reject) => {
+        expect(init.signal).toBe(controller.signal);
+        init.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+      })
+    )) as unknown as FetchTransport;
+    const client = createOpenAICompletionClient({
+      environment: {
+        LLM_BASE_URL: 'https://provider.example/v1',
+        LLM_API_KEY: 'server-secret',
+        LLM_MODEL: 'server-model',
+      },
+      fetch,
+    });
+
+    const completion = client.complete(request, { signal: controller.signal });
+    controller.abort();
+
+    await expect(completion).rejects.toMatchObject({ code: 'PROVIDER_ERROR', retryable: true });
+    expect(fetch).toHaveBeenCalledTimes(1);
   });
 });

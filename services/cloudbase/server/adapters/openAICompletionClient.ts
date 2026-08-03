@@ -7,6 +7,7 @@ export type FetchTransport = (
     method: 'POST';
     headers: { Authorization: string; 'Content-Type': 'application/json' };
     body: string;
+    signal: AbortSignal;
   },
 ) => Promise<{ ok: boolean; json(): Promise<unknown> }>;
 
@@ -24,7 +25,7 @@ export function createOpenAICompletionClient(
   const completionUrl = normalizeCompletionUrl(baseUrl);
 
   return {
-    async complete(request): Promise<string> {
+    async complete(request, callOptions): Promise<string> {
       let response: Awaited<ReturnType<FetchTransport>>;
       try {
         response = await options.fetch(completionUrl, {
@@ -38,6 +39,7 @@ export function createOpenAICompletionClient(
             messages: buildMessages(request),
             response_format: { type: 'json_object' },
           }),
+          signal: callOptions.signal,
         });
       } catch {
         throw new GenerationServiceError('PROVIDER_ERROR', true);
@@ -96,7 +98,7 @@ function normalizeCompletionUrl(configuredBaseUrl: string): string {
   } catch {
     throw new GenerationServiceError('CONFIGURATION_ERROR', false);
   }
-  if ((url.protocol !== 'https:' && url.protocol !== 'http:') || url.username || url.password) {
+  if (url.protocol !== 'https:' || url.username || url.password) {
     throw new GenerationServiceError('CONFIGURATION_ERROR', false);
   }
 

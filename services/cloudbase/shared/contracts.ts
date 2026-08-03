@@ -44,6 +44,16 @@ export type GenerationJob = {
   leaseExpiresAt?: string;
 };
 
+export type DailyGenerationQuotaCounter = {
+  _id: string;
+  _openid: string;
+  schemaVersion: typeof COLLECTION_SCHEMA_VERSION;
+  utcDay: string;
+  count: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type AssessmentStatus = 'draft' | 'completed';
 
 export type Assessment = {

@@ -11,8 +11,6 @@ import { GenerationServiceError, type SafeGenerationErrorCode } from './errors';
 
 export type GenerationJobRepository = {
   findIdempotent(ownerOpenId: string, clientRequestId: string): Promise<GenerationJob | null>;
-  countCreatedByOwner(ownerOpenId: string, from: string, to: string): Promise<number>;
-  createJob(job: GenerationJob): Promise<GenerationJob>;
   findOwnedJob(jobId: string, ownerOpenId: string): Promise<GenerationJob | null>;
 };
 
@@ -20,10 +18,20 @@ export type GenerationClock = { now(): Date };
 
 export type GenerationJobIdSource = {
   jobId(ownerOpenId: string, clientRequestId?: string): string;
+  quotaCounterId(ownerOpenId: string, utcDay: string): string;
 };
 
 export type DailyGenerationQuota = {
-  allows(ownerOpenId: string, createdToday: number): Promise<boolean>;
+  reserveJob(input: {
+    job: GenerationJob;
+    counterId: string;
+    ownerOpenId: string;
+    utcDay: string;
+    now: string;
+  }): Promise<
+    | { type: 'created' | 'existing'; job: GenerationJob }
+    | { type: 'quota_exceeded' }
+  >;
 };
 
 export type GenerationJobServiceDependencies = {
@@ -35,7 +43,7 @@ export type GenerationJobServiceDependencies = {
 
 export type CreateGenerationJobResponse = {
   jobId: string;
-  status: 'queued';
+  status: GenerationJobStatus;
 };
 
 export type PublicGenerationJobStatus = {
@@ -63,29 +71,29 @@ export async function createGenerationJob(
   if (parsed.clientRequestId !== undefined) {
     const existing = await dependencies.repository.findIdempotent(ownerOpenId, parsed.clientRequestId);
     if (existing !== null) {
-      return { jobId: existing._id, status: 'queued' };
+      return { jobId: existing._id, status: existing.status };
     }
   }
 
   const current = dependencies.clock.now();
-  const { from, to } = utcDayBounds(current);
-  const createdToday = await dependencies.repository.countCreatedByOwner(
-    ownerOpenId,
-    from.toISOString(),
-    to.toISOString(),
-  );
-  if (!await dependencies.quota.allows(ownerOpenId, createdToday)) {
-    throw new GenerationServiceError('QUOTA_EXCEEDED', false);
-  }
-
+  const utcDay = current.toISOString().slice(0, 10);
   const job = createGenerationJobRecord({
     id: dependencies.ids.jobId(ownerOpenId, parsed.clientRequestId),
     request: parsed.request,
     ...(parsed.clientRequestId === undefined ? {} : { clientRequestId: parsed.clientRequestId }),
     expiresAt: new Date(current.getTime() + 24 * 60 * 60 * 1000).toISOString(),
   }, trustedContext, current.toISOString());
-  const stored = await dependencies.repository.createJob(job);
-  return { jobId: stored._id, status: 'queued' };
+  const reservation = await dependencies.quota.reserveJob({
+    job,
+    counterId: dependencies.ids.quotaCounterId(ownerOpenId, utcDay),
+    ownerOpenId,
+    utcDay,
+    now: current.toISOString(),
+  });
+  if (reservation.type === 'quota_exceeded') {
+    throw new GenerationServiceError('QUOTA_EXCEEDED', false);
+  }
+  return { jobId: reservation.job._id, status: reservation.job.status };
 }
 
 export async function getGenerationJob(
@@ -163,11 +171,6 @@ function requireTrustedOwner(context: unknown): string {
     throw new GenerationServiceError('INVALID_REQUEST', false);
   }
   return ownerOpenId;
-}
-
-function utcDayBounds(now: Date): { from: Date; to: Date } {
-  const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-  return { from, to: new Date(from.getTime() + 24 * 60 * 60 * 1000) };
 }
 
 function isSafeErrorCode(value: unknown): value is SafeGenerationErrorCode {

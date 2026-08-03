@@ -11,6 +11,7 @@ import type { GenerationClock } from './jobService';
 
 const batchSize = 10;
 const leaseDurationMs = 2 * 60 * 1000;
+const providerTimeoutMs = 90 * 1000;
 
 export type CompletionBatchRequest = {
   topic: string;
@@ -22,8 +23,10 @@ export type CompletionBatchRequest = {
 };
 
 export type CompletionClient = {
-  complete(request: CompletionBatchRequest): Promise<string>;
+  complete(request: CompletionBatchRequest, options: CompletionCallOptions): Promise<string>;
 };
+
+export type CompletionCallOptions = { signal: AbortSignal };
 
 export type WorkerClaimInput = {
   leaseOwner: string;
@@ -36,6 +39,8 @@ export type WorkerProgressInput = WorkerClaimInput & {
   progress: number;
 };
 
+export type WorkerLeaseInput = WorkerClaimInput & { jobId: string };
+
 export type WorkerFailureInput = {
   jobId: string;
   leaseOwner: string;
@@ -47,6 +52,7 @@ export type WorkerFailureInput = {
 export type WorkerRepository = {
   claimNext(input: WorkerClaimInput): Promise<GenerationJob | null>;
   findAssessment(assessmentId: string): Promise<Assessment | null>;
+  renewLease(input: WorkerLeaseInput): Promise<boolean>;
   updateProgress(input: WorkerProgressInput): Promise<boolean>;
   createAssessmentIfAbsent(assessment: Assessment): Promise<Assessment>;
   completeJob(input: {
@@ -126,7 +132,27 @@ export async function runGenerationWorker(
   let scoring: ParsedGenerationBatch['scoring'];
 
   for (let batchIndex = 0; batchIndex < totalBatches; batchIndex += 1) {
+    const leaseTime = dependencies.clock.now();
+    const leaseRenewed = await dependencies.repository.renewLease({
+      jobId: job._id,
+      leaseOwner,
+      now: leaseTime.toISOString(),
+      leaseExpiresAt: addMilliseconds(leaseTime, leaseDurationMs).toISOString(),
+    });
+    if (!leaseRenewed) {
+      return recordWorkerFailure(
+        dependencies,
+        job,
+        leaseOwner,
+        batchIndex + 1,
+        leaseTime,
+        new GenerationServiceError('INTERNAL_ERROR', false),
+      );
+    }
+
     const startedAt = dependencies.clock.now();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), providerTimeoutMs);
     try {
       const raw = await dependencies.completionClient.complete({
         topic: job.request.topic,
@@ -135,7 +161,7 @@ export async function runGenerationWorker(
         batchNumber: batchIndex,
         totalBatches,
         includeScoring: batchIndex === 0,
-      });
+      }, { signal: controller.signal });
       const batch = parseGeneratedBatch(raw, batchIndex === 0);
       questions.push(...batch.questions);
       if (batch.scoring !== undefined) scoring = batch.scoring;
@@ -160,14 +186,19 @@ export async function runGenerationWorker(
         throw new GenerationServiceError('INTERNAL_ERROR', false);
       }
     } catch (error) {
+      const safeError = controller.signal.aborted
+        ? new GenerationServiceError('PROVIDER_ERROR', true)
+        : error;
       return recordWorkerFailure(
         dependencies,
         job,
         leaseOwner,
         batchIndex + 1,
         startedAt,
-        error,
+        safeError,
       );
+    } finally {
+      clearTimeout(timeout);
     }
   }
 
@@ -225,12 +256,15 @@ export async function runGenerationWorker(
 }
 
 export function parseGeneratedBatch(raw: string, includeScoring: boolean): ParsedGenerationBatch {
-  if (typeof raw !== 'string' || raw.trim().length === 0 || startsWithMarkup(raw)) {
+  if (typeof raw !== 'string' || raw.trim().length === 0) {
     throw new GenerationServiceError('INVALID_MODEL_RESPONSE', true);
   }
 
   try {
-    const candidate = extractJsonObject(raw);
+    const { candidate, external } = extractJsonObject(raw);
+    if (containsMarkup(external)) {
+      throw new GenerationServiceError('INVALID_MODEL_RESPONSE', true);
+    }
     const parsed: unknown = JSON.parse(jsonrepair(candidate));
     if (!isRecord(parsed)) {
       throw new GenerationServiceError('INVALID_MODEL_RESPONSE', true);
@@ -339,7 +373,7 @@ function parseScoring(value: unknown): { maxScore: number; levels: ScoringLevel[
   return { maxScore: value.maxScore, levels: value.levels as ScoringLevel[] };
 }
 
-function extractJsonObject(raw: string): string {
+function extractJsonObject(raw: string): { candidate: string; external: string } {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(raw);
   const source = fenced?.[1] ?? raw;
   const firstBrace = source.indexOf('{');
@@ -347,12 +381,17 @@ function extractJsonObject(raw: string): string {
   if (firstBrace < 0 || lastBrace <= firstBrace) {
     throw new GenerationServiceError('INVALID_MODEL_RESPONSE', true);
   }
-  return source.slice(firstBrace, lastBrace + 1);
+  const outsideFence = fenced === null
+    ? ''
+    : `${raw.slice(0, fenced.index)}${raw.slice(fenced.index + fenced[0].length)}`;
+  return {
+    candidate: source.slice(firstBrace, lastBrace + 1),
+    external: `${outsideFence}${source.slice(0, firstBrace)}${source.slice(lastBrace + 1)}`,
+  };
 }
 
-function startsWithMarkup(raw: string): boolean {
-  const normalized = raw.trim().replace(/^```(?:html|xml)?\s*/i, '').trimStart();
-  return /^(?:<!doctype\s+html|<html\b|<\?xml\b|<[a-z][^>]*>)/i.test(normalized);
+function containsMarkup(value: string): boolean {
+  return /(?:<!doctype\s+html|<\?xml\b|<\/?[a-z][^>]*>)/i.test(value);
 }
 
 function addMilliseconds(date: Date, milliseconds: number): Date {

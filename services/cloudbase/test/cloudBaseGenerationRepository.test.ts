@@ -60,6 +60,27 @@ describe('CloudBase generation repository', () => {
     })).resolves.toBeNull();
     expect(harness.update).not.toHaveBeenCalled();
   });
+
+  test('renews a lease with one owner-checked conditional update', async () => {
+    const harness = createDatabaseHarness(makeJob());
+    const repository = new CloudBaseGenerationRepository(harness.database);
+
+    await expect(repository.renewLease({
+      jobId: 'job-1',
+      leaseOwner: 'worker-1',
+      now: '2026-08-03T10:30:00.000Z',
+      leaseExpiresAt: '2026-08-03T10:32:00.000Z',
+    })).resolves.toBe(true);
+
+    expect(harness.update).toHaveBeenCalledTimes(1);
+    expect(harness.where).toHaveBeenCalledWith({
+      _id: 'job-1', status: 'running', leaseOwner: 'worker-1',
+    });
+    expect(harness.update).toHaveBeenCalledWith({ data: {
+      leaseExpiresAt: '2026-08-03T10:32:00.000Z',
+      updatedAt: '2026-08-03T10:30:00.000Z',
+    } });
+  });
 });
 
 function createDatabaseHarness(candidate: GenerationJob | null): {

@@ -41,6 +41,14 @@
         { "field": "status", "order": 1 },
         { "field": "leaseExpiresAt", "order": 1 }
       ]
+    },
+    {
+      "collection": "daily_generation_quotas",
+      "name": "owner_utc_day",
+      "keys": [
+        { "field": "_openid", "order": 1 },
+        { "field": "utcDay", "order": 1 }
+      ]
     }
   ]
 }

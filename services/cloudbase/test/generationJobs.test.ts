@@ -20,21 +20,47 @@ class ObservableJobRepository {
     )) ?? null;
   }
 
-  async countCreatedByOwner(ownerOpenId: string, from: string, to: string): Promise<number> {
-    return this.jobs.filter((job) => (
-      job._openid === ownerOpenId && job.createdAt >= from && job.createdAt < to
-    )).length;
-  }
-
-  async createJob(job: GenerationJob): Promise<GenerationJob> {
-    const existing = this.jobs.find((candidate) => candidate._id === job._id);
-    if (existing) return existing;
-    this.jobs.push(job);
-    return job;
-  }
-
   async findOwnedJob(jobId: string, ownerOpenId: string): Promise<GenerationJob | null> {
     return this.jobs.find((job) => job._id === jobId && job._openid === ownerOpenId) ?? null;
+  }
+}
+
+class ObservableAtomicDailyQuota {
+  readonly counts = new Map<string, number>();
+  failNextJobWrite = false;
+
+  constructor(
+    private readonly repository: ObservableJobRepository,
+    private readonly limit: number,
+  ) {}
+
+  async reserveJob(input: {
+    job: GenerationJob;
+    counterId: string;
+    ownerOpenId: string;
+    utcDay: string;
+    now: string;
+  }): Promise<
+    | { type: 'created' | 'existing'; job: GenerationJob }
+    | { type: 'quota_exceeded' }
+  > {
+    const existing = this.repository.jobs.find((job) => job._id === input.job._id);
+    if (existing) return { type: 'existing', job: existing };
+
+    const count = this.counts.get(input.counterId) ?? 0;
+    if (count >= this.limit) return { type: 'quota_exceeded' };
+    this.counts.set(input.counterId, count + 1);
+    try {
+      if (this.failNextJobWrite) {
+        this.failNextJobWrite = false;
+        throw new Error('simulated transactional job write failure');
+      }
+      this.repository.jobs.push(input.job);
+      return { type: 'created', job: input.job };
+    } catch (error) {
+      this.counts.set(input.counterId, count);
+      throw error;
+    }
   }
 }
 
@@ -43,20 +69,23 @@ function trustedContext(openId: string): unknown {
   return getTrustedWeChatContext();
 }
 
-type TestDependencies = Omit<GenerationJobServiceDependencies, 'repository'> & {
+type TestDependencies = Omit<GenerationJobServiceDependencies, 'repository' | 'quota'> & {
   repository: ObservableJobRepository;
+  quota: ObservableAtomicDailyQuota;
 };
 
 function createDependencies(repository = new ObservableJobRepository()): TestDependencies {
+  let sequence = 0;
   return {
     repository,
     clock: { now: () => now },
     ids: {
       jobId: (ownerOpenId, clientRequestId) => clientRequestId
         ? `stable-${ownerOpenId}-${clientRequestId}`
-        : 'random-job-id',
+        : `random-job-${sequence += 1}`,
+      quotaCounterId: (ownerOpenId, utcDay) => `quota-${ownerOpenId}-${utcDay}`,
     },
-    quota: { allows: async (_ownerOpenId, createdToday) => createdToday < 2 },
+    quota: new ObservableAtomicDailyQuota(repository, 2),
   };
 }
 
@@ -111,17 +140,49 @@ describe('generation job API', () => {
 
   test('enforces the injected daily quota', async () => {
     const dependencies = createDependencies();
-    dependencies.repository.jobs.push(
-      makeJob('existing-1', 'owner-1', '2026-08-03T01:00:00.000Z'),
-      makeJob('existing-2', 'owner-1', '2026-08-03T02:00:00.000Z'),
-      makeJob('other-owner', 'owner-2', '2026-08-03T03:00:00.000Z'),
-    );
+    const context = trustedContext('owner-1');
+    await createGenerationJob({ topic: 'One', questionCount: 50 }, context, dependencies);
+    await createGenerationJob({ topic: 'Two', questionCount: 50 }, context, dependencies);
 
     await expect(createGenerationJob(
-      { topic: 'TypeScript', questionCount: 50 },
-      trustedContext('owner-1'),
+      { topic: 'Three', questionCount: 50 },
+      context,
       dependencies,
     )).rejects.toMatchObject({ code: 'QUOTA_EXCEEDED', retryable: false });
+  });
+
+  test('atomically caps concurrent creates without exceeding the daily limit', async () => {
+    const dependencies = createDependencies();
+    const context = trustedContext('owner-1');
+
+    const results = await Promise.allSettled(Array.from({ length: 8 }, (_, index) => (
+      createGenerationJob({ topic: `Concurrent ${index}`, questionCount: 50 }, context, dependencies)
+    )));
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(2);
+    expect(results.filter((result) => (
+      result.status === 'rejected' && result.reason?.code === 'QUOTA_EXCEEDED'
+    ))).toHaveLength(6);
+    expect(dependencies.repository.jobs).toHaveLength(2);
+    expect(dependencies.quota.counts.get('quota-owner-1-2026-08-03')).toBe(2);
+  });
+
+  test('rolls back the quota reservation when transactional job creation fails', async () => {
+    const dependencies = createDependencies();
+    dependencies.quota.failNextJobWrite = true;
+    const context = trustedContext('owner-1');
+
+    await expect(createGenerationJob(
+      { topic: 'Failed write', questionCount: 50 }, context, dependencies,
+    )).rejects.toThrow('simulated transactional job write failure');
+    expect(dependencies.repository.jobs).toHaveLength(0);
+    expect(dependencies.quota.counts.get('quota-owner-1-2026-08-03')).toBe(0);
+
+    await expect(createGenerationJob(
+      { topic: 'Retry after rollback', questionCount: 50 }, context, dependencies,
+    )).resolves.toMatchObject({ status: 'queued' });
+    expect(dependencies.repository.jobs).toHaveLength(1);
+    expect(dependencies.quota.counts.get('quota-owner-1-2026-08-03')).toBe(1);
   });
 
   test('returns the same job for a repeated owner/clientRequestId without consuming quota', async () => {
@@ -139,6 +200,28 @@ describe('generation job API', () => {
 
     expect(second).toEqual(first);
     expect(dependencies.repository.jobs).toHaveLength(1);
+  });
+
+  test.each([
+    ['completed', { assessmentId: 'assessment-1', progress: 100 }],
+    ['failed', { errorCode: 'INVALID_MODEL_RESPONSE', progress: 40 }],
+  ] as const)('returns the actual %s status for a stable idempotency key', async (status, fields) => {
+    const dependencies = createDependencies();
+    dependencies.repository.jobs.push({
+      ...makeJob('stable-owner-1-request-1', 'owner-1', now.toISOString()),
+      clientRequestId: 'request-1',
+      status,
+      ...fields,
+    });
+
+    await expect(createGenerationJob({
+      topic: 'TypeScript', questionCount: 50, clientRequestId: 'request-1',
+    }, trustedContext('owner-1'), dependencies)).resolves.toEqual({
+      jobId: 'stable-owner-1-request-1',
+      status,
+    });
+    expect(dependencies.repository.jobs).toHaveLength(1);
+    expect(dependencies.quota.counts.size).toBe(0);
   });
 
   test('makes foreign polling indistinguishable from a missing job', async () => {

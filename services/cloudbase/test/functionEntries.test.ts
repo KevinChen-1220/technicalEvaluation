@@ -1,3 +1,5 @@
+import { execFileSync, spawnSync } from 'node:child_process';
+import { join } from 'node:path';
 import { getTrustedWeChatContext } from '../server/trustedContext';
 import type { GenerationJob } from '../shared/contracts';
 import type { GenerationJobServiceDependencies } from '../server/generation/jobService';
@@ -15,6 +17,33 @@ jest.mock('wx-server-sdk', () => ({ getWXContext: jest.fn() }), { virtual: true 
 const wxServerSdk = require('wx-server-sdk') as { getWXContext: jest.Mock };
 
 describe('CloudBase generation function entries', () => {
+  test('built worker cold start initializes the real SDK boundary before obtaining its logger', () => {
+    const serviceRoot = join(__dirname, '..');
+    execFileSync(process.execPath, [join(serviceRoot, 'scripts', 'build.mjs')], {
+      cwd: join(serviceRoot, '..', '..'),
+    });
+    const bundle = join(serviceRoot, 'dist', 'generation-worker', 'index.js');
+    const script = [
+      `const worker = require(${JSON.stringify(bundle)});`,
+      'worker.main({}, {}).then((result) => process.stdout.write(`RESULT:${JSON.stringify(result)}`));',
+    ].join(' ');
+    const environment = { ...process.env };
+    delete environment.LLM_BASE_URL;
+    delete environment.LLM_API_KEY;
+    delete environment.LLM_MODEL;
+
+    const child = spawnSync(process.execPath, ['-e', script], {
+      cwd: join(serviceRoot, '..', '..'),
+      env: environment,
+      encoding: 'utf8',
+    });
+
+    expect(child.status).toBe(0);
+    expect(JSON.parse(child.stdout.slice(child.stdout.lastIndexOf('RESULT:') + 7))).toEqual({
+      errorCode: 'CONFIGURATION_ERROR',
+    });
+  });
+
   test('create entry obtains trusted context itself and ignores event OPENID', async () => {
     const jobs: GenerationJob[] = [];
     const dependencies = jobDependencies(jobs);
@@ -55,6 +84,7 @@ describe('CloudBase generation function entries', () => {
     const repository = {
       claimNext: jest.fn(async () => null),
       findAssessment: jest.fn(),
+      renewLease: jest.fn(),
       updateProgress: jest.fn(),
       createAssessmentIfAbsent: jest.fn(),
       completeJob: jest.fn(),
@@ -98,18 +128,20 @@ function jobDependencies(jobs: GenerationJob[]): GenerationJobServiceDependencie
       findIdempotent: async (owner, clientRequestId) => jobs.find((job) => (
         job._openid === owner && job.clientRequestId === clientRequestId
       )) ?? null,
-      countCreatedByOwner: async () => jobs.length,
-      createJob: async (job) => {
-        jobs.push(job);
-        return job;
-      },
       findOwnedJob: async (jobId, owner) => jobs.find((job) => (
         job._id === jobId && job._openid === owner
       )) ?? null,
     },
     clock: { now: () => new Date('2026-08-03T10:30:00.000Z') },
-    ids: { jobId: () => 'job-1' },
-    quota: { allows: async () => true },
+    ids: { jobId: () => 'job-1', quotaCounterId: () => 'quota-1' },
+    quota: {
+      reserveJob: async ({ job }) => {
+        const existing = jobs.find((candidate) => candidate._id === job._id);
+        if (existing) return { type: 'existing', job: existing };
+        jobs.push(job);
+        return { type: 'created', job };
+      },
+    },
   };
 }
 

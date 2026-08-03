@@ -4,9 +4,11 @@ import {
   parseGeneratedBatch,
   runGenerationWorker,
   type CompletionBatchRequest,
+  type CompletionCallOptions,
   type GenerationWorkerDependencies,
   type WorkerClaimInput,
   type WorkerFailureInput,
+  type WorkerLeaseInput,
   type WorkerProgressInput,
 } from '../server/generation/worker';
 import { GenerationServiceError } from '../server/generation/errors';
@@ -57,6 +59,18 @@ class ObservableWorkerRepository {
       updatedAt: input.now,
     });
     this.events.push(`progress:${input.progress}`);
+    return true;
+  }
+
+  async renewLease(input: WorkerLeaseInput): Promise<boolean> {
+    const job = this.jobs.find((candidate) => (
+      candidate._id === input.jobId
+      && candidate.status === 'running'
+      && candidate.leaseOwner === input.leaseOwner
+    ));
+    if (!job) return false;
+    Object.assign(job, { leaseExpiresAt: input.leaseExpiresAt, updatedAt: input.now });
+    this.events.push(`renew:${input.leaseExpiresAt}`);
     return true;
   }
 
@@ -112,6 +126,7 @@ class ObservableWorkerRepository {
 
 class ObservableCompletionClient {
   readonly requests: CompletionBatchRequest[] = [];
+  readonly signals: AbortSignal[] = [];
 
   constructor(
     private readonly responder: (
@@ -120,8 +135,9 @@ class ObservableCompletionClient {
     ) => string | Promise<string>,
   ) {}
 
-  async complete(request: CompletionBatchRequest): Promise<string> {
+  async complete(request: CompletionBatchRequest, options: CompletionCallOptions): Promise<string> {
     this.requests.push(request);
+    this.signals.push(options.signal);
     return this.responder(request, this.requests.length - 1);
   }
 }
@@ -190,6 +206,15 @@ describe('generation worker', () => {
       .toThrow(expect.objectContaining({ code: 'INVALID_MODEL_RESPONSE' }));
   });
 
+  test('rejects markup outside an otherwise valid JSON object', () => {
+    const valid = batchResponse(1);
+
+    expect(() => parseGeneratedBatch(`Model note <div>unsafe</div> ${valid}`, false))
+      .toThrow(expect.objectContaining({ code: 'INVALID_MODEL_RESPONSE' }));
+    expect(() => parseGeneratedBatch(`${valid} <metadata />`, false))
+      .toThrow(expect.objectContaining({ code: 'INVALID_MODEL_RESPONSE' }));
+  });
+
   test('requeues one retryable batch failure as attempt 2, then can complete', async () => {
     const repository = new ObservableWorkerRepository();
     repository.jobs.push(makeJob(50));
@@ -235,6 +260,67 @@ describe('generation worker', () => {
 
     expect(repository.events[0]).toBe('claim:job-1');
     expect(repository.jobs[0]).toMatchObject({ status: 'completed', assessmentId: 'assessment-job-1' });
+  });
+
+  test('renews the lease before every external provider call', async () => {
+    const repository = new ObservableWorkerRepository();
+    repository.jobs.push(makeJob(50));
+    const timeline: string[] = [];
+    const client = {
+      complete: async (request: CompletionBatchRequest, options: CompletionCallOptions) => {
+        expect(options.signal.aborted).toBe(false);
+        timeline.push(`provider:${request.batchNumber + 1}`);
+        return batchResponse(request.batchNumber);
+      },
+    };
+    const workerDependencies = dependencies(
+      repository,
+      client as ObservableCompletionClient,
+    );
+    const originalRenewLease = repository.renewLease.bind(repository);
+    repository.renewLease = async (input) => {
+      timeline.push(`renew:${timeline.filter((entry) => entry.startsWith('renew:')).length + 1}`);
+      return originalRenewLease(input);
+    };
+
+    await runGenerationWorker(workerDependencies);
+
+    expect(timeline).toEqual([
+      'renew:1', 'provider:1',
+      'renew:2', 'provider:2',
+      'renew:3', 'provider:3',
+      'renew:4', 'provider:4',
+      'renew:5', 'provider:5',
+    ]);
+  });
+
+  test('aborts a provider call before the renewed lease can expire', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(initialTime);
+    const repository = new ObservableWorkerRepository();
+    repository.jobs.push(makeJob(50));
+    let observedSignal: AbortSignal | undefined;
+    const client = {
+      complete: async (_request: CompletionBatchRequest, options: CompletionCallOptions): Promise<string> => {
+        observedSignal = options.signal;
+        return new Promise((_resolve, reject) => {
+          options.signal.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+        });
+      },
+    };
+    const workerDependencies = dependencies(repository, client as ObservableCompletionClient);
+    workerDependencies.clock = { now: () => new Date(Date.now()) };
+
+    const resultPromise = runGenerationWorker(workerDependencies);
+    await jest.advanceTimersByTimeAsync(90_000);
+    const result = await resultPromise;
+
+    expect(observedSignal?.aborted).toBe(true);
+    expect(result).toMatchObject({ status: 'queued', errorCode: 'PROVIDER_ERROR' });
+    const renewedLease = repository.events.find((event) => event.startsWith('renew:'))?.slice(6);
+    expect(renewedLease).toBe('2026-08-03T10:32:00.000Z');
+    expect(new Date(renewedLease!).getTime() - Date.now()).toBe(30_000);
+    jest.useRealTimers();
   });
 
   test('rejects duplicate option IDs and invalid correct answers in a batch', async () => {
