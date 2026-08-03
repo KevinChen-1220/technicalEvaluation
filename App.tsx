@@ -18,6 +18,7 @@ import {
 import { defaultAssessmentBrief } from './src/features/assessment/assessmentBriefDefaults';
 import { generateAssessment } from './src/features/assessment/generator';
 import { migrateLegacyAssessmentHistory } from './src/features/assessment/legacyHistoryMigration';
+import { findFirstUnansweredQuestionIndex } from './src/features/assessment/questionNavigation';
 import { scoreAssessment } from './src/features/assessment/scoring';
 import type { AssessmentPaper, AssessmentQuestion, AssessmentResult, PersistedAssessmentRecord } from './src/features/assessment/types';
 import { loadModelConfig, saveModelConfig } from './src/features/config/secureConfigStore';
@@ -210,7 +211,7 @@ function AppContent() {
     setAnswers(record.answers);
     setResult(record.result);
     setResultMode(record.status === 'completed' ? 'history' : 'current');
-    setQuestionIndex(0);
+    setQuestionIndex(record.status === 'draft' ? findFirstUnansweredQuestionIndex(record.paper, record.answers) : 0);
     setReviewQuestionId(null);
     setCurrentRecordId(record.id);
     setActiveTab('history');
