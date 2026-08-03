@@ -47,6 +47,8 @@ describe('buildAssessmentPrompt', () => {
     expect(prompt).toContain('Never invent an image URL');
     expect(prompt).toContain('Use image blocks only when a real HTTPS image URL');
     expect(prompt).toContain('Omit materials for an ordinary text-only question');
+    expect(prompt).toContain('<real HTTPS URL supplied in topic or notes; otherwise omit this image block>');
+    expect(prompt).not.toContain('https://example.com/chart.png');
   });
 
   it('uses the topic as the sole language source for Chinese, English, or other-language input', () => {
@@ -188,6 +190,32 @@ describe('generateAssessment', () => {
     expect(completionFn).toHaveBeenCalledTimes(2);
     const retryPrompt = completionFn.mock.calls[1]?.[1][1]?.content;
     expect(retryPrompt).toContain('Generated assessment is invalid: Expected 50 questions but received 0.');
+    expect(retryPrompt).toContain('Regenerate the complete JSON object from scratch.');
+  });
+
+  it('retries once when generated rich material is invalid', async () => {
+    const invalidPaper = {
+      ...validGeneratedPaper,
+      questions: [
+        {
+          ...validGeneratedPaper.questions[0]!,
+          materials: [{ type: 'image', uri: 'http://example.com/chart.png', alt: 'Chart' }],
+        },
+        ...validGeneratedPaper.questions.slice(1),
+      ],
+    };
+    const completionFn = jest.fn()
+      .mockResolvedValueOnce(JSON.stringify(invalidPaper))
+      .mockResolvedValueOnce(JSON.stringify(validGeneratedPaper));
+
+    await expect(generateAssessment({ topic: 'iOS', questionCount: 50 }, config, completionFn)).resolves.toEqual(
+      validGeneratedPaper,
+    );
+
+    expect(completionFn).toHaveBeenCalledTimes(2);
+    const retryPrompt = completionFn.mock.calls[1]?.[1][1]?.content;
+    expect(retryPrompt).toContain('The previous response failed:');
+    expect(retryPrompt).toContain('Question q1 material 1 image uri must be a valid HTTPS URL.');
     expect(retryPrompt).toContain('Regenerate the complete JSON object from scratch.');
   });
 

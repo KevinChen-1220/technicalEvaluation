@@ -53,7 +53,7 @@ The JSON must match this TypeScript shape:
         { "type": "text", "text": "Supporting material for the question" },
         {
           "type": "image",
-          "uri": "https://example.com/chart.png",
+          "uri": "<real HTTPS URL supplied in topic or notes; otherwise omit this image block>",
           "alt": "Accessible image description",
           "caption": "Image source or context",
           "aspectRatio": 1.5
@@ -99,7 +99,7 @@ Requirements:
 - Multiple choice questions must have at least one correct answer.
 - Materials are optional supporting blocks for a question. Omit materials for an ordinary text-only question.
 - Use text blocks for supporting context, table blocks for tabular data, and bar_chart blocks for comparable non-negative values.
-- Use image blocks only when a real HTTPS image URL is available. Never invent an image URL.
+- Use image blocks only when a real HTTPS image URL was explicitly supplied in the topic or notes. Never invent an image URL.
 - Keep material text, image alt text, captions, table captions and cells, chart titles, units, labels, and display values in the topic language.
 ${notes}`;
 }

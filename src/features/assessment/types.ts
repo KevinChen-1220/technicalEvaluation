@@ -22,15 +22,15 @@ export type QuestionImageMaterial = {
 
 export type QuestionTableMaterial = {
   type: 'table';
-  caption: string;
+  caption?: string;
   columns: string[];
   rows: string[][];
 };
 
 export type QuestionBarChartMaterial = {
   type: 'bar_chart';
-  title: string;
-  unit: string;
+  title?: string;
+  unit?: string;
   items: Array<{
     label: string;
     value: number;

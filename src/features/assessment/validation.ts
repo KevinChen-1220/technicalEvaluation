@@ -160,8 +160,8 @@ function validateImageMaterial(material: Record<string, unknown>, label: string,
 }
 
 function validateTableMaterial(material: Record<string, unknown>, label: string, errors: string[]): void {
-  if (!isNonEmptyString(material.caption)) {
-    errors.push(`${label} table caption is required.`);
+  if (material.caption !== undefined && !isNonEmptyString(material.caption)) {
+    errors.push(`${label} table caption must be non-empty when provided.`);
   }
 
   if (!Array.isArray(material.columns) || material.columns.length === 0) {
@@ -198,12 +198,12 @@ function validateTableMaterial(material: Record<string, unknown>, label: string,
 }
 
 function validateBarChartMaterial(material: Record<string, unknown>, label: string, errors: string[]): void {
-  if (!isNonEmptyString(material.title)) {
-    errors.push(`${label} bar_chart title is required.`);
+  if (material.title !== undefined && !isNonEmptyString(material.title)) {
+    errors.push(`${label} bar_chart title must be non-empty when provided.`);
   }
 
-  if (!isNonEmptyString(material.unit)) {
-    errors.push(`${label} bar_chart unit is required.`);
+  if (material.unit !== undefined && !isNonEmptyString(material.unit)) {
+    errors.push(`${label} bar_chart unit must be non-empty when provided.`);
   }
 
   if (!Array.isArray(material.items) || material.items.length < 2) {

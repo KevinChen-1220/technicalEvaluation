@@ -153,6 +153,52 @@ describe('validateAssessmentPaper', () => {
     });
   });
 
+  it('accepts optional table and bar chart presentation metadata when omitted', () => {
+    const paperWithMinimalMaterials = {
+      ...validGeneratedPaper,
+      questions: [
+        {
+          ...validGeneratedPaper.questions[0]!,
+          materials: [
+            { type: 'table', columns: ['地区', '2023'], rows: [['甲', '135']] },
+            { type: 'bar_chart', items: [{ label: '甲', value: 135 }, { label: '乙', value: 110 }] },
+          ],
+        },
+        ...validGeneratedPaper.questions.slice(1),
+      ],
+    };
+
+    expect(validateAssessmentPaper(paperWithMinimalMaterials)).toEqual({
+      ok: true,
+      errors: [],
+      paper: paperWithMinimalMaterials,
+    });
+  });
+
+  it.each([
+    ['null material', [null], ['Question q1 material 1 must be a JSON object.']],
+    ['unknown material type', [{ type: 'heatmap' }], ['Question q1 material 1 has unsupported type heatmap.']],
+    ['non-array table row', [{ type: 'table', columns: ['地区'], rows: ['甲'] }], ['Question q1 material 1 table row 1 must be an array.']],
+    [
+      'non-object chart items',
+      [{ type: 'bar_chart', items: [null, null] }],
+      [
+        'Question q1 material 1 bar_chart item 1 must be a JSON object.',
+        'Question q1 material 1 bar_chart item 2 must be a JSON object.',
+      ],
+    ],
+  ])('rejects %s without throwing', (_description, materials, errors) => {
+    const invalidPaper = {
+      ...validGeneratedPaper,
+      questions: [
+        { ...validGeneratedPaper.questions[0]!, materials },
+        ...validGeneratedPaper.questions.slice(1),
+      ],
+    };
+
+    expect(validateAssessmentPaper(invalidPaper)).toEqual({ ok: false, errors });
+  });
+
   it.each([
     ['non-array materials', { type: 'text', text: '资料' }, 'Question q1 materials must be an array.'],
     ['empty text', [{ type: 'text', text: '' }], 'Question q1 material 1 text is required.'],
