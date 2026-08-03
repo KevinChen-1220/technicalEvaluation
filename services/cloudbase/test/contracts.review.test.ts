@@ -3,6 +3,8 @@ import { join } from 'node:path';
 import type { AssessmentPaper } from '../../../packages/assessment-core/src';
 import * as currentContracts from '../shared/contracts';
 
+jest.mock('wx-server-sdk', () => ({ getWXContext: jest.fn() }), { virtual: true });
+
 type CompareAndSwapQuery = {
   collection: 'assessments';
   filter: { _id: string; _openid: string; revision: number };
@@ -13,7 +15,6 @@ type CompareAndSwapQuery = {
 };
 
 type FutureContracts = typeof currentContracts & {
-  createTrustedWeChatContext?: (getWXContext: () => { OPENID?: unknown }) => unknown;
   updateAssessmentWithCompareAndSwap?: (
     persistence: {
       compareAndSwap(query: CompareAndSwapQuery): Promise<Record<string, unknown> | null>;
@@ -25,6 +26,10 @@ type FutureContracts = typeof currentContracts & {
     now: string,
   ) => Promise<unknown>;
   createUserSettings?: (input: unknown, context: unknown, now: string) => unknown;
+};
+
+type TrustedContextRuntime = {
+  getTrustedWeChatContext?: () => unknown;
 };
 
 const contracts = currentContracts as FutureContracts;
@@ -42,6 +47,17 @@ const paper = {
 
 function readJsonIfPresent(path: string): unknown {
   return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : undefined;
+}
+
+function loadTrustedContextRuntime(): TrustedContextRuntime {
+  try {
+    return require('../server/trustedContext') as TrustedContextRuntime;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'MODULE_NOT_FOUND') {
+      return {};
+    }
+    throw error;
+  }
 }
 
 describe('CloudBase deployable configuration', () => {
@@ -74,10 +90,13 @@ describe('CloudBase deployable configuration', () => {
 
 describe('trusted CloudBase mutation contracts', () => {
   test('derives ownership only from the injected getWXContext boundary, not event OPENID', () => {
-    const { createTrustedWeChatContext, createGenerationJob } = contracts;
+    const { createGenerationJob } = contracts;
+    const { getTrustedWeChatContext } = loadTrustedContextRuntime();
+    const wxServerSdk = require('wx-server-sdk') as { getWXContext: jest.Mock };
 
-    expect(createTrustedWeChatContext).toBeDefined();
-    const trustedContext = createTrustedWeChatContext!(() => ({ OPENID: 'runtime-openid' }));
+    expect(getTrustedWeChatContext).toBeDefined();
+    wxServerSdk.getWXContext.mockReturnValue({ OPENID: 'runtime-openid' });
+    const trustedContext = getTrustedWeChatContext!();
     const event = { OPENID: 'spoofed-event-openid' };
 
     expect(createGenerationJob({
@@ -88,14 +107,22 @@ describe('trusted CloudBase mutation contracts', () => {
     }, trustedContext as Parameters<typeof createGenerationJob>[1], now)).toMatchObject({
       _openid: 'runtime-openid',
     });
+    expect(() => createGenerationJob({
+      id: 'job-2',
+      request: { topic: 'TypeScript', questionCount: 50 },
+      expiresAt: '2026-08-04T00:00:00.000Z',
+    }, event as unknown as Parameters<typeof createGenerationJob>[1], now)).toThrow('Trusted WeChat OPENID is required');
   });
 
   test('performs assessment persistence through an owner-and-revision compare-and-swap query', async () => {
-    const { createTrustedWeChatContext, createAssessment, updateAssessmentWithCompareAndSwap } = contracts;
+    const { createAssessment, updateAssessmentWithCompareAndSwap } = contracts;
+    const { getTrustedWeChatContext } = loadTrustedContextRuntime();
+    const wxServerSdk = require('wx-server-sdk') as { getWXContext: jest.Mock };
 
-    expect(createTrustedWeChatContext).toBeDefined();
+    expect(getTrustedWeChatContext).toBeDefined();
     expect(updateAssessmentWithCompareAndSwap).toBeDefined();
-    const trustedContext = createTrustedWeChatContext!(() => ({ OPENID: 'runtime-openid' }));
+    wxServerSdk.getWXContext.mockReturnValue({ OPENID: 'runtime-openid' });
+    const trustedContext = getTrustedWeChatContext!();
     let stored = createAssessment({
       id: 'assessment-1', paper, answers: {}, result: null, status: 'draft', completedAt: null,
     }, trustedContext as Parameters<typeof createAssessment>[1], now) as unknown as Record<string, unknown>;
@@ -142,10 +169,13 @@ describe('trusted CloudBase mutation contracts', () => {
   });
 
   test('rejects arbitrary user settings fields before a server-only write', () => {
-    const { createTrustedWeChatContext, createUserSettings } = contracts;
+    const { createUserSettings } = contracts;
+    const { getTrustedWeChatContext } = loadTrustedContextRuntime();
+    const wxServerSdk = require('wx-server-sdk') as { getWXContext: jest.Mock };
 
-    expect(createTrustedWeChatContext).toBeDefined();
-    const trustedContext = createTrustedWeChatContext!(() => ({ OPENID: 'runtime-openid' }));
+    expect(getTrustedWeChatContext).toBeDefined();
+    wxServerSdk.getWXContext.mockReturnValue({ OPENID: 'runtime-openid' });
+    const trustedContext = getTrustedWeChatContext!();
     expect(() => createUserSettings!({
       id: 'settings-1',
       locale: 'zh-CN',
@@ -153,5 +183,42 @@ describe('trusted CloudBase mutation contracts', () => {
       privacyConsentAt: null,
       providerApiKey: 'spoofed-value',
     }, trustedContext, now)).toThrow('Unsupported user settings field');
+  });
+
+  test('reprojects user settings updates so legacy provider fields are removed', () => {
+    const { updateUserSettings } = contracts;
+    const { getTrustedWeChatContext } = loadTrustedContextRuntime();
+    const wxServerSdk = require('wx-server-sdk') as { getWXContext: jest.Mock };
+
+    expect(getTrustedWeChatContext).toBeDefined();
+    wxServerSdk.getWXContext.mockReturnValue({ OPENID: 'runtime-openid' });
+    const trustedContext = getTrustedWeChatContext!();
+    const updated = updateUserSettings({
+      _id: 'settings-1',
+      _openid: 'runtime-openid',
+      schemaVersion: 1,
+      locale: 'zh-CN',
+      privacyConsentVersion: '2026-07',
+      privacyConsentAt: null,
+      createdAt: now,
+      updatedAt: now,
+      providerApiKey: 'legacy-secret',
+      providerEndpoint: 'legacy-endpoint',
+    } as Parameters<typeof updateUserSettings>[0], {
+      locale: 'zh-CN',
+      privacyConsentVersion: '2026-08',
+      privacyConsentAt: null,
+    }, trustedContext as Parameters<typeof updateUserSettings>[2], '2026-08-03T01:00:00.000Z');
+
+    expect(updated).toEqual({
+      _id: 'settings-1',
+      _openid: 'runtime-openid',
+      schemaVersion: 1,
+      locale: 'zh-CN',
+      privacyConsentVersion: '2026-08',
+      privacyConsentAt: null,
+      createdAt: now,
+      updatedAt: '2026-08-03T01:00:00.000Z',
+    });
   });
 });

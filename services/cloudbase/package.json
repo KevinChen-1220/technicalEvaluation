@@ -7,6 +7,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "@dynamic-assessment/assessment-core": "1.0.0"
+    "@dynamic-assessment/assessment-core": "1.0.0",
+    "wx-server-sdk": "4.0.2"
   }
 }

@@ -2,16 +2,18 @@ import type {
   AssessmentPaper,
   AssessmentResult,
 } from '../../../packages/assessment-core/src';
+import { getTrustedWeChatContext } from '../server/trustedContext';
 import {
   COLLECTION_SCHEMA_VERSION,
   MissingTrustedOpenIdError,
   canAccessOwnRecord,
   createAssessment,
   createGenerationJob,
-  createTrustedWeChatContext,
   createUserSettings,
   updateAssessment,
 } from '../shared/contracts';
+
+jest.mock('wx-server-sdk', () => ({ getWXContext: jest.fn() }), { virtual: true });
 
 const paper = {
   id: 'paper-1',
@@ -23,11 +25,15 @@ const paper = {
 } satisfies AssessmentPaper;
 
 const now = '2026-08-03T00:00:00.000Z';
-const context = createTrustedWeChatContext(() => ({ OPENID: 'trusted-openid' }));
+const wxServerSdk = require('wx-server-sdk') as { getWXContext: jest.Mock };
+wxServerSdk.getWXContext.mockReturnValue({ OPENID: 'trusted-openid' });
+const context = getTrustedWeChatContext();
 
 describe('CloudBase persistence contracts', () => {
   test('rejects records without a trusted OPENID', () => {
-    expect(() => createTrustedWeChatContext(() => ({}))).toThrow(MissingTrustedOpenIdError);
+    wxServerSdk.getWXContext.mockReturnValue({});
+    expect(() => getTrustedWeChatContext()).toThrow(MissingTrustedOpenIdError);
+    wxServerSdk.getWXContext.mockReturnValue({ OPENID: 'trusted-openid' });
   });
 
   test('uses trusted OPENID instead of spoofed client ownership values', () => {

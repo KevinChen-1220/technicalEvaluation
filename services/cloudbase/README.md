@@ -4,9 +4,9 @@ This package defines the versioned persistence boundary for CloudBase. It does n
 
 ## Ownership and client access
 
-Cloud functions must create the opaque `TrustedWeChatContext` with an injected runtime `getWXContext` callback before calling the builders in `shared/contracts.ts`. The callback's `OPENID` is the only accepted ownership source. Request-body/event owner, user ID, `_openid`, and revision values never establish authority.
+Cloud functions obtain their opaque trusted context only from `server/trustedContext.ts`, whose server-only adapter calls `wx-server-sdk` `getWXContext()` itself. Contract callers receive no context factory or callback. That runtime `OPENID` is the only accepted ownership source; request-body/event owner, user ID, `_openid`, and revision values never establish authority.
 
-Mini Program clients can read only their own `generation_jobs`, `assessments`, and `user_settings` records. All database writes are denied to clients and go through authenticated cloud functions, where the admin SDK bypasses client rules. `user_settings` mutations are restricted at runtime to locale, display preferences, and privacy-consent metadata.
+Mini Program clients can read only their own `generation_jobs`, `assessments`, and `user_settings` records. All database writes are denied to clients and go through authenticated cloud functions, where the admin SDK bypasses client rules. `user_settings` mutations are restricted at runtime to locale, display preferences, and privacy-consent metadata; updates reproject the record to those persisted fields so legacy or corrupt provider fields are removed.
 
 See the official CloudBase documentation for [database security rules](https://docs.cloudbase.net/database/security-rules) and [cloud function security rules](https://docs.cloudbase.net/cloud-function/security-rules).
 

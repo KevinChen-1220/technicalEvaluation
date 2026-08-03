@@ -2,17 +2,20 @@ import type {
   AssessmentPaper,
   AssessmentResult,
 } from '@dynamic-assessment/assessment-core';
+import { readTrustedOpenId } from '../server/trustedContext';
+import {
+  InvalidContractInputError,
+  MissingTrustedOpenIdError,
+  RecordOwnershipError,
+} from './errors';
+
+export {
+  InvalidContractInputError,
+  MissingTrustedOpenIdError,
+  RecordOwnershipError,
+} from './errors';
 
 export const COLLECTION_SCHEMA_VERSION = 1 as const;
-
-const trustedWeChatContextBrand: unique symbol = Symbol('TrustedWeChatContext');
-
-export type TrustedWeChatContext = {
-  readonly openId: string;
-  readonly [trustedWeChatContextBrand]: true;
-};
-
-export type GetWXContext = () => { OPENID?: unknown };
 
 export type GenerationRequest = {
   topic: string;
@@ -72,27 +75,6 @@ export type UserSettings = {
   createdAt: string;
   updatedAt: string;
 };
-
-export class MissingTrustedOpenIdError extends Error {
-  constructor() {
-    super('Trusted WeChat OPENID is required.');
-    this.name = 'MissingTrustedOpenIdError';
-  }
-}
-
-export class RecordOwnershipError extends Error {
-  constructor() {
-    super('The trusted WeChat OPENID does not own this record.');
-    this.name = 'RecordOwnershipError';
-  }
-}
-
-export class InvalidContractInputError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'InvalidContractInputError';
-  }
-}
 
 export type CreateGenerationJobInput = {
   id: string;
@@ -155,18 +137,6 @@ export type AssessmentCompareAndSwapPersistence = {
   getRevision(input: { id: string; openId: string }): Promise<number | null>;
 };
 
-export function createTrustedWeChatContext(getWXContext: GetWXContext): TrustedWeChatContext {
-  const openId = getWXContext().OPENID;
-  if (typeof openId !== 'string' || openId.length === 0) {
-    throw new MissingTrustedOpenIdError();
-  }
-
-  return Object.freeze({
-    openId,
-    [trustedWeChatContextBrand]: true as const,
-  });
-}
-
 export function canAccessOwnRecord(
   record: Pick<{ _openid: string }, '_openid'>,
   trustedOpenId: string,
@@ -176,7 +146,7 @@ export function canAccessOwnRecord(
 
 export function createGenerationJob(
   input: CreateGenerationJobInput,
-  context: TrustedWeChatContext,
+  context: unknown,
   now: string,
 ): GenerationJob {
   return {
@@ -196,7 +166,7 @@ export function createGenerationJob(
 
 export function createAssessment(
   input: CreateAssessmentInput,
-  context: TrustedWeChatContext,
+  context: unknown,
   now: string,
 ): Assessment {
   return {
@@ -216,7 +186,7 @@ export function createAssessment(
 
 export function createUserSettings(
   input: unknown,
-  context: TrustedWeChatContext,
+  context: unknown,
   now: string,
 ): UserSettings {
   const parsed = parseUserSettingsInput(input, true);
@@ -240,7 +210,7 @@ export function createUserSettings(
 export function updateUserSettings(
   record: UserSettings,
   input: unknown,
-  context: TrustedWeChatContext,
+  context: unknown,
   now: string,
 ): UserSettings {
   const trustedOpenId = requireTrustedOpenId(context);
@@ -254,11 +224,14 @@ export function updateUserSettings(
     : { displayPreferences: parsed.displayPreferences };
 
   return {
-    ...record,
+    _id: record._id,
+    _openid: record._openid,
+    schemaVersion: record.schemaVersion,
     locale: parsed.locale,
     ...displayPreferences,
     privacyConsentVersion: parsed.privacyConsentVersion,
     privacyConsentAt: parsed.privacyConsentAt,
+    createdAt: record.createdAt,
     updatedAt: now,
   };
 }
@@ -266,7 +239,7 @@ export function updateUserSettings(
 export function updateAssessment(
   record: Assessment,
   input: UpdateAssessmentInput,
-  context: TrustedWeChatContext,
+  context: unknown,
   now: string,
 ): AssessmentUpdateResult {
   const trustedOpenId = requireTrustedOpenId(context);
@@ -296,7 +269,7 @@ export async function updateAssessmentWithCompareAndSwap(
   persistence: AssessmentCompareAndSwapPersistence,
   record: Assessment,
   input: UpdateAssessmentInput,
-  context: TrustedWeChatContext,
+  context: unknown,
   now: string,
 ): Promise<AssessmentUpdateResult> {
   const prepared = updateAssessment(record, input, context, now);
@@ -353,12 +326,13 @@ export function sanitizeGenerationRequest(request: GenerationRequest): Generatio
     : { topic, notes, questionCount: request.questionCount };
 }
 
-function requireTrustedOpenId(context: TrustedWeChatContext): string {
-  if (context[trustedWeChatContextBrand] !== true || context.openId.length === 0) {
+function requireTrustedOpenId(context: unknown): string {
+  const openId = readTrustedOpenId(context);
+  if (openId === null) {
     throw new MissingTrustedOpenIdError();
   }
 
-  return context.openId;
+  return openId;
 }
 
 function parseUserSettingsInput(
