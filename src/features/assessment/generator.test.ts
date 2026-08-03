@@ -155,6 +155,77 @@ describe('generateAssessment', () => {
     expect(result.questions[0]?.materials).toEqual([tableMaterial]);
   });
 
+  it('accepts only image URLs explicitly supplied by the user', async () => {
+    const suppliedUri = 'https://cdn.example.org/source-chart.png';
+    const generatedPaper: AssessmentPaper = {
+      ...validGeneratedPaper,
+      questions: [
+        {
+          ...validGeneratedPaper.questions[0]!,
+          materials: [{ type: 'image', uri: suppliedUri, alt: '统计图' }],
+        },
+        ...validGeneratedPaper.questions.slice(1),
+      ],
+    };
+
+    await expect(generateAssessment(
+      { topic: `根据 ${suppliedUri} 生成资料分析题`, questionCount: 50 },
+      config,
+      jest.fn().mockResolvedValue(JSON.stringify(generatedPaper)),
+    )).resolves.toEqual(generatedPaper);
+  });
+
+  it.each([
+    ['Chinese text next to the URL', '参考https://cdn.example.org/source-chart.png生成题目'],
+    ['parentheses around the URL', '参考图（https://cdn.example.org/source-chart.png）'],
+    ['a Markdown link', '[参考图](https://cdn.example.org/source-chart.png)'],
+  ])('recognizes a supplied image URL in %s', async (_description, topic) => {
+    const suppliedUri = 'https://cdn.example.org/source-chart.png';
+    const generatedPaper: AssessmentPaper = {
+      ...validGeneratedPaper,
+      questions: [
+        {
+          ...validGeneratedPaper.questions[0]!,
+          materials: [{ type: 'image', uri: suppliedUri, alt: '统计图' }],
+        },
+        ...validGeneratedPaper.questions.slice(1),
+      ],
+    };
+
+    await expect(generateAssessment(
+      { topic, questionCount: 50 },
+      config,
+      jest.fn().mockResolvedValue(JSON.stringify(generatedPaper)),
+    )).resolves.toEqual(generatedPaper);
+  });
+
+  it('retries when the model invents an HTTPS image URL', async () => {
+    const inventedPaper: AssessmentPaper = {
+      ...validGeneratedPaper,
+      questions: [
+        {
+          ...validGeneratedPaper.questions[0]!,
+          materials: [{ type: 'image', uri: 'https://cdn.example.org/invented.png', alt: '统计图' }],
+        },
+        ...validGeneratedPaper.questions.slice(1),
+      ],
+    };
+    const completionFn = jest.fn()
+      .mockResolvedValueOnce(JSON.stringify(inventedPaper))
+      .mockResolvedValueOnce(JSON.stringify(validGeneratedPaper));
+
+    await expect(generateAssessment(
+      { topic: '资料分析', questionCount: 50 },
+      config,
+      completionFn,
+    )).resolves.toEqual(validGeneratedPaper);
+
+    expect(completionFn).toHaveBeenCalledTimes(2);
+    expect(completionFn.mock.calls[1]?.[1][1]?.content).toContain(
+      'image URL was not supplied in the topic or notes',
+    );
+  });
+
   it('throws readable validation errors when generated JSON is invalid', async () => {
     const completionFn = jest.fn().mockResolvedValue(JSON.stringify({ ...validGeneratedPaper, questions: [] }));
 

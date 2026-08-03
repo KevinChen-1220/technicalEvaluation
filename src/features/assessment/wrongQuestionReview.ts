@@ -17,6 +17,19 @@ export type WrongQuestionReviewItem = {
   wasUnanswered: boolean;
 };
 
+export const wrongQuestionReviewBatchSize = 10;
+
+export function getWrongQuestionPageRange(
+  requestedPage: number,
+  total: number,
+  batchSize = wrongQuestionReviewBatchSize,
+): { page: number; start: number; end: number; pageCount: number } {
+  const pageCount = Math.max(1, Math.ceil(total / batchSize));
+  const page = Math.min(Math.max(0, requestedPage), pageCount - 1);
+  const start = page * batchSize;
+  return { page, start, end: Math.min(total, start + batchSize), pageCount };
+}
+
 export function buildWrongQuestionReviews(
   paper: AssessmentPaper,
   answers: Record<string, string[]>,

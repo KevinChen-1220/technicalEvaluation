@@ -16,6 +16,34 @@ const validGeneratedPaper: AssessmentPaper = {
 };
 
 describe('validateAssessmentPaper', () => {
+  it('rejects duplicate question and option IDs', () => {
+    const duplicateQuestions = {
+      ...validGeneratedPaper,
+      questions: validGeneratedPaper.questions.map((question, index) => (
+        index === 1 ? { ...question, id: validGeneratedPaper.questions[0]!.id } : question
+      )),
+    };
+    const duplicateOptions = {
+      ...validGeneratedPaper,
+      questions: validGeneratedPaper.questions.map((question, index) => (
+        index === 0
+          ? { ...question, options: question.options.map((option, optionIndex) => (
+            optionIndex === 3 ? { ...option, id: question.options[0]!.id } : option
+          )) }
+          : question
+      )),
+    };
+
+    expect(validateAssessmentPaper(duplicateQuestions)).toEqual({
+      ok: false,
+      errors: ['Question ID q1 must be unique.'],
+    });
+    expect(validateAssessmentPaper(duplicateOptions)).toEqual({
+      ok: false,
+      errors: ['Question q1 option ID A must be unique.'],
+    });
+  });
+
   it('accepts a structurally valid generated paper', () => {
     expect(validateAssessmentPaper(validGeneratedPaper)).toEqual({ ok: true, errors: [], paper: validGeneratedPaper });
   });
@@ -50,7 +78,7 @@ describe('validateAssessmentPaper', () => {
       ...validGeneratedPaper,
       questions: [
         { ...validGeneratedPaper.questions[0]!, correctOptionIds: ['A', 'B'] },
-        { ...validGeneratedPaper.questions[3]!, correctOptionIds: [] },
+        { ...validGeneratedPaper.questions[3]!, id: 'q2', correctOptionIds: [] },
         ...validGeneratedPaper.questions.slice(2),
       ],
     };
@@ -59,7 +87,7 @@ describe('validateAssessmentPaper', () => {
       ok: false,
       errors: [
         'Question q1 single_choice questions must have exactly one correct option.',
-        'Question q4 multiple_choice questions must have at least one correct option.',
+        'Question q2 multiple_choice questions must have at least one correct option.',
       ],
     });
   });
@@ -207,6 +235,23 @@ describe('validateAssessmentPaper', () => {
     ['table row width mismatch', [{ type: 'table', caption: '各地区产值', columns: ['地区', '2023'], rows: [['甲']] }], 'Question q1 material 1 table row 1 must have 2 cells.'],
     ['one-item chart', [{ type: 'bar_chart', title: '2023 年产值', unit: '亿元', items: [{ label: '甲', value: 135 }] }], 'Question q1 material 1 bar_chart must have at least two items.'],
     ['negative chart value', [{ type: 'bar_chart', title: '2023 年产值', unit: '亿元', items: [{ label: '甲', value: -1 }, { label: '乙', value: 110 }] }], 'Question q1 material 1 bar_chart item 1 value must be greater than or equal to 0.'],
+  ])('rejects material with %s', (_description, materials, error) => {
+    const invalidPaper = {
+      ...validGeneratedPaper,
+      questions: [
+        { ...validGeneratedPaper.questions[0]!, materials },
+        ...validGeneratedPaper.questions.slice(1),
+      ],
+    };
+
+    expect(validateAssessmentPaper(invalidPaper)).toEqual({ ok: false, errors: [error] });
+  });
+
+  it.each([
+    ['too many material blocks', Array.from({ length: 9 }, () => ({ type: 'text', text: '资料' })), 'Question q1 materials must not contain more than 8 blocks.'],
+    ['too many table columns', [{ type: 'table', columns: Array.from({ length: 13 }, (_, index) => `列${index}`), rows: [Array.from({ length: 13 }, () => '值')] }], 'Question q1 material 1 table must not contain more than 12 columns.'],
+    ['too many table rows', [{ type: 'table', columns: ['列'], rows: Array.from({ length: 101 }, () => ['值']) }], 'Question q1 material 1 table must not contain more than 100 rows.'],
+    ['too many chart items', [{ type: 'bar_chart', items: Array.from({ length: 41 }, (_, index) => ({ label: `项${index}`, value: index })) }], 'Question q1 material 1 bar_chart must not contain more than 40 items.'],
   ])('rejects material with %s', (_description, materials, error) => {
     const invalidPaper = {
       ...validGeneratedPaper,

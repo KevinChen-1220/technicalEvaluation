@@ -21,7 +21,10 @@ import { migrateLegacyAssessmentHistory } from './src/features/assessment/legacy
 import { findFirstUnansweredQuestionIndex } from './src/features/assessment/questionNavigation';
 import { scoreAssessment } from './src/features/assessment/scoring';
 import type { AssessmentPaper, AssessmentResult, PersistedAssessmentRecord } from './src/features/assessment/types';
-import { buildWrongQuestionReviews } from './src/features/assessment/wrongQuestionReview';
+import {
+  buildWrongQuestionReviews,
+  getWrongQuestionPageRange,
+} from './src/features/assessment/wrongQuestionReview';
 import { loadModelConfig, saveModelConfig } from './src/features/config/secureConfigStore';
 import { type ModelConfig, validateModelConfig } from './src/features/config/modelConfig';
 import {
@@ -72,6 +75,7 @@ function AppContent() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [generationError, setGenerationError] = useState<string | null>(null);
+  const [wrongQuestionPage, setWrongQuestionPage] = useState(0);
 
   useEffect(() => {
     loadModelConfig().then((saved) => {
@@ -82,6 +86,8 @@ function AppContent() {
 
   const currentQuestion = paper?.questions[questionIndex];
   const wrongQuestionReviews = paper && result ? buildWrongQuestionReviews(paper, answers, result) : [];
+  const wrongQuestionPageRange = getWrongQuestionPageRange(wrongQuestionPage, wrongQuestionReviews.length);
+  const visibleWrongQuestionReviews = wrongQuestionReviews.slice(wrongQuestionPageRange.start, wrongQuestionPageRange.end);
   const configIsReady = validateModelConfig(config).ok;
 
   async function handleSaveConfig() {
@@ -194,6 +200,7 @@ function AppContent() {
 
     setResult(nextResult);
     setResultMode('current');
+    setWrongQuestionPage(0);
     setScreen('result');
 
     try {
@@ -211,6 +218,7 @@ function AppContent() {
     setAnswers(record.answers);
     setResult(record.result);
     setResultMode(record.status === 'completed' ? 'history' : 'current');
+    setWrongQuestionPage(0);
     setQuestionIndex(record.status === 'draft' ? findFirstUnansweredQuestionIndex(record.paper, record.answers) : 0);
     setCurrentRecordId(record.id);
     setActiveTab('history');
@@ -389,9 +397,32 @@ function AppContent() {
             </Section>
             <Section title={zhCN.result.wrongQuestions(result.wrongQuestionIds.length)}>
               {result.wrongQuestionIds.length === 0 ? <Text style={styles.notice}>{zhCN.result.noWrongAnswers}</Text> : null}
-              {wrongQuestionReviews.map((item) => (
+              {visibleWrongQuestionReviews.map((item) => (
                 <WrongQuestionReview key={item.question.id} item={item} />
               ))}
+              {wrongQuestionPageRange.pageCount > 1 ? (
+                <View style={styles.stack}>
+                  <Text style={styles.notice}>
+                    {zhCN.result.wrongQuestionPage(wrongQuestionPageRange.page + 1, wrongQuestionPageRange.pageCount)}
+                  </Text>
+                  <View style={styles.row}>
+                    {wrongQuestionPageRange.page > 0 ? (
+                      <Button
+                        label={zhCN.result.previousWrongQuestions}
+                        onPress={() => setWrongQuestionPage((page) => Math.max(0, page - 1))}
+                        tone="secondary"
+                      />
+                    ) : null}
+                    {wrongQuestionPageRange.page + 1 < wrongQuestionPageRange.pageCount ? (
+                      <Button
+                        label={zhCN.result.nextWrongQuestions}
+                        onPress={() => setWrongQuestionPage((page) => page + 1)}
+                        tone="secondary"
+                      />
+                    ) : null}
+                  </View>
+                </View>
+              ) : null}
             </Section>
             <Button label={resultMode === 'history' ? zhCN.result.backToHistory : zhCN.result.createAnother} onPress={closeResult} tone="secondary" />
           </View>

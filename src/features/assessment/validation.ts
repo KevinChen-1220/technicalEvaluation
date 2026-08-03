@@ -4,6 +4,10 @@ const supportedTypes = new Set<QuestionType>(['single_choice', 'multiple_choice'
 const supportedDifficulties = new Set<QuestionDifficulty>(['easy', 'medium', 'hard']);
 const minimumImageAspectRatio = 0.25;
 const maximumImageAspectRatio = 4;
+const maximumMaterialsPerQuestion = 8;
+const maximumTableColumns = 12;
+const maximumTableRows = 100;
+const maximumBarChartItems = 40;
 
 export type ValidationResult =
   | { ok: true; errors: []; paper: AssessmentPaper }
@@ -35,8 +39,15 @@ export function validateAssessmentPaper(input: unknown): ValidationResult {
   }
 
   if (Array.isArray(paper.questions)) {
+    const questionIds = new Set<string>();
     for (const question of paper.questions) {
       validateQuestion(question, errors);
+      if (isRecord(question) && isNonEmptyString(question.id)) {
+        if (questionIds.has(question.id)) {
+          errors.push(`Question ID ${question.id} must be unique.`);
+        }
+        questionIds.add(question.id);
+      }
     }
   }
 
@@ -46,6 +57,10 @@ export function validateAssessmentPaper(input: unknown): ValidationResult {
 function validateQuestion(question: AssessmentQuestion, errors: string[]): void {
   const label = question?.id || 'unknown';
   const optionIds = new Set(Array.isArray(question.options) ? question.options.map((option) => option.id) : []);
+
+  if (!isNonEmptyString(question.id)) {
+    errors.push('Question ID is required.');
+  }
 
   if (!question.prompt?.trim()) {
     errors.push(`Question ${label} prompt is required.`);
@@ -66,7 +81,15 @@ function validateQuestion(question: AssessmentQuestion, errors: string[]): void 
   if (!Array.isArray(question.options) || question.options.length < 2) {
     errors.push(`Question ${label} must have at least two options.`);
   } else {
+    const seenOptionIds = new Set<string>();
     for (const option of question.options) {
+      if (!isNonEmptyString(option.id)) {
+        errors.push(`Question ${label} option ID is required.`);
+      } else if (seenOptionIds.has(option.id)) {
+        errors.push(`Question ${label} option ID ${option.id} must be unique.`);
+      } else {
+        seenOptionIds.add(option.id);
+      }
       if (!option.text?.trim()) {
         errors.push(`Question ${label} option ${option.id || 'unknown'} text is required.`);
       }
@@ -103,6 +126,11 @@ function validateQuestion(question: AssessmentQuestion, errors: string[]): void 
 function validateQuestionMaterials(materials: unknown, label: string, errors: string[]): void {
   if (!Array.isArray(materials)) {
     errors.push(`Question ${label} materials must be an array.`);
+    return;
+  }
+
+  if (materials.length > maximumMaterialsPerQuestion) {
+    errors.push(`Question ${label} materials must not contain more than ${maximumMaterialsPerQuestion} blocks.`);
     return;
   }
 
@@ -167,6 +195,10 @@ function validateTableMaterial(material: Record<string, unknown>, label: string,
   if (!Array.isArray(material.columns) || material.columns.length === 0) {
     errors.push(`${label} table must have at least one column.`);
   } else {
+    if (material.columns.length > maximumTableColumns) {
+      errors.push(`${label} table must not contain more than ${maximumTableColumns} columns.`);
+      return;
+    }
     material.columns.forEach((column, index) => {
       if (!isNonEmptyString(column)) {
         errors.push(`${label} table column ${index + 1} text is required.`);
@@ -176,6 +208,11 @@ function validateTableMaterial(material: Record<string, unknown>, label: string,
 
   if (!Array.isArray(material.rows) || material.rows.length === 0) {
     errors.push(`${label} table must have at least one row.`);
+    return;
+  }
+
+  if (material.rows.length > maximumTableRows) {
+    errors.push(`${label} table must not contain more than ${maximumTableRows} rows.`);
     return;
   }
 
@@ -208,6 +245,11 @@ function validateBarChartMaterial(material: Record<string, unknown>, label: stri
 
   if (!Array.isArray(material.items) || material.items.length < 2) {
     errors.push(`${label} bar_chart must have at least two items.`);
+    return;
+  }
+
+  if (material.items.length > maximumBarChartItems) {
+    errors.push(`${label} bar_chart must not contain more than ${maximumBarChartItems} items.`);
     return;
   }
 

@@ -1,7 +1,7 @@
 import { samplePaper } from './samplePaper';
 import { scoreAssessment } from './scoring';
 import type { AssessmentPaper } from './types';
-import { buildWrongQuestionReviews } from './wrongQuestionReview';
+import { buildWrongQuestionReviews, getWrongQuestionPageRange } from './wrongQuestionReview';
 
 const paper: AssessmentPaper = {
   ...samplePaper,
@@ -39,5 +39,13 @@ describe('buildWrongQuestionReviews', () => {
     expect(reviews[0]?.wasUnanswered).toBe(true);
     expect(reviews[0]?.options.some((option) => option.state === 'selected_wrong')).toBe(false);
     expect(reviews[0]?.options.find((option) => option.id === 'A')?.state).toBe('correct');
+  });
+});
+
+describe('getWrongQuestionPageRange', () => {
+  it('returns a bounded replacement page instead of an accumulating limit', () => {
+    expect(getWrongQuestionPageRange(0, 100)).toEqual({ page: 0, start: 0, end: 10, pageCount: 10 });
+    expect(getWrongQuestionPageRange(9, 100)).toEqual({ page: 9, start: 90, end: 100, pageCount: 10 });
+    expect(getWrongQuestionPageRange(20, 7)).toEqual({ page: 0, start: 0, end: 7, pageCount: 1 });
   });
 });

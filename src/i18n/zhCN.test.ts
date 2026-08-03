@@ -48,5 +48,9 @@ describe('zhCN interface copy', () => {
         'Generated assessment is invalid: Expected 50 questions but received 49. Question 1 prompt is required.',
       ),
     ).toBe('生成的测评数据不完整：应生成 50 道题，但实际收到 49 道。第 1 题缺少题目内容。');
+
+    expect(localizeErrorMessage('Question q1 image URL was not supplied in the topic or notes.')).toBe(
+      '第 q1 题使用了未在测评主题或补充说明中提供的图片地址。',
+    );
   });
 });
