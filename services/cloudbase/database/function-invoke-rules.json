@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "rules": {
+    "create-generation-job": { "invoke": "auth != null" },
+    "get-generation-job": { "invoke": "auth != null" },
+    "update-assessment": { "invoke": "auth != null" },
+    "get-assessment": { "invoke": "auth != null" }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "@dynamic-assessment/cloudbase",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "jest --config ../../jest.config.js --runInBand services/cloudbase/test",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@dynamic-assessment/assessment-core": "1.0.0"
+  }
+}

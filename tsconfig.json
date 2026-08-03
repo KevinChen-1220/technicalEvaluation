@@ -10,5 +10,5 @@
       "@dynamic-assessment/assessment-core": ["packages/assessment-core/src"]
     }
   },
-  "include": ["App.tsx", "src/**/*.ts", "src/**/*.tsx", "packages/**/*.ts"]
+  "include": ["App.tsx", "src/**/*.ts", "src/**/*.tsx", "packages/**/*.ts", "services/**/*.ts"]
 }

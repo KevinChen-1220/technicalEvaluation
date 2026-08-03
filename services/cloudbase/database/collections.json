@@ -1,0 +1,45 @@
+{
+  "schemaVersion": 1,
+  "collections": [
+    {
+      "name": "generation_jobs",
+      "documentSchemaVersion": 1,
+      "required": ["_id", "_openid", "schemaVersion", "status", "progress", "request", "retryable", "attempt", "createdAt", "updatedAt", "expiresAt"],
+      "properties": {
+        "status": ["queued", "running", "completed", "failed"],
+        "progress": "integer:0..100",
+        "request": { "topic": "string", "notes": "string?", "questionCount": [50, 100] },
+        "assessmentId": "string?",
+        "errorCode": "safe-code?",
+        "retryable": "boolean",
+        "attempt": "integer",
+        "leaseOwner": "string?",
+        "leaseExpiresAt": "timestamp?"
+      }
+    },
+    {
+      "name": "assessments",
+      "documentSchemaVersion": 1,
+      "required": ["_id", "_openid", "schemaVersion", "status", "paper", "answers", "result", "revision", "createdAt", "updatedAt", "completedAt"],
+      "properties": {
+        "status": ["draft", "completed"],
+        "paper": "AssessmentPaper",
+        "answers": "Record<string, string[]>",
+        "result": "AssessmentResult|null",
+        "revision": "integer:>=1",
+        "completedAt": "timestamp|null"
+      }
+    },
+    {
+      "name": "user_settings",
+      "documentSchemaVersion": 1,
+      "required": ["_id", "_openid", "schemaVersion", "locale", "privacyConsentVersion", "privacyConsentAt", "createdAt", "updatedAt"],
+      "properties": {
+        "locale": ["zh-CN"],
+        "displayPreferences": "DisplayPreferences?",
+        "privacyConsentVersion": "string",
+        "privacyConsentAt": "timestamp|null"
+      }
+    }
+  ]
+}

@@ -4,7 +4,8 @@
   "private": true,
   "workspaces": [
     "packages/*",
-    "apps/*"
+    "apps/*",
+    "services/*"
   ],
   "main": "node_modules/expo/AppEntry.js",
   "scripts": {
@@ -20,7 +21,9 @@
     "dev:weapp": "npm --workspace apps/wechat run dev:weapp",
     "test:wechat": "npm --workspace apps/wechat run test",
     "typecheck:wechat": "npm --workspace apps/wechat run typecheck",
-    "build:weapp": "npm --workspace apps/wechat run build:weapp"
+    "build:weapp": "npm --workspace apps/wechat run build:weapp",
+    "test:cloudbase": "npm --workspace @dynamic-assessment/cloudbase run test",
+    "typecheck:cloudbase": "npm --workspace @dynamic-assessment/cloudbase run typecheck"
   },
   "dependencies": {
     "@expo/metro-runtime": "~5.0.5",

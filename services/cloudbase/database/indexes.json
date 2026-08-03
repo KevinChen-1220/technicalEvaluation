@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "indexes": [
+    {
+      "collection": "assessments",
+      "name": "owner_updated_at",
+      "keys": [
+        { "field": "_openid", "order": 1 },
+        { "field": "updatedAt", "order": -1 }
+      ]
+    },
+    {
+      "collection": "generation_jobs",
+      "name": "owner_status_updated_at",
+      "keys": [
+        { "field": "_openid", "order": 1 },
+        { "field": "status", "order": 1 },
+        { "field": "updatedAt", "order": -1 }
+      ]
+    },
+    {
+      "collection": "generation_jobs",
+      "name": "status_lease_expires_at",
+      "keys": [
+        { "field": "status", "order": 1 },
+        { "field": "leaseExpiresAt", "order": 1 }
+      ]
+    }
+  ]
+}
