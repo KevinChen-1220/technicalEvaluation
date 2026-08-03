@@ -34,6 +34,7 @@ import { createChatCompletion } from './src/services/aiClient';
 import { LoadingDots } from './src/components/LoadingDots';
 import { shouldDimButton } from './src/components/loadingAnimation';
 import { ScreenScroll } from './src/components/ScreenScroll';
+import { QuestionMaterials } from './src/components/QuestionMaterials';
 import { theme } from './src/theme';
 
 type MainTab = 'assess' | 'history' | 'settings';
@@ -338,7 +339,7 @@ function AppContent() {
       ) : null}
 
       {screen === 'answer' && paper && currentQuestion ? (
-        <ScreenScroll>
+        <ScreenScroll key={currentQuestion.id}>
           <View style={styles.stack}>
             <Text style={styles.kicker}>{paper.topic}</Text>
             <Text style={styles.progress}>
@@ -350,6 +351,7 @@ function AppContent() {
             <Text style={styles.questionMeta}>
               {formatDifficulty(currentQuestion.difficulty)} · {currentQuestion.knowledgePoint}
             </Text>
+            <QuestionMaterials materials={currentQuestion.materials} />
             <View style={styles.stack}>
               {currentQuestion.options.map((option) => {
                 const active = answers[currentQuestion.id]?.includes(option.id) ?? false;
