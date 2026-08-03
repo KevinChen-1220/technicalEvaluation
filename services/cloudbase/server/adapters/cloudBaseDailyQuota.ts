@@ -19,7 +19,7 @@ export class CloudBaseDailyQuota implements DailyGenerationQuota {
     try {
       return await this.database.runTransaction(async (transaction: TransactionLike) => {
         const jobReference = transaction.collection('generation_jobs').doc(input.job._id);
-        const existing = readJob(await jobReference.get());
+        const existing = readJob(await getOptionalDocument(jobReference));
         if (existing !== null) {
           if (
             existing._openid !== input.ownerOpenId
@@ -31,7 +31,7 @@ export class CloudBaseDailyQuota implements DailyGenerationQuota {
         }
 
         const counterReference = transaction.collection('daily_generation_quotas').doc(input.counterId);
-        const existingCounter = readCounter(await counterReference.get());
+        const existingCounter = readCounter(await getOptionalDocument(counterReference));
         if (existingCounter !== null && (
           existingCounter._openid !== input.ownerOpenId
           || existingCounter.utcDay !== input.utcDay
@@ -105,7 +105,22 @@ function readCounter(result: unknown): DailyGenerationQuotaCounter | null {
 }
 
 function readDocument(result: unknown): unknown {
-  return isRecord(result) ? result.data : undefined;
+  if (!isRecord(result) || result.data === null || result.data === undefined) return undefined;
+  return result.data;
+}
+
+async function getOptionalDocument(reference: TransactionDocument): Promise<unknown> {
+  try {
+    return await reference.get();
+  } catch (error) {
+    if (isSdkMissingDocumentError(error)) return { data: undefined };
+    throw error;
+  }
+}
+
+function isSdkMissingDocumentError(error: unknown): boolean {
+  if (!isRecord(error) || error.errCode !== -1 || typeof error.errMsg !== 'string') return false;
+  return /^document\.get:fail document with _id [^\s]+ does not exist$/.test(error.errMsg);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

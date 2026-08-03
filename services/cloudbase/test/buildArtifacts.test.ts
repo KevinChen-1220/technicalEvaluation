@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { generationWorkerBudget } from '../server/generation/worker';
 
 const serviceRoot = join(__dirname, '..');
 const outputRoot = join(serviceRoot, 'dist');
@@ -33,7 +34,16 @@ describe('CloudBase deployment artifacts', () => {
       }),
     ]));
     const worker = config.functions?.find((entry) => entry.name === 'generation-worker');
-    expect(worker?.timeout).toBeGreaterThanOrEqual(300);
+    const requiredWorkerBudgetMs = generationWorkerBudget.maxProviderCalls
+      * generationWorkerBudget.providerCallTimeoutMs
+      + generationWorkerBudget.minimumColdStartAndDatabaseMarginMs;
+    expect(generationWorkerBudget.maxProviderCalls
+      * generationWorkerBudget.providerCallTimeoutMs).toBeLessThanOrEqual(400_000);
+    expect(generationWorkerBudget.minimumColdStartAndDatabaseMarginMs)
+      .toBeGreaterThanOrEqual(120_000);
+    expect((worker?.timeout ?? 0) * 1000).toBeGreaterThanOrEqual(requiredWorkerBudgetMs);
+    expect(generationWorkerBudget.providerCallTimeoutMs)
+      .toBeLessThan(generationWorkerBudget.leaseDurationMs);
     expect(worker?.timeout).toBeLessThanOrEqual(900);
   });
 });

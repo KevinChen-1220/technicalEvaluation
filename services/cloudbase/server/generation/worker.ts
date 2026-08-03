@@ -10,8 +10,12 @@ import { GenerationServiceError, asGenerationServiceError, type SafeGenerationEr
 import type { GenerationClock } from './jobService';
 
 const batchSize = 10;
-const leaseDurationMs = 2 * 60 * 1000;
-const providerTimeoutMs = 90 * 1000;
+export const generationWorkerBudget = {
+  maxProviderCalls: 10,
+  providerCallTimeoutMs: 40 * 1000,
+  leaseDurationMs: 2 * 60 * 1000,
+  minimumColdStartAndDatabaseMarginMs: 2 * 60 * 1000,
+} as const;
 
 export type CompletionBatchRequest = {
   topic: string;
@@ -115,7 +119,10 @@ export async function runGenerationWorker(
   const job = await dependencies.repository.claimNext({
     leaseOwner,
     now: claimTime.toISOString(),
-    leaseExpiresAt: addMilliseconds(claimTime, leaseDurationMs).toISOString(),
+    leaseExpiresAt: addMilliseconds(
+      claimTime,
+      generationWorkerBudget.leaseDurationMs,
+    ).toISOString(),
   });
   if (job === null) {
     return { claimed: false };
@@ -137,7 +144,10 @@ export async function runGenerationWorker(
       jobId: job._id,
       leaseOwner,
       now: leaseTime.toISOString(),
-      leaseExpiresAt: addMilliseconds(leaseTime, leaseDurationMs).toISOString(),
+      leaseExpiresAt: addMilliseconds(
+        leaseTime,
+        generationWorkerBudget.leaseDurationMs,
+      ).toISOString(),
     });
     if (!leaseRenewed) {
       return recordWorkerFailure(
@@ -152,7 +162,10 @@ export async function runGenerationWorker(
 
     const startedAt = dependencies.clock.now();
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), providerTimeoutMs);
+    const timeout = setTimeout(
+      () => controller.abort(),
+      generationWorkerBudget.providerCallTimeoutMs,
+    );
     try {
       const raw = await dependencies.completionClient.complete({
         topic: job.request.topic,
@@ -180,7 +193,10 @@ export async function runGenerationWorker(
         leaseOwner,
         progress,
         now: finishedAt.toISOString(),
-        leaseExpiresAt: addMilliseconds(finishedAt, leaseDurationMs).toISOString(),
+        leaseExpiresAt: addMilliseconds(
+          finishedAt,
+          generationWorkerBudget.leaseDurationMs,
+        ).toISOString(),
       });
       if (!leaseUpdated) {
         throw new GenerationServiceError('INTERNAL_ERROR', false);

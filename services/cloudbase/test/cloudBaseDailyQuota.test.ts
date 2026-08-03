@@ -2,6 +2,40 @@ import { CloudBaseDailyQuota } from '../server/adapters/cloudBaseDailyQuota';
 import type { GenerationJob } from '../shared/contracts';
 
 describe('CloudBase atomic daily quota', () => {
+  test('creates a first job when wx-server-sdk 4.0.2 throws its exact missing-document error', async () => {
+    const database = new InMemoryTransactionalDatabase();
+    database.missingDocumentBehavior = 'sdk-error';
+    const quota = new CloudBaseDailyQuota(database.asCloudDatabase(), 2);
+
+    await expect(quota.reserveJob({
+      job: makeJob('job-1'),
+      counterId: 'quota-owner-1-2026-08-03',
+      ownerOpenId: 'owner-1',
+      utcDay: '2026-08-03',
+      now: '2026-08-03T10:30:00.000Z',
+    })).resolves.toMatchObject({ type: 'created' });
+    expect(database.document('daily_generation_quotas', 'quota-owner-1-2026-08-03'))
+      .toMatchObject({ count: 1 });
+  });
+
+  test('treats data null as absent and rolls back a failed first job write', async () => {
+    const database = new InMemoryTransactionalDatabase();
+    database.missingDocumentBehavior = 'null';
+    database.failJobWriteId = 'job-1';
+    const quota = new CloudBaseDailyQuota(database.asCloudDatabase(), 2);
+    const input = {
+      job: makeJob('job-1'),
+      counterId: 'quota-owner-1-2026-08-03',
+      ownerOpenId: 'owner-1',
+      utcDay: '2026-08-03',
+      now: '2026-08-03T10:30:00.000Z',
+    };
+
+    await expect(quota.reserveJob(input)).rejects.toThrow('simulated job write failure');
+    expect(database.document('daily_generation_quotas', input.counterId)).toBeUndefined();
+    expect(database.document('generation_jobs', 'job-1')).toBeUndefined();
+  });
+
   test('does not exceed the limit under concurrent reservations', async () => {
     const database = new InMemoryTransactionalDatabase();
     const quota = new CloudBaseDailyQuota(database.asCloudDatabase(), 2);
@@ -104,6 +138,7 @@ class InMemoryTransactionalDatabase {
   readonly committedWrites: string[] = [];
   transactionCount = 0;
   failJobWriteId: string | undefined;
+  missingDocumentBehavior: 'undefined' | 'null' | 'sdk-error' = 'undefined';
   private state = new Map<string, Map<string, Record<string, unknown>>>();
   private transactionQueue: Promise<void> = Promise.resolve();
 
@@ -131,7 +166,12 @@ class InMemoryTransactionalDatabase {
       const transaction = {
         collection: (collectionName: string) => ({
           doc: (id: string) => ({
-            get: async () => ({ data: this.collectionState(draft, collectionName).get(id) }),
+            get: async () => {
+              const document = this.collectionState(draft, collectionName).get(id);
+              if (document !== undefined) return { data: document };
+              if (this.missingDocumentBehavior === 'sdk-error') throw sdkMissingDocumentError(id);
+              return { data: this.missingDocumentBehavior === 'null' ? null : undefined };
+            },
             set: async ({ data }: { data: Record<string, unknown> }) => {
               if (collectionName === 'generation_jobs' && id === this.failJobWriteId) {
                 throw new Error('simulated job write failure');
@@ -164,6 +204,14 @@ class InMemoryTransactionalDatabase {
     }
     return documents;
   }
+}
+
+function sdkMissingDocumentError(id: string): Error {
+  const message = `document.get:fail document with _id ${id} does not exist`;
+  const error = new Error(message) as Error & { errCode: number; errMsg: string };
+  error.errCode = -1;
+  error.errMsg = message;
+  return error;
 }
 
 function cloneState(

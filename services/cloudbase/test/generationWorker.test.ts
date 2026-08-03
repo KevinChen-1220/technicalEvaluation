@@ -1,6 +1,7 @@
 import type { AssessmentQuestion, ScoringLevel } from '@dynamic-assessment/assessment-core';
 import type { Assessment, GenerationJob } from '../shared/contracts';
 import {
+  generationWorkerBudget,
   parseGeneratedBatch,
   runGenerationWorker,
   type CompletionBatchRequest,
@@ -312,14 +313,14 @@ describe('generation worker', () => {
     workerDependencies.clock = { now: () => new Date(Date.now()) };
 
     const resultPromise = runGenerationWorker(workerDependencies);
-    await jest.advanceTimersByTimeAsync(90_000);
+    await jest.advanceTimersByTimeAsync(generationWorkerBudget.providerCallTimeoutMs);
     const result = await resultPromise;
 
     expect(observedSignal?.aborted).toBe(true);
     expect(result).toMatchObject({ status: 'queued', errorCode: 'PROVIDER_ERROR' });
     const renewedLease = repository.events.find((event) => event.startsWith('renew:'))?.slice(6);
     expect(renewedLease).toBe('2026-08-03T10:32:00.000Z');
-    expect(new Date(renewedLease!).getTime() - Date.now()).toBe(30_000);
+    expect(new Date(renewedLease!).getTime() - Date.now()).toBe(80_000);
     jest.useRealTimers();
   });
 
