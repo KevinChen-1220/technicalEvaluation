@@ -49,16 +49,17 @@ export const zhCN = {
     current: '测评结果',
     knowledgePoints: '知识点表现',
     wrongQuestions: (count: number) => `错题（${count}）`,
+    wrongQuestionPage: (current: number, total: number) => `第 ${current} / ${total} 页`,
+    previousWrongQuestions: '上一组错题',
+    nextWrongQuestions: '下一组错题',
     noWrongAnswers: '没有错题。',
+    correctAnswer: '正确答案',
+    explanation: '题目解析',
+    correctOption: '正确答案',
+    yourSelection: '你的选择',
+    unanswered: '未作答',
     backToHistory: '返回历史',
     createAnother: '再创建一份',
-  },
-  review: {
-    kicker: '题目解析',
-    yourAnswer: '你的答案：',
-    correctAnswer: '正确答案：',
-    back: '返回结果',
-    noAnswer: '未作答',
   },
   alerts: {
     configAttention: '请检查模型配置',
@@ -141,6 +142,9 @@ export function localizeErrorMessage(message: string): string {
   const invalidJson = message.match(/^Model provider response was not valid JSON:\s*(.*)$/s);
   if (invalidJson) return `模型服务返回的不是有效 JSON：${invalidJson[1]}`;
 
+  const inventedImage = message.match(/^Question ([^ ]+) image URL was not supplied in the topic or notes\.$/);
+  if (inventedImage) return `第 ${inventedImage[1]} 题使用了未在测评主题或补充说明中提供的图片地址。`;
+
   const invalidAssessment = message.match(/^Generated assessment is invalid:\s*(.*)$/s);
   if (invalidAssessment) return `生成的测评数据不完整：${localizeValidationDetails(invalidAssessment[1] ?? '')}`;
 
@@ -154,16 +158,46 @@ function localizeValidationDetails(details: string): string {
     .replace(/Expected (\d+) questions but received (\d+)\./g, '应生成 $1 道题，但实际收到 $2 道。')
     .replace(/Scoring levels are required\./g, '缺少评分等级。')
     .replace(/Scoring levels must cover 0 through 100 percent without gaps\./g, '评分等级必须连续覆盖 0% 到 100%。')
+    .replace(/Question ID ([^ ]+) must be unique\./g, '题目 ID $1 不能重复。')
+    .replace(/Question ID is required\./g, '题目缺少 ID。')
     .replace(/Question ([^ ]+) prompt is required\./g, '第 $1 题缺少题目内容。')
     .replace(/Question ([^ ]+) has unsupported type ([^.]+)\./g, '第 $1 题使用了不支持的题型 $2。')
     .replace(/Question ([^ ]+) has unsupported difficulty ([^.]+)\./g, '第 $1 题使用了不支持的难度 $2。')
     .replace(/Question ([^ ]+) knowledgePoint is required\./g, '第 $1 题缺少知识点。')
     .replace(/Question ([^ ]+) must have at least two options\./g, '第 $1 题至少需要两个选项。')
+    .replace(/Question ([^ ]+) option ID ([^ ]+) must be unique\./g, '第 $1 题的选项 ID $2 不能重复。')
+    .replace(/Question ([^ ]+) option ID is required\./g, '第 $1 题存在缺少 ID 的选项。')
     .replace(/Question ([^ ]+) option ([^ ]+) text is required\./g, '第 $1 题的 $2 选项缺少内容。')
     .replace(/Question ([^ ]+) correctOptionIds must be an array\./g, '第 $1 题的正确答案必须是数组。')
     .replace(/Question ([^ ]+) correct option ([^ ]+) does not exist in options\./g, '第 $1 题的正确答案 $2 不在选项中。')
     .replace(/Question ([^ ]+) (single_choice|true_false) questions must have exactly one correct option\./g, '第 $1 题必须且只能有一个正确选项。')
     .replace(/Question ([^ ]+) multiple_choice questions must have at least one correct option\./g, '第 $1 题至少需要一个正确选项。')
     .replace(/Question ([^ ]+) explanation is required\./g, '第 $1 题缺少答案解析。')
+    .replace(/Question ([^ ]+) materials must be an array\./g, '第 $1 题的资料块必须是数组。')
+    .replace(/Question ([^ ]+) materials must not contain more than (\d+) blocks\./g, '第 $1 题的资料块不能超过 $2 个。')
+    .replace(/Question ([^ ]+) material (\d+) must be a JSON object\./g, '第 $1 题的第 $2 个资料块必须是 JSON 对象。')
+    .replace(/Question ([^ ]+) material (\d+) has unsupported type ([^.]+)\./g, '第 $1 题的第 $2 个资料块使用了不支持的类型 $3。')
+    .replace(/Question ([^ ]+) material (\d+) text is required\./g, '第 $1 题的第 $2 个资料文本不能为空。')
+    .replace(/Question ([^ ]+) material (\d+) image uri must be a valid HTTPS URL\./g, '第 $1 题的第 $2 个图片资料必须使用有效的 HTTPS URL。')
+    .replace(/Question ([^ ]+) material (\d+) image alt is required\./g, '第 $1 题的第 $2 个图片资料缺少替代文本。')
+    .replace(/Question ([^ ]+) material (\d+) image caption must be non-empty when provided\./g, '第 $1 题的第 $2 个图片资料说明不能为空。')
+    .replace(/Question ([^ ]+) material (\d+) image aspectRatio must be between ([\d.]+) and ([\d.]+)\./g, '第 $1 题的第 $2 个图片比例必须介于 $3 和 $4 之间。')
+    .replace(/Question ([^ ]+) material (\d+) table caption must be non-empty when provided\./g, '第 $1 题的第 $2 个表格资料标题不能为空。')
+    .replace(/Question ([^ ]+) material (\d+) table must have at least one column\./g, '第 $1 题的第 $2 个表格资料至少需要一列。')
+    .replace(/Question ([^ ]+) material (\d+) table must not contain more than (\d+) columns\./g, '第 $1 题的第 $2 个表格资料不能超过 $3 列。')
+    .replace(/Question ([^ ]+) material (\d+) table column (\d+) text is required\./g, '第 $1 题的第 $2 个表格资料第 $3 列不能为空。')
+    .replace(/Question ([^ ]+) material (\d+) table must have at least one row\./g, '第 $1 题的第 $2 个表格资料至少需要一行。')
+    .replace(/Question ([^ ]+) material (\d+) table must not contain more than (\d+) rows\./g, '第 $1 题的第 $2 个表格资料不能超过 $3 行。')
+    .replace(/Question ([^ ]+) material (\d+) table row (\d+) must be an array\./g, '第 $1 题的第 $2 个表格资料第 $3 行必须是数组。')
+    .replace(/Question ([^ ]+) material (\d+) table row (\d+) must have (\d+) cells\./g, '第 $1 题的第 $2 个表格资料第 $3 行必须有 $4 个单元格。')
+    .replace(/Question ([^ ]+) material (\d+) table row (\d+) cell (\d+) text is required\./g, '第 $1 题的第 $2 个表格资料第 $3 行第 $4 个单元格不能为空。')
+    .replace(/Question ([^ ]+) material (\d+) bar_chart title must be non-empty when provided\./g, '第 $1 题的第 $2 个柱状图资料标题不能为空。')
+    .replace(/Question ([^ ]+) material (\d+) bar_chart unit must be non-empty when provided\./g, '第 $1 题的第 $2 个柱状图资料单位不能为空。')
+    .replace(/Question ([^ ]+) material (\d+) bar_chart must have at least two items\./g, '第 $1 题的第 $2 个柱状图资料至少需要两项数据。')
+    .replace(/Question ([^ ]+) material (\d+) bar_chart must not contain more than (\d+) items\./g, '第 $1 题的第 $2 个柱状图资料不能超过 $3 项数据。')
+    .replace(/Question ([^ ]+) material (\d+) bar_chart item (\d+) must be a JSON object\./g, '第 $1 题的第 $2 个柱状图资料第 $3 项必须是 JSON 对象。')
+    .replace(/Question ([^ ]+) material (\d+) bar_chart item (\d+) label is required\./g, '第 $1 题的第 $2 个柱状图资料第 $3 项缺少标签。')
+    .replace(/Question ([^ ]+) material (\d+) bar_chart item (\d+) value must be greater than or equal to 0\./g, '第 $1 题的第 $2 个柱状图资料第 $3 项的数值必须大于或等于 0。')
+    .replace(/Question ([^ ]+) material (\d+) bar_chart item (\d+) displayValue must be non-empty when provided\./g, '第 $1 题的第 $2 个柱状图资料第 $3 项显示值不能为空。')
     .replace(/。\s+/g, '。');
 }

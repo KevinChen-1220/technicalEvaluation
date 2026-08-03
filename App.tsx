@@ -1,8 +1,9 @@
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Alert,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -18,8 +19,13 @@ import {
 import { defaultAssessmentBrief } from './src/features/assessment/assessmentBriefDefaults';
 import { generateAssessment } from './src/features/assessment/generator';
 import { migrateLegacyAssessmentHistory } from './src/features/assessment/legacyHistoryMigration';
+import { findFirstUnansweredQuestionIndex } from './src/features/assessment/questionNavigation';
 import { scoreAssessment } from './src/features/assessment/scoring';
-import type { AssessmentPaper, AssessmentQuestion, AssessmentResult, PersistedAssessmentRecord } from './src/features/assessment/types';
+import type { AssessmentPaper, AssessmentResult, PersistedAssessmentRecord } from './src/features/assessment/types';
+import {
+  buildWrongQuestionReviews,
+  getWrongQuestionPageRange,
+} from './src/features/assessment/wrongQuestionReview';
 import { loadModelConfig, saveModelConfig } from './src/features/config/secureConfigStore';
 import { type ModelConfig, validateModelConfig } from './src/features/config/modelConfig';
 import {
@@ -34,10 +40,12 @@ import { createChatCompletion } from './src/services/aiClient';
 import { LoadingDots } from './src/components/LoadingDots';
 import { shouldDimButton } from './src/components/loadingAnimation';
 import { ScreenScroll } from './src/components/ScreenScroll';
+import { QuestionMaterials } from './src/components/QuestionMaterials';
+import { WrongQuestionReview } from './src/components/WrongQuestionReview';
 import { theme } from './src/theme';
 
 type MainTab = 'assess' | 'history' | 'settings';
-type Screen = 'main' | 'answer' | 'result' | 'review';
+type Screen = 'main' | 'answer' | 'result';
 type ResultMode = 'current' | 'history';
 
 const emptyConfig: ModelConfig = { baseUrl: '', apiKey: '', model: '' };
@@ -68,7 +76,9 @@ function AppContent() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [generationError, setGenerationError] = useState<string | null>(null);
-  const [reviewQuestionId, setReviewQuestionId] = useState<string | null>(null);
+  const [wrongQuestionPage, setWrongQuestionPage] = useState(0);
+  const resultScrollRef = useRef<ScrollView>(null);
+  const wrongQuestionSectionY = useRef(0);
 
   useEffect(() => {
     loadModelConfig().then((saved) => {
@@ -78,7 +88,9 @@ function AppContent() {
   }, []);
 
   const currentQuestion = paper?.questions[questionIndex];
-  const reviewQuestion = paper?.questions.find((question) => question.id === reviewQuestionId) ?? paper?.questions[0];
+  const wrongQuestionReviews = paper && result ? buildWrongQuestionReviews(paper, answers, result) : [];
+  const wrongQuestionPageRange = getWrongQuestionPageRange(wrongQuestionPage, wrongQuestionReviews.length);
+  const visibleWrongQuestionReviews = wrongQuestionReviews.slice(wrongQuestionPageRange.start, wrongQuestionPageRange.end);
   const configIsReady = validateModelConfig(config).ok;
 
   async function handleSaveConfig() {
@@ -146,7 +158,6 @@ function AppContent() {
     setResult(null);
     setResultMode('current');
     setQuestionIndex(0);
-    setReviewQuestionId(null);
 
     try {
       const draft = await createAssessmentDraft({ paper: nextPaper });
@@ -192,6 +203,7 @@ function AppContent() {
 
     setResult(nextResult);
     setResultMode('current');
+    setWrongQuestionPage(0);
     setScreen('result');
 
     try {
@@ -209,8 +221,8 @@ function AppContent() {
     setAnswers(record.answers);
     setResult(record.result);
     setResultMode(record.status === 'completed' ? 'history' : 'current');
-    setQuestionIndex(0);
-    setReviewQuestionId(null);
+    setWrongQuestionPage(0);
+    setQuestionIndex(record.status === 'draft' ? findFirstUnansweredQuestionIndex(record.paper, record.answers) : 0);
     setCurrentRecordId(record.id);
     setActiveTab('history');
     setScreen(record.status === 'completed' && record.result ? 'result' : 'answer');
@@ -219,6 +231,13 @@ function AppContent() {
   function closeResult() {
     setScreen('main');
     setActiveTab(resultMode === 'history' ? 'history' : 'assess');
+  }
+
+  function changeWrongQuestionPage(nextPage: number) {
+    setWrongQuestionPage(nextPage);
+    requestAnimationFrame(() => {
+      resultScrollRef.current?.scrollTo({ y: wrongQuestionSectionY.current, animated: true });
+    });
   }
 
   async function refreshHistory() {
@@ -338,7 +357,7 @@ function AppContent() {
       ) : null}
 
       {screen === 'answer' && paper && currentQuestion ? (
-        <ScreenScroll>
+        <ScreenScroll key={currentQuestion.id}>
           <View style={styles.stack}>
             <Text style={styles.kicker}>{paper.topic}</Text>
             <Text style={styles.progress}>
@@ -350,6 +369,7 @@ function AppContent() {
             <Text style={styles.questionMeta}>
               {formatDifficulty(currentQuestion.difficulty)} · {currentQuestion.knowledgePoint}
             </Text>
+            <QuestionMaterials materials={currentQuestion.materials} />
             <View style={styles.stack}>
               {currentQuestion.options.map((option) => {
                 const active = answers[currentQuestion.id]?.includes(option.id) ?? false;
@@ -370,7 +390,7 @@ function AppContent() {
       ) : null}
 
       {screen === 'result' && paper && result ? (
-        <ScreenScroll>
+        <ScreenScroll scrollViewRef={resultScrollRef}>
           <View style={styles.stack}>
             <Text style={styles.kicker}>{resultMode === 'history' ? zhCN.result.history : zhCN.result.current}</Text>
             <Text style={styles.title}>{result.level.title}</Text>
@@ -385,43 +405,42 @@ function AppContent() {
                 </Text>
               ))}
             </Section>
-            <Section title={zhCN.result.wrongQuestions(result.wrongQuestionIds.length)}>
-              {result.wrongQuestionIds.length === 0 ? <Text style={styles.notice}>{zhCN.result.noWrongAnswers}</Text> : null}
-              {result.wrongQuestionIds.map((id) => {
-                const question = paper.questions.find((item) => item.id === id);
-                return question ? (
-                  <Button
-                    key={id}
-                    label={question.prompt}
-                    onPress={() => {
-                      setReviewQuestionId(id);
-                      setScreen('review');
-                    }}
-                    tone="secondary"
-                  />
-                ) : null;
-              })}
-            </Section>
+            <View onLayout={(event) => { wrongQuestionSectionY.current = event.nativeEvent.layout.y; }}>
+              <Section title={zhCN.result.wrongQuestions(result.wrongQuestionIds.length)}>
+                {result.wrongQuestionIds.length === 0 ? <Text style={styles.notice}>{zhCN.result.noWrongAnswers}</Text> : null}
+                {visibleWrongQuestionReviews.map((item) => (
+                  <WrongQuestionReview key={item.question.id} item={item} />
+                ))}
+                {wrongQuestionPageRange.pageCount > 1 ? (
+                  <View style={styles.stack}>
+                    <Text style={styles.notice}>
+                      {zhCN.result.wrongQuestionPage(wrongQuestionPageRange.page + 1, wrongQuestionPageRange.pageCount)}
+                    </Text>
+                    <View style={styles.row}>
+                      {wrongQuestionPageRange.page > 0 ? (
+                        <Button
+                          label={zhCN.result.previousWrongQuestions}
+                          onPress={() => changeWrongQuestionPage(Math.max(0, wrongQuestionPageRange.page - 1))}
+                          tone="secondary"
+                        />
+                      ) : null}
+                      {wrongQuestionPageRange.page + 1 < wrongQuestionPageRange.pageCount ? (
+                        <Button
+                          label={zhCN.result.nextWrongQuestions}
+                          onPress={() => changeWrongQuestionPage(wrongQuestionPageRange.page + 1)}
+                          tone="secondary"
+                        />
+                      ) : null}
+                    </View>
+                  </View>
+                ) : null}
+              </Section>
+            </View>
             <Button label={resultMode === 'history' ? zhCN.result.backToHistory : zhCN.result.createAnother} onPress={closeResult} tone="secondary" />
           </View>
         </ScreenScroll>
       ) : null}
 
-      {screen === 'review' && paper && reviewQuestion ? (
-        <ScreenScroll>
-          <View style={styles.stack}>
-            <Text style={styles.kicker}>{zhCN.review.kicker}</Text>
-            <Text style={styles.question}>{reviewQuestion.prompt}</Text>
-            <Text style={styles.questionMeta}>
-              {formatDifficulty(reviewQuestion.difficulty)} · {reviewQuestion.knowledgePoint}
-            </Text>
-            <Text style={styles.metric}>{zhCN.review.yourAnswer}{formatOptions(reviewQuestion, answers[reviewQuestion.id] ?? [])}</Text>
-            <Text style={styles.metric}>{zhCN.review.correctAnswer}{formatOptions(reviewQuestion, reviewQuestion.correctOptionIds)}</Text>
-            <Text style={styles.notice}>{reviewQuestion.explanation}</Text>
-            <Button label={zhCN.review.back} onPress={() => setScreen('result')} />
-          </View>
-        </ScreenScroll>
-      ) : null}
     </View>
   );
 }
@@ -530,10 +549,6 @@ function HistoryRow({ record, onPress }: { record: PersistedAssessmentRecord; on
       </View>
     </Pressable>
   );
-}
-
-function formatOptions(question: AssessmentQuestion, ids: string[]): string {
-  return ids.map((id) => question.options.find((option) => option.id === id)?.text ?? id).join('、') || zhCN.review.noAnswer;
 }
 
 const styles = StyleSheet.create({

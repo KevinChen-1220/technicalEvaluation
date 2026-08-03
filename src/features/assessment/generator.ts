@@ -48,7 +48,32 @@ The JSON must match this TypeScript shape:
         { "id": "B", "text": "Second answer option" }
       ],
       "correctOptionIds": ["A"],
-      "explanation": "Detailed explanation of the correct answer"
+      "explanation": "Detailed explanation of the correct answer",
+      "materials": [
+        { "type": "text", "text": "Supporting material for the question" },
+        {
+          "type": "image",
+          "uri": "<real HTTPS URL supplied in topic or notes; otherwise omit this image block>",
+          "alt": "Accessible image description",
+          "caption": "Image source or context",
+          "aspectRatio": 1.5
+        },
+        {
+          "type": "table",
+          "caption": "Table title",
+          "columns": ["Category", "Value"],
+          "rows": [["A", "120"], ["B", "110"]]
+        },
+        {
+          "type": "bar_chart",
+          "title": "Chart title",
+          "unit": "units",
+          "items": [
+            { "label": "A", "value": 120 },
+            { "label": "B", "value": 110, "displayValue": "110 units" }
+          ]
+        }
+      ]
     }
   ]
 }
@@ -72,6 +97,11 @@ Requirements:
 - Scoring levels must cover 0 through 100 percent without gaps.
 - Single choice and true/false questions must have exactly one correct answer.
 - Multiple choice questions must have at least one correct answer.
+- Materials are optional supporting blocks for a question. Omit materials for an ordinary text-only question.
+- Use text blocks for supporting context, table blocks for tabular data, and bar_chart blocks for comparable non-negative values.
+- Use image blocks only when a real HTTPS image URL was explicitly supplied in the topic or notes. Never invent an image URL.
+- Use no more than 8 material blocks per question, 12 table columns, 100 table rows, or 40 bar-chart items.
+- Keep material text, image alt text, captions, table captions and cells, chart titles, units, labels, and display values in the topic language.
 ${notes}`;
 }
 
@@ -126,7 +156,9 @@ export async function generateAssessment(
     ]);
 
     try {
-      return parseAssessmentPaper(content);
+      const paper = parseAssessmentPaper(content);
+      validateGeneratedImageSources(paper, request);
+      return paper;
     } catch (error) {
       if (!(error instanceof RetryableGenerationError) || attempt === 1) {
         throw error;
@@ -137,6 +169,50 @@ export async function generateAssessment(
   }
 
   throw new Error('Assessment generation did not return a result.');
+}
+
+function validateGeneratedImageSources(
+  paper: AssessmentPaper,
+  request: AssessmentGenerationRequest,
+): void {
+  const sourceText = `${request.topic}\n${request.notes ?? ''}`;
+
+  for (const question of paper.questions) {
+    for (const material of question.materials ?? []) {
+      if (material.type === 'image' && !wasImageUrlExplicitlySupplied(sourceText, material.uri)) {
+        throw new RetryableGenerationError(
+          `Question ${question.id} image URL was not supplied in the topic or notes.`,
+        );
+      }
+    }
+  }
+}
+
+function wasImageUrlExplicitlySupplied(input: string, uri: string): boolean {
+  let index = input.indexOf(uri);
+
+  while (index >= 0) {
+    const trailingText = input.slice(index + uri.length);
+    const nextCharacter = Array.from(trailingText)[0];
+    if (
+      nextCharacter === undefined
+      || /[\s<>"'`)\]}，。；：！？、）】]/u.test(nextCharacter)
+      || (/\p{Script=Han}/u.test(nextCharacter) && hasImageFileExtension(uri))
+    ) {
+      return true;
+    }
+    index = input.indexOf(uri, index + 1);
+  }
+
+  return false;
+}
+
+function hasImageFileExtension(uri: string): boolean {
+  try {
+    return /\.(?:avif|gif|jpe?g|png|webp)$/i.test(new URL(uri).pathname);
+  } catch {
+    return false;
+  }
 }
 
 function parseAssessmentPaper(content: string): AssessmentPaper {

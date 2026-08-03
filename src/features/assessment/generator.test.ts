@@ -41,6 +41,14 @@ describe('buildAssessmentPrompt', () => {
     expect(prompt).toContain('detailed explanation');
     expect(prompt).toContain('cover 0 through 100 percent without gaps');
     expect(prompt).toContain('Return one JSON object only. Do not wrap it in Markdown.');
+    expect(prompt).toContain('"materials": [');
+    expect(prompt).toContain('"type": "table"');
+    expect(prompt).toContain('"type": "bar_chart"');
+    expect(prompt).toContain('Never invent an image URL');
+    expect(prompt).toContain('Use image blocks only when a real HTTPS image URL');
+    expect(prompt).toContain('Omit materials for an ordinary text-only question');
+    expect(prompt).toContain('<real HTTPS URL supplied in topic or notes; otherwise omit this image block>');
+    expect(prompt).not.toContain('https://example.com/chart.png');
   });
 
   it('uses the topic as the sole language source for Chinese, English, or other-language input', () => {
@@ -123,6 +131,125 @@ describe('generateAssessment', () => {
     ]);
   });
 
+  it('preserves a valid table material from the generated paper', async () => {
+    const tableMaterial = {
+      type: 'table' as const,
+      caption: '各地区产值',
+      columns: ['地区', '2022', '2023'],
+      rows: [['甲', '120', '135'], ['乙', '98', '110']],
+    };
+    const generatedPaper: AssessmentPaper = {
+      ...validGeneratedPaper,
+      questions: [
+        { ...validGeneratedPaper.questions[0]!, materials: [tableMaterial] },
+        ...validGeneratedPaper.questions.slice(1),
+      ],
+    };
+
+    const result = await generateAssessment(
+      { topic: 'iOS', questionCount: 50 },
+      config,
+      jest.fn().mockResolvedValue(JSON.stringify(generatedPaper)),
+    );
+
+    expect(result.questions[0]?.materials).toEqual([tableMaterial]);
+  });
+
+  it('accepts only image URLs explicitly supplied by the user', async () => {
+    const suppliedUri = 'https://cdn.example.org/source-chart.png';
+    const generatedPaper: AssessmentPaper = {
+      ...validGeneratedPaper,
+      questions: [
+        {
+          ...validGeneratedPaper.questions[0]!,
+          materials: [{ type: 'image', uri: suppliedUri, alt: '统计图' }],
+        },
+        ...validGeneratedPaper.questions.slice(1),
+      ],
+    };
+
+    await expect(generateAssessment(
+      { topic: `根据 ${suppliedUri} 生成资料分析题`, questionCount: 50 },
+      config,
+      jest.fn().mockResolvedValue(JSON.stringify(generatedPaper)),
+    )).resolves.toEqual(generatedPaper);
+  });
+
+  it.each([
+    ['Chinese text next to the URL', '参考https://cdn.example.org/source-chart.png生成题目'],
+    ['parentheses around the URL', '参考图（https://cdn.example.org/source-chart.png）'],
+    ['a Markdown link', '[参考图](https://cdn.example.org/source-chart.png)'],
+  ])('recognizes a supplied image URL in %s', async (_description, topic) => {
+    const suppliedUri = 'https://cdn.example.org/source-chart.png';
+    const generatedPaper: AssessmentPaper = {
+      ...validGeneratedPaper,
+      questions: [
+        {
+          ...validGeneratedPaper.questions[0]!,
+          materials: [{ type: 'image', uri: suppliedUri, alt: '统计图' }],
+        },
+        ...validGeneratedPaper.questions.slice(1),
+      ],
+    };
+
+    await expect(generateAssessment(
+      { topic, questionCount: 50 },
+      config,
+      jest.fn().mockResolvedValue(JSON.stringify(generatedPaper)),
+    )).resolves.toEqual(generatedPaper);
+  });
+
+  it('retries when the model invents an HTTPS image URL', async () => {
+    const inventedPaper: AssessmentPaper = {
+      ...validGeneratedPaper,
+      questions: [
+        {
+          ...validGeneratedPaper.questions[0]!,
+          materials: [{ type: 'image', uri: 'https://cdn.example.org/invented.png', alt: '统计图' }],
+        },
+        ...validGeneratedPaper.questions.slice(1),
+      ],
+    };
+    const completionFn = jest.fn()
+      .mockResolvedValueOnce(JSON.stringify(inventedPaper))
+      .mockResolvedValueOnce(JSON.stringify(validGeneratedPaper));
+
+    await expect(generateAssessment(
+      { topic: '资料分析', questionCount: 50 },
+      config,
+      completionFn,
+    )).resolves.toEqual(validGeneratedPaper);
+
+    expect(completionFn).toHaveBeenCalledTimes(2);
+    expect(completionFn.mock.calls[1]?.[1][1]?.content).toContain(
+      'image URL was not supplied in the topic or notes',
+    );
+  });
+
+  it('rejects a generated URL that is only a prefix of a supplied Chinese-path URL', async () => {
+    const prefixPaper: AssessmentPaper = {
+      ...validGeneratedPaper,
+      questions: [
+        {
+          ...validGeneratedPaper.questions[0]!,
+          materials: [{ type: 'image', uri: 'https://example.com/', alt: '统计图' }],
+        },
+        ...validGeneratedPaper.questions.slice(1),
+      ],
+    };
+    const completionFn = jest.fn()
+      .mockResolvedValueOnce(JSON.stringify(prefixPaper))
+      .mockResolvedValueOnce(JSON.stringify(validGeneratedPaper));
+
+    await expect(generateAssessment(
+      { topic: '参考https://example.com/图表.png生成题目', questionCount: 50 },
+      config,
+      completionFn,
+    )).resolves.toEqual(validGeneratedPaper);
+
+    expect(completionFn).toHaveBeenCalledTimes(2);
+  });
+
   it('throws readable validation errors when generated JSON is invalid', async () => {
     const completionFn = jest.fn().mockResolvedValue(JSON.stringify({ ...validGeneratedPaper, questions: [] }));
 
@@ -158,6 +285,32 @@ describe('generateAssessment', () => {
     expect(completionFn).toHaveBeenCalledTimes(2);
     const retryPrompt = completionFn.mock.calls[1]?.[1][1]?.content;
     expect(retryPrompt).toContain('Generated assessment is invalid: Expected 50 questions but received 0.');
+    expect(retryPrompt).toContain('Regenerate the complete JSON object from scratch.');
+  });
+
+  it('retries once when generated rich material is invalid', async () => {
+    const invalidPaper = {
+      ...validGeneratedPaper,
+      questions: [
+        {
+          ...validGeneratedPaper.questions[0]!,
+          materials: [{ type: 'image', uri: 'http://example.com/chart.png', alt: 'Chart' }],
+        },
+        ...validGeneratedPaper.questions.slice(1),
+      ],
+    };
+    const completionFn = jest.fn()
+      .mockResolvedValueOnce(JSON.stringify(invalidPaper))
+      .mockResolvedValueOnce(JSON.stringify(validGeneratedPaper));
+
+    await expect(generateAssessment({ topic: 'iOS', questionCount: 50 }, config, completionFn)).resolves.toEqual(
+      validGeneratedPaper,
+    );
+
+    expect(completionFn).toHaveBeenCalledTimes(2);
+    const retryPrompt = completionFn.mock.calls[1]?.[1][1]?.content;
+    expect(retryPrompt).toContain('The previous response failed:');
+    expect(retryPrompt).toContain('Question q1 material 1 image uri must be a valid HTTPS URL.');
     expect(retryPrompt).toContain('Regenerate the complete JSON object from scratch.');
   });
 
