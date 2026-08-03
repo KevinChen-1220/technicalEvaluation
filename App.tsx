@@ -1,8 +1,9 @@
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
   Alert,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -76,6 +77,8 @@ function AppContent() {
   const [isTesting, setIsTesting] = useState(false);
   const [generationError, setGenerationError] = useState<string | null>(null);
   const [wrongQuestionPage, setWrongQuestionPage] = useState(0);
+  const resultScrollRef = useRef<ScrollView>(null);
+  const wrongQuestionSectionY = useRef(0);
 
   useEffect(() => {
     loadModelConfig().then((saved) => {
@@ -230,6 +233,13 @@ function AppContent() {
     setActiveTab(resultMode === 'history' ? 'history' : 'assess');
   }
 
+  function changeWrongQuestionPage(nextPage: number) {
+    setWrongQuestionPage(nextPage);
+    requestAnimationFrame(() => {
+      resultScrollRef.current?.scrollTo({ y: wrongQuestionSectionY.current, animated: true });
+    });
+  }
+
   async function refreshHistory() {
     await migrateLegacyAssessmentHistory();
     setHistory(await listAssessmentRecords());
@@ -380,7 +390,7 @@ function AppContent() {
       ) : null}
 
       {screen === 'result' && paper && result ? (
-        <ScreenScroll>
+        <ScreenScroll scrollViewRef={resultScrollRef}>
           <View style={styles.stack}>
             <Text style={styles.kicker}>{resultMode === 'history' ? zhCN.result.history : zhCN.result.current}</Text>
             <Text style={styles.title}>{result.level.title}</Text>
@@ -395,35 +405,37 @@ function AppContent() {
                 </Text>
               ))}
             </Section>
-            <Section title={zhCN.result.wrongQuestions(result.wrongQuestionIds.length)}>
-              {result.wrongQuestionIds.length === 0 ? <Text style={styles.notice}>{zhCN.result.noWrongAnswers}</Text> : null}
-              {visibleWrongQuestionReviews.map((item) => (
-                <WrongQuestionReview key={item.question.id} item={item} />
-              ))}
-              {wrongQuestionPageRange.pageCount > 1 ? (
-                <View style={styles.stack}>
-                  <Text style={styles.notice}>
-                    {zhCN.result.wrongQuestionPage(wrongQuestionPageRange.page + 1, wrongQuestionPageRange.pageCount)}
-                  </Text>
-                  <View style={styles.row}>
-                    {wrongQuestionPageRange.page > 0 ? (
-                      <Button
-                        label={zhCN.result.previousWrongQuestions}
-                        onPress={() => setWrongQuestionPage((page) => Math.max(0, page - 1))}
-                        tone="secondary"
-                      />
-                    ) : null}
-                    {wrongQuestionPageRange.page + 1 < wrongQuestionPageRange.pageCount ? (
-                      <Button
-                        label={zhCN.result.nextWrongQuestions}
-                        onPress={() => setWrongQuestionPage((page) => page + 1)}
-                        tone="secondary"
-                      />
-                    ) : null}
+            <View onLayout={(event) => { wrongQuestionSectionY.current = event.nativeEvent.layout.y; }}>
+              <Section title={zhCN.result.wrongQuestions(result.wrongQuestionIds.length)}>
+                {result.wrongQuestionIds.length === 0 ? <Text style={styles.notice}>{zhCN.result.noWrongAnswers}</Text> : null}
+                {visibleWrongQuestionReviews.map((item) => (
+                  <WrongQuestionReview key={item.question.id} item={item} />
+                ))}
+                {wrongQuestionPageRange.pageCount > 1 ? (
+                  <View style={styles.stack}>
+                    <Text style={styles.notice}>
+                      {zhCN.result.wrongQuestionPage(wrongQuestionPageRange.page + 1, wrongQuestionPageRange.pageCount)}
+                    </Text>
+                    <View style={styles.row}>
+                      {wrongQuestionPageRange.page > 0 ? (
+                        <Button
+                          label={zhCN.result.previousWrongQuestions}
+                          onPress={() => changeWrongQuestionPage(Math.max(0, wrongQuestionPageRange.page - 1))}
+                          tone="secondary"
+                        />
+                      ) : null}
+                      {wrongQuestionPageRange.page + 1 < wrongQuestionPageRange.pageCount ? (
+                        <Button
+                          label={zhCN.result.nextWrongQuestions}
+                          onPress={() => changeWrongQuestionPage(wrongQuestionPageRange.page + 1)}
+                          tone="secondary"
+                        />
+                      ) : null}
+                    </View>
                   </View>
-                </View>
-              ) : null}
-            </Section>
+                ) : null}
+              </Section>
+            </View>
             <Button label={resultMode === 'history' ? zhCN.result.backToHistory : zhCN.result.createAnother} onPress={closeResult} tone="secondary" />
           </View>
         </ScreenScroll>

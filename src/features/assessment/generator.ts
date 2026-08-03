@@ -197,7 +197,7 @@ function wasImageUrlExplicitlySupplied(input: string, uri: string): boolean {
     if (
       nextCharacter === undefined
       || /[\s<>"'`)\]}，。；：！？、）】]/u.test(nextCharacter)
-      || /\p{Script=Han}/u.test(nextCharacter)
+      || (/\p{Script=Han}/u.test(nextCharacter) && hasImageFileExtension(uri))
     ) {
       return true;
     }
@@ -205,6 +205,14 @@ function wasImageUrlExplicitlySupplied(input: string, uri: string): boolean {
   }
 
   return false;
+}
+
+function hasImageFileExtension(uri: string): boolean {
+  try {
+    return /\.(?:avif|gif|jpe?g|png|webp)$/i.test(new URL(uri).pathname);
+  } catch {
+    return false;
+  }
 }
 
 function parseAssessmentPaper(content: string): AssessmentPaper {

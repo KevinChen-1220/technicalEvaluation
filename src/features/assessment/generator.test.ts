@@ -226,6 +226,30 @@ describe('generateAssessment', () => {
     );
   });
 
+  it('rejects a generated URL that is only a prefix of a supplied Chinese-path URL', async () => {
+    const prefixPaper: AssessmentPaper = {
+      ...validGeneratedPaper,
+      questions: [
+        {
+          ...validGeneratedPaper.questions[0]!,
+          materials: [{ type: 'image', uri: 'https://example.com/', alt: '统计图' }],
+        },
+        ...validGeneratedPaper.questions.slice(1),
+      ],
+    };
+    const completionFn = jest.fn()
+      .mockResolvedValueOnce(JSON.stringify(prefixPaper))
+      .mockResolvedValueOnce(JSON.stringify(validGeneratedPaper));
+
+    await expect(generateAssessment(
+      { topic: '参考https://example.com/图表.png生成题目', questionCount: 50 },
+      config,
+      completionFn,
+    )).resolves.toEqual(validGeneratedPaper);
+
+    expect(completionFn).toHaveBeenCalledTimes(2);
+  });
+
   it('throws readable validation errors when generated JSON is invalid', async () => {
     const completionFn = jest.fn().mockResolvedValue(JSON.stringify({ ...validGeneratedPaper, questions: [] }));
 
