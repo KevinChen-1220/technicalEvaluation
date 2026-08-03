@@ -5,9 +5,14 @@ import type {
 
 export const COLLECTION_SCHEMA_VERSION = 1 as const;
 
+const trustedWeChatContextBrand: unique symbol = Symbol('TrustedWeChatContext');
+
 export type TrustedWeChatContext = {
-  OPENID?: string;
+  readonly openId: string;
+  readonly [trustedWeChatContextBrand]: true;
 };
+
+export type GetWXContext = () => { OPENID?: unknown };
 
 export type GenerationRequest = {
   topic: string;
@@ -112,6 +117,8 @@ export type CreateUserSettingsInput = {
   privacyConsentAt: string | null;
 };
 
+export type UpdateUserSettingsInput = Omit<CreateUserSettingsInput, 'id'>;
+
 export type UpdateAssessmentInput = {
   expectedRevision: number;
   answers: Record<string, string[]>;
@@ -124,12 +131,40 @@ export type AssessmentUpdateResult =
   | { type: 'updated'; record: Assessment }
   | { type: 'conflict'; currentRevision: number };
 
-export function requireTrustedOpenId(context: TrustedWeChatContext): string {
-  if (typeof context.OPENID !== 'string' || context.OPENID.length === 0) {
+export type AssessmentCompareAndSwapQuery = {
+  collection: 'assessments';
+  filter: {
+    _id: string;
+    _openid: string;
+    revision: number;
+  };
+  update: {
+    $set: {
+      answers: Record<string, string[]>;
+      result: AssessmentResult | null;
+      status: AssessmentStatus;
+      completedAt: string | null;
+      updatedAt: string;
+    };
+    $inc: { revision: 1 };
+  };
+};
+
+export type AssessmentCompareAndSwapPersistence = {
+  compareAndSwap(query: AssessmentCompareAndSwapQuery): Promise<Assessment | null>;
+  getRevision(input: { id: string; openId: string }): Promise<number | null>;
+};
+
+export function createTrustedWeChatContext(getWXContext: GetWXContext): TrustedWeChatContext {
+  const openId = getWXContext().OPENID;
+  if (typeof openId !== 'string' || openId.length === 0) {
     throw new MissingTrustedOpenIdError();
   }
 
-  return context.OPENID;
+  return Object.freeze({
+    openId,
+    [trustedWeChatContextBrand]: true as const,
+  });
 }
 
 export function canAccessOwnRecord(
@@ -180,26 +215,50 @@ export function createAssessment(
 }
 
 export function createUserSettings(
-  input: CreateUserSettingsInput,
+  input: unknown,
   context: TrustedWeChatContext,
   now: string,
 ): UserSettings {
-  const displayPreferences = input.displayPreferences === undefined
+  const parsed = parseUserSettingsInput(input, true);
+  const displayPreferences = parsed.displayPreferences === undefined
     ? {}
-    : { displayPreferences: input.displayPreferences };
+    : { displayPreferences: parsed.displayPreferences };
 
   return {
-    _id: requireNonEmpty(input.id, 'User settings id is required.'),
+    _id: parsed.id,
     _openid: requireTrustedOpenId(context),
     schemaVersion: COLLECTION_SCHEMA_VERSION,
-    locale: input.locale,
+    locale: parsed.locale,
     ...displayPreferences,
-    privacyConsentVersion: requireNonEmpty(
-      input.privacyConsentVersion,
-      'Privacy consent version is required.',
-    ),
-    privacyConsentAt: input.privacyConsentAt,
+    privacyConsentVersion: parsed.privacyConsentVersion,
+    privacyConsentAt: parsed.privacyConsentAt,
     createdAt: now,
+    updatedAt: now,
+  };
+}
+
+export function updateUserSettings(
+  record: UserSettings,
+  input: unknown,
+  context: TrustedWeChatContext,
+  now: string,
+): UserSettings {
+  const trustedOpenId = requireTrustedOpenId(context);
+  if (!canAccessOwnRecord(record, trustedOpenId)) {
+    throw new RecordOwnershipError();
+  }
+
+  const parsed = parseUserSettingsInput(input, false);
+  const displayPreferences = parsed.displayPreferences === undefined
+    ? {}
+    : { displayPreferences: parsed.displayPreferences };
+
+  return {
+    ...record,
+    locale: parsed.locale,
+    ...displayPreferences,
+    privacyConsentVersion: parsed.privacyConsentVersion,
+    privacyConsentAt: parsed.privacyConsentAt,
     updatedAt: now,
   };
 }
@@ -233,6 +292,48 @@ export function updateAssessment(
   };
 }
 
+export async function updateAssessmentWithCompareAndSwap(
+  persistence: AssessmentCompareAndSwapPersistence,
+  record: Assessment,
+  input: UpdateAssessmentInput,
+  context: TrustedWeChatContext,
+  now: string,
+): Promise<AssessmentUpdateResult> {
+  const prepared = updateAssessment(record, input, context, now);
+  if (prepared.type === 'conflict') {
+    return prepared;
+  }
+
+  const query: AssessmentCompareAndSwapQuery = {
+    collection: 'assessments',
+    filter: {
+      _id: record._id,
+      _openid: record._openid,
+      revision: input.expectedRevision,
+    },
+    update: {
+      $set: {
+        answers: input.answers,
+        result: input.result,
+        status: input.status,
+        completedAt: input.completedAt,
+        updatedAt: now,
+      },
+      $inc: { revision: 1 },
+    },
+  };
+  const updated = await persistence.compareAndSwap(query);
+  if (updated !== null) {
+    return { type: 'updated', record: updated };
+  }
+
+  const currentRevision = await persistence.getRevision({
+    id: record._id,
+    openId: requireTrustedOpenId(context),
+  });
+  return { type: 'conflict', currentRevision: currentRevision ?? record.revision };
+}
+
 export function sanitizeGenerationRequest(request: GenerationRequest): GenerationRequest {
   const topic = requireNonEmpty(request.topic.trim(), 'Generation topic is required.');
   if (topic.length > 200) {
@@ -250,6 +351,93 @@ export function sanitizeGenerationRequest(request: GenerationRequest): Generatio
   return notes === undefined || notes.length === 0
     ? { topic, questionCount: request.questionCount }
     : { topic, notes, questionCount: request.questionCount };
+}
+
+function requireTrustedOpenId(context: TrustedWeChatContext): string {
+  if (context[trustedWeChatContextBrand] !== true || context.openId.length === 0) {
+    throw new MissingTrustedOpenIdError();
+  }
+
+  return context.openId;
+}
+
+function parseUserSettingsInput(
+  input: unknown,
+  includesId: true,
+): CreateUserSettingsInput;
+function parseUserSettingsInput(
+  input: unknown,
+  includesId: false,
+): UpdateUserSettingsInput;
+function parseUserSettingsInput(
+  input: unknown,
+  includesId: boolean,
+): CreateUserSettingsInput | UpdateUserSettingsInput {
+  if (!isRecord(input)) {
+    throw new InvalidContractInputError('User settings input must be an object.');
+  }
+
+  const allowedKeys = includesId
+    ? ['id', 'locale', 'displayPreferences', 'privacyConsentVersion', 'privacyConsentAt']
+    : ['locale', 'displayPreferences', 'privacyConsentVersion', 'privacyConsentAt'];
+  for (const key of Object.keys(input)) {
+    if (!allowedKeys.includes(key)) {
+      throw new InvalidContractInputError(`Unsupported user settings field: ${key}.`);
+    }
+  }
+
+  if (input.locale !== 'zh-CN') {
+    throw new InvalidContractInputError('User settings locale must be zh-CN.');
+  }
+  if (typeof input.privacyConsentVersion !== 'string' || input.privacyConsentVersion.length === 0) {
+    throw new InvalidContractInputError('Privacy consent version is required.');
+  }
+  if (input.privacyConsentAt !== null && typeof input.privacyConsentAt !== 'string') {
+    throw new InvalidContractInputError('Privacy consent timestamp must be a string or null.');
+  }
+
+  const displayPreferences = parseDisplayPreferences(input.displayPreferences);
+  const common = {
+    locale: input.locale,
+    ...(displayPreferences === undefined ? {} : { displayPreferences }),
+    privacyConsentVersion: input.privacyConsentVersion,
+    privacyConsentAt: input.privacyConsentAt,
+  } as const;
+  if (!includesId) {
+    return common;
+  }
+
+  if (typeof input.id !== 'string') {
+    throw new InvalidContractInputError('User settings id is required.');
+  }
+  return { id: requireNonEmpty(input.id, 'User settings id is required.'), ...common };
+}
+
+function parseDisplayPreferences(input: unknown): DisplayPreferences | undefined {
+  if (input === undefined) {
+    return undefined;
+  }
+  if (!isRecord(input)) {
+    throw new InvalidContractInputError('Display preferences must be an object.');
+  }
+
+  for (const key of Object.keys(input)) {
+    if (key !== 'theme' && key !== 'compactMode') {
+      throw new InvalidContractInputError(`Unsupported display preference: ${key}.`);
+    }
+  }
+  if (input.theme !== undefined && input.theme !== 'system' && input.theme !== 'light' && input.theme !== 'dark') {
+    throw new InvalidContractInputError('Display preference theme is invalid.');
+  }
+  if (input.compactMode !== undefined && typeof input.compactMode !== 'boolean') {
+    throw new InvalidContractInputError('Display preference compactMode must be boolean.');
+  }
+
+  return input as DisplayPreferences;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function requireNonEmpty(value: string, message: string): string {

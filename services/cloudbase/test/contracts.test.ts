@@ -8,6 +8,7 @@ import {
   canAccessOwnRecord,
   createAssessment,
   createGenerationJob,
+  createTrustedWeChatContext,
   createUserSettings,
   updateAssessment,
 } from '../shared/contracts';
@@ -22,18 +23,11 @@ const paper = {
 } satisfies AssessmentPaper;
 
 const now = '2026-08-03T00:00:00.000Z';
-const context = { OPENID: 'trusted-openid' };
+const context = createTrustedWeChatContext(() => ({ OPENID: 'trusted-openid' }));
 
 describe('CloudBase persistence contracts', () => {
   test('rejects records without a trusted OPENID', () => {
-    expect(() => createAssessment({
-      id: 'assessment-1',
-      paper,
-      answers: {},
-      result: null,
-      status: 'draft',
-      completedAt: null,
-    }, {}, now)).toThrow(MissingTrustedOpenIdError);
+    expect(() => createTrustedWeChatContext(() => ({}))).toThrow(MissingTrustedOpenIdError);
   });
 
   test('uses trusted OPENID instead of spoofed client ownership values', () => {

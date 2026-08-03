@@ -1,0 +1,157 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import type { AssessmentPaper } from '../../../packages/assessment-core/src';
+import * as currentContracts from '../shared/contracts';
+
+type CompareAndSwapQuery = {
+  collection: 'assessments';
+  filter: { _id: string; _openid: string; revision: number };
+  update: {
+    $set: Record<string, unknown>;
+    $inc: { revision: 1 };
+  };
+};
+
+type FutureContracts = typeof currentContracts & {
+  createTrustedWeChatContext?: (getWXContext: () => { OPENID?: unknown }) => unknown;
+  updateAssessmentWithCompareAndSwap?: (
+    persistence: {
+      compareAndSwap(query: CompareAndSwapQuery): Promise<Record<string, unknown> | null>;
+      getRevision(input: { id: string; openId: string }): Promise<number | null>;
+    },
+    record: Record<string, unknown>,
+    input: Record<string, unknown>,
+    context: unknown,
+    now: string,
+  ) => Promise<unknown>;
+  createUserSettings?: (input: unknown, context: unknown, now: string) => unknown;
+};
+
+const contracts = currentContracts as FutureContracts;
+const databaseDirectory = join(__dirname, '..', 'database');
+const securityRulesDirectory = join(databaseDirectory, 'security-rules');
+const now = '2026-08-03T00:00:00.000Z';
+const paper = {
+  id: 'paper-1',
+  topic: 'TypeScript',
+  questionCount: 50,
+  generatedAt: now,
+  scoring: { maxScore: 100, levels: [] },
+  questions: [],
+} satisfies AssessmentPaper;
+
+function readJsonIfPresent(path: string): unknown {
+  return existsSync(path) ? JSON.parse(readFileSync(path, 'utf8')) : undefined;
+}
+
+describe('CloudBase deployable configuration', () => {
+  test('keeps each collection rule in a deployable top-level read/write file', () => {
+    expect(readJsonIfPresent(join(securityRulesDirectory, 'generation_jobs.json'))).toEqual({
+      read: 'doc._openid == auth.openid',
+      write: false,
+    });
+    expect(readJsonIfPresent(join(securityRulesDirectory, 'assessments.json'))).toEqual({
+      read: 'doc._openid == auth.openid',
+      write: false,
+    });
+    expect(readJsonIfPresent(join(securityRulesDirectory, 'user_settings.json'))).toEqual({
+      read: 'doc._openid == auth.openid',
+      write: false,
+    });
+  });
+
+  test('uses an environment-level deny-by-default function invoke policy', () => {
+    expect(readJsonIfPresent(join(databaseDirectory, 'function-invoke-rules.json'))).toEqual({
+      '*': { invoke: false },
+      'create-generation-job': { invoke: 'auth != null' },
+      'get-generation-job': { invoke: 'auth != null' },
+      'update-assessment': { invoke: 'auth != null' },
+      'get-assessment': { invoke: 'auth != null' },
+      'update-user-settings': { invoke: 'auth != null' },
+    });
+  });
+});
+
+describe('trusted CloudBase mutation contracts', () => {
+  test('derives ownership only from the injected getWXContext boundary, not event OPENID', () => {
+    const { createTrustedWeChatContext, createGenerationJob } = contracts;
+
+    expect(createTrustedWeChatContext).toBeDefined();
+    const trustedContext = createTrustedWeChatContext!(() => ({ OPENID: 'runtime-openid' }));
+    const event = { OPENID: 'spoofed-event-openid' };
+
+    expect(createGenerationJob({
+      id: 'job-1',
+      request: { topic: 'TypeScript', questionCount: 50 },
+      expiresAt: '2026-08-04T00:00:00.000Z',
+      ...event,
+    }, trustedContext as Parameters<typeof createGenerationJob>[1], now)).toMatchObject({
+      _openid: 'runtime-openid',
+    });
+  });
+
+  test('performs assessment persistence through an owner-and-revision compare-and-swap query', async () => {
+    const { createTrustedWeChatContext, createAssessment, updateAssessmentWithCompareAndSwap } = contracts;
+
+    expect(createTrustedWeChatContext).toBeDefined();
+    expect(updateAssessmentWithCompareAndSwap).toBeDefined();
+    const trustedContext = createTrustedWeChatContext!(() => ({ OPENID: 'runtime-openid' }));
+    let stored = createAssessment({
+      id: 'assessment-1', paper, answers: {}, result: null, status: 'draft', completedAt: null,
+    }, trustedContext as Parameters<typeof createAssessment>[1], now) as unknown as Record<string, unknown>;
+    const persistence = {
+      compareAndSwap: async (query: CompareAndSwapQuery) => {
+        if (
+          stored._id !== query.filter._id
+          || stored._openid !== query.filter._openid
+          || stored.revision !== query.filter.revision
+        ) {
+          return null;
+        }
+        stored = {
+          ...stored,
+          ...query.update.$set,
+          revision: (stored.revision as number) + query.update.$inc.revision,
+        };
+        return stored;
+      },
+      getRevision: async () => stored.revision as number,
+    };
+    const first = updateAssessmentWithCompareAndSwap!(persistence, stored, {
+      expectedRevision: 1,
+      answers: { 'question-1': ['option-a'] },
+      result: null,
+      status: 'draft',
+      completedAt: null,
+    }, trustedContext, '2026-08-03T01:00:00.000Z');
+    const second = updateAssessmentWithCompareAndSwap!(persistence, {
+      ...stored,
+      revision: 1,
+      answers: {},
+    }, {
+      expectedRevision: 1,
+      answers: { 'question-1': ['option-b'] },
+      result: null,
+      status: 'draft',
+      completedAt: null,
+    }, trustedContext, '2026-08-03T01:00:00.000Z');
+
+    await expect(first).resolves.toMatchObject({ type: 'updated', record: { revision: 2 } });
+    await expect(second).resolves.toEqual({ type: 'conflict', currentRevision: 2 });
+    expect(stored).toMatchObject({ revision: 2, answers: { 'question-1': ['option-a'] } });
+  });
+
+  test('rejects arbitrary user settings fields before a server-only write', () => {
+    const { createTrustedWeChatContext, createUserSettings } = contracts;
+
+    expect(createTrustedWeChatContext).toBeDefined();
+    const trustedContext = createTrustedWeChatContext!(() => ({ OPENID: 'runtime-openid' }));
+    expect(() => createUserSettings!({
+      id: 'settings-1',
+      locale: 'zh-CN',
+      privacyConsentVersion: '2026-08',
+      privacyConsentAt: null,
+      providerApiKey: 'spoofed-value',
+    }, trustedContext, now)).toThrow('Unsupported user settings field');
+  });
+});

@@ -4,9 +4,9 @@ This package defines the versioned persistence boundary for CloudBase. It does n
 
 ## Ownership and client access
 
-Cloud functions must pass their trusted WeChat context to the builders in `shared/contracts.ts`. The only accepted ownership source is `context.OPENID`; request body owner, user ID, `_openid`, and revision values are ignored by the contract input types and must never establish authority.
+Cloud functions must create the opaque `TrustedWeChatContext` with an injected runtime `getWXContext` callback before calling the builders in `shared/contracts.ts`. The callback's `OPENID` is the only accepted ownership source. Request-body/event owner, user ID, `_openid`, and revision values never establish authority.
 
-Mini Program clients can read only their own `generation_jobs` and `assessments` records. Their database writes are denied and must go through authenticated cloud functions, where the admin SDK bypasses the client rules. `user_settings` client reads and writes are allowed only when `auth.openid` exactly matches the record `_openid`. Settings may contain locale, display preferences, and privacy-consent metadata only.
+Mini Program clients can read only their own `generation_jobs`, `assessments`, and `user_settings` records. All database writes are denied to clients and go through authenticated cloud functions, where the admin SDK bypasses client rules. `user_settings` mutations are restricted at runtime to locale, display preferences, and privacy-consent metadata.
 
 See the official CloudBase documentation for [database security rules](https://docs.cloudbase.net/database/security-rules) and [cloud function security rules](https://docs.cloudbase.net/cloud-function/security-rules).
 
@@ -14,8 +14,9 @@ See the official CloudBase documentation for [database security rules](https://d
 
 1. In the CloudBase console, create a development environment and a separate production environment. Keep their names in deployment tooling or console configuration, never source control.
 2. In each environment, create `generation_jobs`, `assessments`, and `user_settings`. Apply the schemas in `database/collections.json` as the application contract, then create every index in `database/indexes.json` through the console or deployment pipeline.
-3. Apply `database/security-rules.json` as the database client access policy. Deploy the authenticated cloud functions and configure their invoke restrictions from `database/function-invoke-rules.json`.
-4. Use non-production test users and quotas in development. Configure production secrets only in the production CloudBase environment's secret manager. Reapply and validate rules and indexes independently before promotion.
+3. For each named collection, open its CloudBase database security-rule editor and apply the complete matching top-level file in `database/security-rules/`: `generation_jobs.json`, `assessments.json`, or `user_settings.json`. Do not wrap these files in a collection map.
+4. In the environment-level Cloud Functions permission editor, apply `database/function-invoke-rules.json` exactly as written. Its `"*"` deny rule blocks any unlisted client invocation; each named mutation/read function requires authenticated `auth != null`.
+5. Use non-production test users and quotas in development. Configure production secrets only in the production CloudBase environment's secret manager. Reapply and validate rules and indexes independently before promotion.
 
 ## Verify
 

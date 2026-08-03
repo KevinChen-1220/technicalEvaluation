@@ -1,9 +1,8 @@
 {
-  "schemaVersion": 1,
-  "rules": {
-    "create-generation-job": { "invoke": "auth != null" },
-    "get-generation-job": { "invoke": "auth != null" },
-    "update-assessment": { "invoke": "auth != null" },
-    "get-assessment": { "invoke": "auth != null" }
-  }
+  "*": { "invoke": false },
+  "create-generation-job": { "invoke": "auth != null" },
+  "get-generation-job": { "invoke": "auth != null" },
+  "update-assessment": { "invoke": "auth != null" },
+  "get-assessment": { "invoke": "auth != null" },
+  "update-user-settings": { "invoke": "auth != null" }
 }
