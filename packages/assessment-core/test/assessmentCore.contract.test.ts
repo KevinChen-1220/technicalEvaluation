@@ -3,6 +3,7 @@ import {
   findFirstUnansweredQuestionIndex,
   scoreAssessment,
   validateAssessmentPaper,
+  validateAssessmentQuestions,
   type AssessmentPaper,
 } from '@dynamic-assessment/assessment-core';
 
@@ -36,6 +37,42 @@ const paper: AssessmentPaper = {
 describe('assessment-core public contract', () => {
   it('validates a compatible assessment JSON paper', () => {
     expect(validateAssessmentPaper(paper)).toEqual({ ok: true, errors: [], paper });
+  });
+
+  it('validates a generated question list through the public package export', () => {
+    const questions = paper.questions.slice(0, 10);
+
+    expect(validateAssessmentQuestions(questions)).toEqual({
+      ok: true,
+      errors: [],
+      questions,
+    });
+  });
+
+  it('rejects duplicate option IDs and correct answers outside the option list', () => {
+    const question = {
+      ...paper.questions[0]!,
+      options: [
+        { id: 'A', text: 'First' },
+        { id: 'A', text: 'Duplicate' },
+      ],
+      correctOptionIds: ['B'],
+    };
+
+    expect(validateAssessmentQuestions([question])).toEqual({
+      ok: false,
+      errors: expect.arrayContaining([
+        'Question q1 option ID A must be unique.',
+        'Question q1 correct option B does not exist in options.',
+      ]),
+    });
+  });
+
+  it('returns validation errors for non-object question entries', () => {
+    expect(validateAssessmentQuestions([null])).toEqual({
+      ok: false,
+      errors: ['Question 1 must be a JSON object.'],
+    });
   });
 
   it('scores exact answers through the public package export', () => {

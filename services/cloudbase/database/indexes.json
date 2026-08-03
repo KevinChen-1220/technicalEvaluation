@@ -20,6 +20,22 @@
     },
     {
       "collection": "generation_jobs",
+      "name": "owner_created_at",
+      "keys": [
+        { "field": "_openid", "order": 1 },
+        { "field": "createdAt", "order": 1 }
+      ]
+    },
+    {
+      "collection": "generation_jobs",
+      "name": "owner_client_request_id",
+      "keys": [
+        { "field": "_openid", "order": 1 },
+        { "field": "clientRequestId", "order": 1 }
+      ]
+    },
+    {
+      "collection": "generation_jobs",
       "name": "status_lease_expires_at",
       "keys": [
         { "field": "status", "order": 1 },

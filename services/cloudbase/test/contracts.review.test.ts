@@ -61,6 +61,29 @@ function loadTrustedContextRuntime(): TrustedContextRuntime {
 }
 
 describe('CloudBase deployable configuration', () => {
+  test('defines the generation API quota and idempotency query indexes', () => {
+    const indexes = readJsonIfPresent(join(databaseDirectory, 'indexes.json')) as {
+      indexes?: Array<{ name?: string; keys?: Array<{ field?: string; order?: number }> }>;
+    };
+
+    expect(indexes.indexes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: 'owner_created_at',
+        keys: [
+          { field: '_openid', order: 1 },
+          { field: 'createdAt', order: 1 },
+        ],
+      }),
+      expect.objectContaining({
+        name: 'owner_client_request_id',
+        keys: [
+          { field: '_openid', order: 1 },
+          { field: 'clientRequestId', order: 1 },
+        ],
+      }),
+    ]));
+  });
+
   test('keeps each collection rule in a deployable top-level read/write file', () => {
     expect(readJsonIfPresent(join(securityRulesDirectory, 'generation_jobs.json'))).toEqual({
       read: 'doc._openid == auth.openid',

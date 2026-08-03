@@ -9,6 +9,7 @@
         "status": ["queued", "running", "completed", "failed"],
         "progress": "integer:0..100",
         "request": { "topic": "string", "notes": "string?", "questionCount": [50, 100] },
+        "clientRequestId": "string?",
         "assessmentId": "string?",
         "errorCode": "safe-code?",
         "retryable": "boolean",

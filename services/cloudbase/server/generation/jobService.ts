@@ -1,0 +1,184 @@
+import { readTrustedOpenId } from '../trustedContext';
+import {
+  InvalidContractInputError,
+  createGenerationJob as createGenerationJobRecord,
+  sanitizeGenerationRequest,
+  type GenerationJob,
+  type GenerationJobStatus,
+  type GenerationRequest,
+} from '../../shared/contracts';
+import { GenerationServiceError, type SafeGenerationErrorCode } from './errors';
+
+export type GenerationJobRepository = {
+  findIdempotent(ownerOpenId: string, clientRequestId: string): Promise<GenerationJob | null>;
+  countCreatedByOwner(ownerOpenId: string, from: string, to: string): Promise<number>;
+  createJob(job: GenerationJob): Promise<GenerationJob>;
+  findOwnedJob(jobId: string, ownerOpenId: string): Promise<GenerationJob | null>;
+};
+
+export type GenerationClock = { now(): Date };
+
+export type GenerationJobIdSource = {
+  jobId(ownerOpenId: string, clientRequestId?: string): string;
+};
+
+export type DailyGenerationQuota = {
+  allows(ownerOpenId: string, createdToday: number): Promise<boolean>;
+};
+
+export type GenerationJobServiceDependencies = {
+  repository: GenerationJobRepository;
+  clock: GenerationClock;
+  ids: GenerationJobIdSource;
+  quota: DailyGenerationQuota;
+};
+
+export type CreateGenerationJobResponse = {
+  jobId: string;
+  status: 'queued';
+};
+
+export type PublicGenerationJobStatus = {
+  jobId: string;
+  status: GenerationJobStatus;
+  progress: number;
+  retryable: boolean;
+  assessmentId?: string;
+  errorCode?: SafeGenerationErrorCode;
+};
+
+export type GenerationJobNotFoundResponse = {
+  type: 'not_found';
+  errorCode: 'INVALID_REQUEST';
+};
+
+export async function createGenerationJob(
+  input: unknown,
+  trustedContext: unknown,
+  dependencies: GenerationJobServiceDependencies,
+): Promise<CreateGenerationJobResponse> {
+  const ownerOpenId = requireTrustedOwner(trustedContext);
+  const parsed = parseCreateInput(input);
+
+  if (parsed.clientRequestId !== undefined) {
+    const existing = await dependencies.repository.findIdempotent(ownerOpenId, parsed.clientRequestId);
+    if (existing !== null) {
+      return { jobId: existing._id, status: 'queued' };
+    }
+  }
+
+  const current = dependencies.clock.now();
+  const { from, to } = utcDayBounds(current);
+  const createdToday = await dependencies.repository.countCreatedByOwner(
+    ownerOpenId,
+    from.toISOString(),
+    to.toISOString(),
+  );
+  if (!await dependencies.quota.allows(ownerOpenId, createdToday)) {
+    throw new GenerationServiceError('QUOTA_EXCEEDED', false);
+  }
+
+  const job = createGenerationJobRecord({
+    id: dependencies.ids.jobId(ownerOpenId, parsed.clientRequestId),
+    request: parsed.request,
+    ...(parsed.clientRequestId === undefined ? {} : { clientRequestId: parsed.clientRequestId }),
+    expiresAt: new Date(current.getTime() + 24 * 60 * 60 * 1000).toISOString(),
+  }, trustedContext, current.toISOString());
+  const stored = await dependencies.repository.createJob(job);
+  return { jobId: stored._id, status: 'queued' };
+}
+
+export async function getGenerationJob(
+  input: unknown,
+  trustedContext: unknown,
+  dependencies: Pick<GenerationJobServiceDependencies, 'repository'>,
+): Promise<PublicGenerationJobStatus | GenerationJobNotFoundResponse> {
+  const ownerOpenId = requireTrustedOwner(trustedContext);
+  const jobId = parseJobId(input);
+  const job = await dependencies.repository.findOwnedJob(jobId, ownerOpenId);
+  if (job === null) {
+    return { type: 'not_found', errorCode: 'INVALID_REQUEST' };
+  }
+
+  return {
+    jobId: job._id,
+    status: job.status,
+    progress: job.progress,
+    retryable: job.retryable,
+    ...(job.assessmentId === undefined ? {} : { assessmentId: job.assessmentId }),
+    ...(isSafeErrorCode(job.errorCode) ? { errorCode: job.errorCode } : {}),
+  };
+}
+
+function parseCreateInput(input: unknown): {
+  request: GenerationRequest;
+  clientRequestId?: string;
+} {
+  if (!isRecord(input)) {
+    throw new GenerationServiceError('INVALID_REQUEST', false);
+  }
+
+  try {
+    const request = sanitizeGenerationRequest({
+      topic: typeof input.topic === 'string' ? input.topic : '',
+      ...(typeof input.notes === 'string' ? { notes: input.notes } : {}),
+      questionCount: input.questionCount as 50 | 100,
+    });
+    if (input.notes !== undefined && typeof input.notes !== 'string') {
+      throw new InvalidContractInputError('Generation notes must be a string.');
+    }
+    if (input.clientRequestId !== undefined && typeof input.clientRequestId !== 'string') {
+      throw new InvalidContractInputError('Client request id must be a string.');
+    }
+
+    const clientRequestId = typeof input.clientRequestId === 'string'
+      ? input.clientRequestId.trim()
+      : undefined;
+    if (clientRequestId !== undefined && clientRequestId.length > 100) {
+      throw new InvalidContractInputError('Client request id must not exceed 100 characters.');
+    }
+
+    return {
+      request,
+      ...(clientRequestId === undefined || clientRequestId.length === 0 ? {} : { clientRequestId }),
+    };
+  } catch (error) {
+    if (error instanceof InvalidContractInputError) {
+      throw new GenerationServiceError('INVALID_REQUEST', false);
+    }
+    throw error;
+  }
+}
+
+function parseJobId(input: unknown): string {
+  if (!isRecord(input) || typeof input.jobId !== 'string' || input.jobId.trim().length === 0) {
+    throw new GenerationServiceError('INVALID_REQUEST', false);
+  }
+  return input.jobId.trim();
+}
+
+function requireTrustedOwner(context: unknown): string {
+  const ownerOpenId = readTrustedOpenId(context);
+  if (ownerOpenId === null) {
+    throw new GenerationServiceError('INVALID_REQUEST', false);
+  }
+  return ownerOpenId;
+}
+
+function utcDayBounds(now: Date): { from: Date; to: Date } {
+  const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  return { from, to: new Date(from.getTime() + 24 * 60 * 60 * 1000) };
+}
+
+function isSafeErrorCode(value: unknown): value is SafeGenerationErrorCode {
+  return value === 'INVALID_REQUEST'
+    || value === 'QUOTA_EXCEEDED'
+    || value === 'PROVIDER_ERROR'
+    || value === 'INVALID_MODEL_RESPONSE'
+    || value === 'CONFIGURATION_ERROR'
+    || value === 'INTERNAL_ERROR';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}

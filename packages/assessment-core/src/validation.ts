@@ -13,6 +13,37 @@ export type ValidationResult =
   | { ok: true; errors: []; paper: AssessmentPaper }
   | { ok: false; errors: string[]; paper?: never };
 
+export type QuestionListValidationResult =
+  | { ok: true; errors: []; questions: AssessmentQuestion[] }
+  | { ok: false; errors: string[]; questions?: never };
+
+export function validateAssessmentQuestions(input: unknown): QuestionListValidationResult {
+  if (!Array.isArray(input)) {
+    return { ok: false, errors: ['Questions must be an array.'] };
+  }
+
+  const errors: string[] = [];
+  const questionIds = new Set<string>();
+  input.forEach((question, index) => {
+    if (!isRecord(question)) {
+      errors.push(`Question ${index + 1} must be a JSON object.`);
+      return;
+    }
+
+    validateQuestion(question as AssessmentQuestion, errors);
+    if (isNonEmptyString(question.id)) {
+      if (questionIds.has(question.id)) {
+        errors.push(`Question ID ${question.id} must be unique.`);
+      }
+      questionIds.add(question.id);
+    }
+  });
+
+  return errors.length === 0
+    ? { ok: true, errors: [], questions: input as AssessmentQuestion[] }
+    : { ok: false, errors };
+}
+
 export function validateAssessmentPaper(input: unknown): ValidationResult {
   const errors: string[] = [];
 
@@ -39,15 +70,9 @@ export function validateAssessmentPaper(input: unknown): ValidationResult {
   }
 
   if (Array.isArray(paper.questions)) {
-    const questionIds = new Set<string>();
-    for (const question of paper.questions) {
-      validateQuestion(question, errors);
-      if (isRecord(question) && isNonEmptyString(question.id)) {
-        if (questionIds.has(question.id)) {
-          errors.push(`Question ID ${question.id} must be unique.`);
-        }
-        questionIds.add(question.id);
-      }
+    const questionValidation = validateAssessmentQuestions(paper.questions);
+    if (!questionValidation.ok) {
+      errors.push(...questionValidation.errors);
     }
   }
 
@@ -56,7 +81,14 @@ export function validateAssessmentPaper(input: unknown): ValidationResult {
 
 function validateQuestion(question: AssessmentQuestion, errors: string[]): void {
   const label = question?.id || 'unknown';
-  const optionIds = new Set(Array.isArray(question.options) ? question.options.map((option) => option.id) : []);
+  const optionIds = new Set(
+    Array.isArray(question.options)
+      ? question.options
+        .filter(isRecord)
+        .map((option) => option.id)
+        .filter(isNonEmptyString)
+      : [],
+  );
 
   if (!isNonEmptyString(question.id)) {
     errors.push('Question ID is required.');
@@ -83,6 +115,10 @@ function validateQuestion(question: AssessmentQuestion, errors: string[]): void 
   } else {
     const seenOptionIds = new Set<string>();
     for (const option of question.options) {
+      if (!isRecord(option)) {
+        errors.push(`Question ${label} option must be a JSON object.`);
+        continue;
+      }
       if (!isNonEmptyString(option.id)) {
         errors.push(`Question ${label} option ID is required.`);
       } else if (seenOptionIds.has(option.id)) {
@@ -90,8 +126,8 @@ function validateQuestion(question: AssessmentQuestion, errors: string[]): void 
       } else {
         seenOptionIds.add(option.id);
       }
-      if (!option.text?.trim()) {
-        errors.push(`Question ${label} option ${option.id || 'unknown'} text is required.`);
+      if (!isNonEmptyString(option.text)) {
+        errors.push(`Question ${label} option ${String(option.id || 'unknown')} text is required.`);
       }
     }
   }

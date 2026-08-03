@@ -2,6 +2,7 @@ module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   roots: ['<rootDir>/src', '<rootDir>/packages', '<rootDir>/services'],
+  modulePathIgnorePatterns: ['cloudbase[\\\\/]dist'],
   moduleNameMapper: {
     '^@dynamic-assessment/assessment-core$': '<rootDir>/packages/assessment-core/src/index.ts',
     '^expo-sqlite$': '<rootDir>/src/test/mocks/expoSqliteMock.ts',

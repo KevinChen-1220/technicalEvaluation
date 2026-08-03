@@ -10,6 +10,16 @@ Mini Program clients can read only their own `generation_jobs`, `assessments`, a
 
 See the official CloudBase documentation for [database security rules](https://docs.cloudbase.net/database/security-rules) and [cloud function security rules](https://docs.cloudbase.net/cloud-function/security-rules).
 
+## Asynchronous generation functions
+
+`create-generation-job` and `get-generation-job` derive ownership with `server/trustedContext.ts`; request event fields never establish identity. The create function trims and validates input, applies a fixed five-job UTC daily quota, and uses a deterministic server-side job ID when `clientRequestId` is present. The polling function returns only public job status fields and gives the same typed response for missing and foreign IDs.
+
+`generation-worker` claims one queued or expired-lease job with a single conditional database update, then renews its two-minute lease after each exact 10-question batch. It writes the deterministic assessment draft before completing the job, so a stale worker can resume completion without duplicating provider work or storage.
+
+Set `LLM_BASE_URL`, `LLM_API_KEY`, and `LLM_MODEL` only in each CloudBase server environment. Do not place their values in source, client configuration, deployment output, logs, or function responses. The worker reads provider responses only after successful HTTP status and reduces all failures to the documented safe error codes.
+
+Run `npm run build:cloudbase` at the repository root. Deploy each directory under `services/cloudbase/dist/` as the matching CloudBase function; each bundle keeps `wx-server-sdk` external and pins runtime installation to `4.0.2`. Configure `generation-worker` as a server-side scheduled trigger, not a client-invokable function.
+
 ## Provision environments
 
 1. In the CloudBase console, create a development environment and a separate production environment. Keep their names in deployment tooling or console configuration, never source control.

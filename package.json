@@ -23,7 +23,8 @@
     "typecheck:wechat": "npm --workspace apps/wechat run typecheck",
     "build:weapp": "npm --workspace apps/wechat run build:weapp",
     "test:cloudbase": "npm --workspace @dynamic-assessment/cloudbase run test",
-    "typecheck:cloudbase": "npm --workspace @dynamic-assessment/cloudbase run typecheck"
+    "typecheck:cloudbase": "npm --workspace @dynamic-assessment/cloudbase run typecheck",
+    "build:cloudbase": "npm --workspace @dynamic-assessment/cloudbase run build"
   },
   "dependencies": {
     "@expo/metro-runtime": "~5.0.5",

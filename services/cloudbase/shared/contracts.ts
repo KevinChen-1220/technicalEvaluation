@@ -32,6 +32,7 @@ export type GenerationJob = {
   status: GenerationJobStatus;
   progress: number;
   request: GenerationRequest;
+  clientRequestId?: string;
   assessmentId?: string;
   errorCode?: string;
   retryable: boolean;
@@ -79,6 +80,7 @@ export type UserSettings = {
 export type CreateGenerationJobInput = {
   id: string;
   request: GenerationRequest;
+  clientRequestId?: string;
   expiresAt: string;
 };
 
@@ -149,6 +151,10 @@ export function createGenerationJob(
   context: unknown,
   now: string,
 ): GenerationJob {
+  const clientRequestId = input.clientRequestId === undefined
+    ? {}
+    : { clientRequestId: requireNonEmpty(input.clientRequestId, 'Client request id is required.') };
+
   return {
     _id: requireNonEmpty(input.id, 'Generation job id is required.'),
     _openid: requireTrustedOpenId(context),
@@ -156,6 +162,7 @@ export function createGenerationJob(
     status: 'queued',
     progress: 0,
     request: sanitizeGenerationRequest(input.request),
+    ...clientRequestId,
     retryable: false,
     attempt: 1,
     createdAt: now,
