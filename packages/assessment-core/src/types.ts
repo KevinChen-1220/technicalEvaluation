@@ -56,6 +56,11 @@ export type AssessmentQuestion = {
   materials?: QuestionMaterial[];
 };
 
+export type AnswerableAssessmentQuestion = Omit<
+  AssessmentQuestion,
+  'correctOptionIds' | 'explanation'
+>;
+
 export type ScoringLevel = {
   minPercent: number;
   maxPercent: number;
@@ -73,6 +78,10 @@ export type AssessmentPaper = {
     levels: ScoringLevel[];
   };
   questions: AssessmentQuestion[];
+};
+
+export type AnswerableAssessmentPaper = Omit<AssessmentPaper, 'questions'> & {
+  questions: AnswerableAssessmentQuestion[];
 };
 
 export type AssessmentSession = {

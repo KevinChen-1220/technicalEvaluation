@@ -14,16 +14,32 @@ describe('assessment service', () => {
   test('returns an owned assessment without owner or server-only fields', async () => {
     const repository = new InMemoryAssessmentRepository([record()]);
 
-    await expect(getAssessment(
+    const result = await getAssessment(
       { assessmentId: 'assessment-1', OPENID: 'spoofed' },
       trustedContext('owner-1'),
       { repository },
-    )).resolves.toEqual({
-      type: 'found',
-      assessment: {
-        id: 'assessment-1', paper: record().paper, answers: { q1: ['a'] }, status: 'draft', revision: 1,
-      },
+    );
+
+    expect(result).toMatchObject({
+      type: 'found', assessment: { id: 'assessment-1', answers: { q1: ['a'] }, status: 'draft', revision: 1 },
     });
+    expect(result.type === 'found' ? result.assessment.paper.questions[0] : null).toEqual({
+      id: 'q1', type: 'single_choice', difficulty: 'easy', knowledgePoint: 'types', prompt: 'Pick one',
+      options: [{ id: 'a', text: 'A' }, { id: 'b', text: 'B' }],
+    });
+  });
+
+  test('keeps completed answer disclosure outside Task 5 public DTOs', async () => {
+    const repository = new InMemoryAssessmentRepository([{ ...record(), status: 'completed' }]);
+
+    const result = await getAssessment(
+      { assessmentId: 'assessment-1' }, trustedContext('owner-1'), { repository },
+    );
+
+    expect(result.type).toBe('found');
+    const question = result.type === 'found' ? result.assessment.paper.questions[0] : undefined;
+    expect(question).not.toHaveProperty('correctOptionIds');
+    expect(question).not.toHaveProperty('explanation');
   });
 
   test('makes a foreign assessment indistinguishable from a missing assessment', async () => {
@@ -87,9 +103,14 @@ describe('assessment service', () => {
     }, trustedContext('owner-1'), { repository, clock: { now: () => now } })).resolves.toEqual({
       type: 'conflict',
       current: {
-        id: 'assessment-1', paper: current.paper, answers: current.answers, status: 'draft', revision: 4,
+        id: 'assessment-1', paper: expect.any(Object), answers: current.answers, status: 'draft', revision: 4,
       },
     });
+    const result = await updateAssessmentAnswers({
+      assessmentId: 'assessment-1', answers: { q1: ['b'] }, expectedRevision: 1,
+    }, trustedContext('owner-1'), { repository, clock: { now: () => now } });
+    expect(result.type === 'conflict' ? result.current.paper.questions[0] : null)
+      .not.toHaveProperty('correctOptionIds');
   });
 });
 

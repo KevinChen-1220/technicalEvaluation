@@ -1,4 +1,8 @@
-import type { AssessmentPaper } from '@dynamic-assessment/assessment-core';
+import type {
+  AnswerableAssessmentPaper,
+  AnswerableAssessmentQuestion,
+  AssessmentPaper,
+} from '@dynamic-assessment/assessment-core';
 import {
   updateAssessmentWithCompareAndSwap,
   type Assessment,
@@ -8,7 +12,7 @@ import { readTrustedOpenId } from '../trustedContext';
 
 export type PublicAssessment = {
   id: string;
-  paper: AssessmentPaper;
+  paper: AnswerableAssessmentPaper;
   answers: Record<string, string[]>;
   status: 'draft' | 'completed';
   revision: number;
@@ -81,11 +85,25 @@ export async function updateAssessmentAnswers(
 function toPublicAssessment(record: Assessment): PublicAssessment {
   return {
     id: record._id,
-    paper: record.paper,
+    paper: toAnswerablePaper(record.paper),
     answers: record.answers,
     status: record.status,
     revision: record.revision,
   };
+}
+
+function toAnswerablePaper(paper: AssessmentPaper): AnswerableAssessmentPaper {
+  return {
+    ...paper,
+    questions: paper.questions.map(toAnswerableQuestion),
+  };
+}
+
+function toAnswerableQuestion(
+  question: AssessmentPaper['questions'][number],
+): AnswerableAssessmentQuestion {
+  const { correctOptionIds: _correctOptionIds, explanation: _explanation, ...answerable } = question;
+  return answerable;
 }
 
 function parseAssessmentId(input: unknown): string | null {

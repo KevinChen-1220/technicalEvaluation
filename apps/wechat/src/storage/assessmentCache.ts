@@ -1,11 +1,11 @@
-import type { AssessmentPaper } from '@dynamic-assessment/assessment-core';
+import type { AnswerableAssessmentPaper } from '@dynamic-assessment/assessment-core';
 
 const ASSESSMENT_KEY_PREFIX = 'assessment:v1:';
 const PENDING_KEY = 'assessment-pending:v1';
 
 export type CachedAssessment = {
   id: string;
-  paper: AssessmentPaper;
+  paper: AnswerableAssessmentPaper;
   answers: Record<string, string[]>;
   status: 'draft' | 'completed';
   revision: number;
@@ -13,6 +13,7 @@ export type CachedAssessment = {
 
 export type PendingAssessmentUpdate = {
   id: string;
+  version?: number;
   assessmentId: string;
   answers: Record<string, string[]>;
   expectedRevision: number;

@@ -115,6 +115,56 @@ describe('GenerationController', () => {
     expect(createJob).toHaveBeenCalledTimes(2);
     expect(controller.getState().status).toBe('completed');
   });
+
+  test('fails immediately when a completed job has no persisted assessment id', async () => {
+    const getJob = jest.fn()
+      .mockResolvedValueOnce({ jobId: 'job-1', status: 'completed', progress: 100, retryable: false })
+      .mockResolvedValueOnce({ jobId: 'job-1', status: 'failed', progress: 100, retryable: false });
+    const getAssessment = jest.fn();
+    const controller = new GenerationController({
+      createJob: async () => ({ jobId: 'job-1', status: 'queued' }),
+      getJob,
+      getAssessment,
+      cacheAssessment: () => undefined,
+      navigate: async () => undefined,
+      sleep: async () => undefined,
+    });
+
+    await controller.start(request);
+
+    expect(getJob).toHaveBeenCalledTimes(1);
+    expect(getAssessment).not.toHaveBeenCalled();
+    expect(controller.getState()).toMatchObject({
+      status: 'failed', error: '生成结果不完整，请重新生成。', retryable: true,
+    });
+  });
+
+  test('stops polling at the overall deadline', async () => {
+    let elapsed = 0;
+    const delays: number[] = [];
+    const getJob = jest.fn(async () => ({
+      jobId: 'job-1', status: 'running' as const, progress: 50, retryable: false,
+    }));
+    const controller = new GenerationController({
+      createJob: async () => ({ jobId: 'job-1', status: 'queued' }),
+      getJob,
+      getAssessment: async () => assessment,
+      cacheAssessment: () => undefined,
+      navigate: async () => undefined,
+      sleep: async (milliseconds) => { delays.push(milliseconds); elapsed += milliseconds; },
+    }, {
+      maxPollingDurationMs: 2500,
+      now: () => elapsed,
+    });
+
+    await controller.start(request);
+
+    expect(delays).toEqual([1000, 1500]);
+    expect(getJob).toHaveBeenCalledTimes(2);
+    expect(controller.getState()).toMatchObject({
+      status: 'failed', error: '生成等待超时，请重新生成。', retryable: true,
+    });
+  });
 });
 
 const assessment: CachedAssessment = {

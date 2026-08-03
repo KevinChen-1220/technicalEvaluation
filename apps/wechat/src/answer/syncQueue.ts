@@ -9,8 +9,6 @@ type AssessmentSyncDependencies = {
   updateAssessment(input: UpdateAssessmentInput): Promise<UpdateAssessmentResponse>;
 };
 
-let pendingSequence = 0;
-
 export class AssessmentSyncQueue {
   private readonly active = new Map<string, Promise<void>>();
   private readonly statuses = new Map<string, AssessmentSyncStatus>();
@@ -40,13 +38,7 @@ export class AssessmentSyncQueue {
       },
     };
     this.dependencies.cache.saveAssessment(updated);
-    this.enqueue({
-      id: `pending-${pendingSequence += 1}`,
-      assessmentId,
-      answers: updated.answers,
-      expectedRevision: assessment.revision,
-      changedQuestionIds: [questionId],
-    });
+    this.enqueue(assessmentId, updated.answers, assessment.revision, questionId);
 
     return {
       assessment: updated,
@@ -58,9 +50,31 @@ export class AssessmentSyncQueue {
     return this.process(assessmentId);
   }
 
-  private enqueue(update: PendingAssessmentUpdate): void {
+  private enqueue(
+    assessmentId: string,
+    answers: Record<string, string[]>,
+    expectedRevision: number,
+    changedQuestionId: string,
+  ): void {
+    const pending = this.dependencies.cache.getPendingUpdates();
+    const existing = pending.find((candidate) => candidate.assessmentId === assessmentId);
+    const update: PendingAssessmentUpdate = existing === undefined
+      ? {
+          id: `assessment:${assessmentId}`,
+          version: 1,
+          assessmentId,
+          answers,
+          expectedRevision,
+          changedQuestionIds: [changedQuestionId],
+        }
+      : {
+          ...existing,
+          version: pendingVersion(existing) + 1,
+          answers,
+          changedQuestionIds: [...new Set([...existing.changedQuestionIds, changedQuestionId])],
+        };
     this.dependencies.cache.savePendingUpdates([
-      ...this.dependencies.cache.getPendingUpdates(),
+      ...pending.filter((candidate) => candidate.assessmentId !== assessmentId),
       update,
     ]);
   }
@@ -89,6 +103,7 @@ export class AssessmentSyncQueue {
       const cached = this.requireCached(assessmentId);
       if (item.expectedRevision !== cached.revision) {
         item.expectedRevision = cached.revision;
+        item.answers = cached.answers;
         this.dependencies.cache.savePendingUpdates(pending);
       }
 
@@ -97,9 +112,8 @@ export class AssessmentSyncQueue {
         if (result.type === 'conflict') {
           await this.retryConflict(item, result.current);
         } else {
-          this.applyRevision(assessmentId, result.revision);
+          this.completeSentItem(item, result.revision);
         }
-        this.removePending(item.id);
       } catch {
         this.statuses.set(assessmentId, 'offline');
         return;
@@ -113,42 +127,70 @@ export class AssessmentSyncQueue {
   ): Promise<void> {
     const answers = { ...server.answers };
     const local = this.requireCached(item.assessmentId);
-    const locallyChangedQuestionIds = new Set(
-      this.dependencies.cache.getPendingUpdates()
-        .filter((pending) => pending.assessmentId === item.assessmentId)
-        .flatMap((pending) => pending.changedQuestionIds),
-    );
-    for (const questionId of locallyChangedQuestionIds) {
+    const currentPending = this.requirePending(item.assessmentId);
+    for (const questionId of currentPending.changedQuestionIds) {
       answers[questionId] = local.answers[questionId] ?? [];
     }
     const merged = { ...server, answers };
     this.dependencies.cache.saveAssessment(merged);
-    item.answers = answers;
-    item.expectedRevision = server.revision;
-    this.replacePending(item);
+    const retryItem = {
+      ...currentPending,
+      answers,
+      expectedRevision: server.revision,
+    };
+    this.replacePending(retryItem);
 
-    const retry = await this.dependencies.updateAssessment(toInput(item));
+    const retry = await this.dependencies.updateAssessment(toInput(retryItem));
     if (retry.type === 'conflict') throw new Error('Assessment changed again.');
-    this.applyRevision(item.assessmentId, retry.revision);
+    this.completeSentItem(retryItem, retry.revision);
   }
 
-  private applyRevision(assessmentId: string, revision: number): void {
-    const current = this.requireCached(assessmentId);
-    this.dependencies.cache.saveAssessment({ ...current, revision });
+  private completeSentItem(item: PendingAssessmentUpdate, revision: number): void {
+    const cached = this.requireCached(item.assessmentId);
+    this.dependencies.cache.saveAssessment({ ...cached, revision });
+    const current = this.dependencies.cache.getPendingUpdates()
+      .find((candidate) => candidate.assessmentId === item.assessmentId);
+    if (current === undefined) return;
+    if (pendingVersion(current) === pendingVersion(item)) {
+      this.removePending(item);
+      return;
+    }
+
+    const answers = { ...item.answers };
+    for (const questionId of current.changedQuestionIds) {
+      answers[questionId] = cached.answers[questionId] ?? [];
+    }
+    this.dependencies.cache.savePendingUpdates(
+      this.dependencies.cache.getPendingUpdates().map((candidate) => (
+        candidate.assessmentId === item.assessmentId
+          ? { ...current, answers, expectedRevision: revision }
+          : candidate
+      )),
+    );
   }
 
   private replacePending(update: PendingAssessmentUpdate): void {
     this.dependencies.cache.savePendingUpdates(
       this.dependencies.cache.getPendingUpdates().map((candidate) => (
-        candidate.id === update.id ? update : candidate
+        candidate.assessmentId === update.assessmentId ? update : candidate
       )),
     );
   }
 
-  private removePending(pendingId: string): void {
+  private removePending(completed: PendingAssessmentUpdate): void {
     this.dependencies.cache.savePendingUpdates(
-      this.dependencies.cache.getPendingUpdates().filter((candidate) => candidate.id !== pendingId),
+      this.dependencies.cache.getPendingUpdates().filter((candidate) => (
+        candidate.assessmentId !== completed.assessmentId
+        || pendingVersion(candidate) !== pendingVersion(completed)
+      )),
     );
+  }
+
+  private requirePending(assessmentId: string): PendingAssessmentUpdate {
+    const pending = this.dependencies.cache.getPendingUpdates()
+      .find((candidate) => candidate.assessmentId === assessmentId);
+    if (pending === undefined) throw new Error('Pending assessment update is missing.');
+    return pending;
   }
 
   private requireCached(assessmentId: string): CachedAssessment {
@@ -156,6 +198,10 @@ export class AssessmentSyncQueue {
     if (assessment === undefined) throw new Error('Assessment is not cached.');
     return assessment;
   }
+}
+
+function pendingVersion(item: PendingAssessmentUpdate): number {
+  return item.version ?? 1;
 }
 
 function toInput(item: PendingAssessmentUpdate): UpdateAssessmentInput {

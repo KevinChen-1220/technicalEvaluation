@@ -4,6 +4,11 @@ import path from 'node:path';
 export default defineConfig({
   projectName: 'dynamic-assessment-wechat',
   date: '2026-08-03',
+  env: {
+    TARO_APP_CLOUDBASE_ENV_ID: JSON.stringify(
+      process.env.TARO_APP_CLOUDBASE_ENV_ID?.trim() ?? '',
+    ),
+  },
   designWidth: 375,
   deviceRatio: {
     375: 1,

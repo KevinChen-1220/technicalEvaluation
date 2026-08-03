@@ -36,4 +36,86 @@ describe('Mini Program cloud adapter', () => {
     await expect(client.createGenerationJob({ topic: 'TS', questionCount: 50 }))
       .rejects.toMatchObject({ errorCode: 'QUOTA_EXCEEDED' });
   });
+
+  test.each([
+    ['create-generation-job', { jobId: '', status: 'queued' }, 'INTERNAL_ERROR', (client: ReturnType<typeof createCloudClient>) => (
+      client.createGenerationJob({ topic: 'TS', questionCount: 50 })
+    )],
+    ['get-generation-job', { jobId: 'job-1', status: 'running', progress: 'half', retryable: false }, 'INTERNAL_ERROR', (client: ReturnType<typeof createCloudClient>) => (
+      client.getGenerationJob({ jobId: 'job-1' })
+    )],
+    ['get-generation-job', { jobId: 'job-1', status: 'completed', progress: 100, retryable: false }, 'INCOMPLETE_JOB', (client: ReturnType<typeof createCloudClient>) => (
+      client.getGenerationJob({ jobId: 'job-1' })
+    )],
+    ['get-assessment', { type: 'found', assessment: { ...publicAssessment(), revision: 0 } }, 'INTERNAL_ERROR', (client: ReturnType<typeof createCloudClient>) => (
+      client.getAssessment({ assessmentId: 'assessment-1' })
+    )],
+    ['update-assessment', { type: 'updated', revision: 'next' }, 'INTERNAL_ERROR', (client: ReturnType<typeof createCloudClient>) => (
+      client.updateAssessment({ assessmentId: 'assessment-1', answers: {}, expectedRevision: 1 })
+    )],
+  ] as const)('rejects a malformed %s response', async (_name, result, errorCode, invoke) => {
+    const client = createCloudClient(async () => ({ result }));
+
+    await expect(invoke(client)).rejects.toMatchObject({ errorCode });
+  });
+
+  test('rejects answer keys in a supposedly answerable assessment response', async () => {
+    const assessment = publicAssessment();
+    const leaked = {
+      ...assessment,
+      paper: {
+        ...assessment.paper,
+        questions: assessment.paper.questions.map((question, index) => (
+          index === 0 ? { ...question, correctOptionIds: ['a'], explanation: 'leaked' } : question
+        )),
+      },
+    };
+    const client = createCloudClient(async () => ({ result: { type: 'found', assessment: leaked } }));
+
+    await expect(client.getAssessment({ assessmentId: 'assessment-1' }))
+      .rejects.toMatchObject({ errorCode: 'INTERNAL_ERROR' });
+  });
+
+  test('times out a cloud call that never settles', async () => {
+    jest.useFakeTimers();
+    const client = createCloudClient(
+      () => new Promise(() => undefined),
+      { callTimeoutMs: 50 },
+    );
+
+    const operation = client.getGenerationJob({ jobId: 'job-1' });
+    jest.advanceTimersByTime(50);
+
+    await expect(operation).rejects.toMatchObject({ errorCode: 'REQUEST_TIMEOUT' });
+    jest.useRealTimers();
+  });
+
+  test('maps a malformed callFunction envelope to a typed internal error', async () => {
+    const client = createCloudClient(async () => null as unknown as { result?: unknown });
+
+    await expect(client.createGenerationJob({ topic: 'TS', questionCount: 50 }))
+      .rejects.toMatchObject({ errorCode: 'INTERNAL_ERROR' });
+  });
 });
+
+function publicAssessment() {
+  return {
+    id: 'assessment-1', revision: 1, status: 'draft' as const, answers: {},
+    paper: {
+      id: 'paper-1', topic: 'TypeScript', questionCount: 50 as const,
+      generatedAt: '2026-08-03T10:00:00.000Z',
+      scoring: {
+        maxScore: 100,
+        levels: [{ minPercent: 0, maxPercent: 100, title: '完成', summary: '完成测评' }],
+      },
+      questions: Array.from({ length: 50 }, (_, index) => ({
+        id: `q${index + 1}`,
+        type: 'single_choice' as const,
+        difficulty: 'easy' as const,
+        knowledgePoint: 'types',
+        prompt: `Question ${index + 1}`,
+        options: [{ id: 'a', text: 'A' }, { id: 'b', text: 'B' }],
+      })),
+    },
+  };
+}

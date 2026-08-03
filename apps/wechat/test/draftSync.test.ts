@@ -1,4 +1,4 @@
-import type { AssessmentQuestion } from '@dynamic-assessment/assessment-core';
+import type { AnswerableAssessmentQuestion } from '@dynamic-assessment/assessment-core';
 import { selectOption } from '../src/answer/selection';
 import { AssessmentSyncQueue } from '../src/answer/syncQueue';
 import { createAssessmentCache, type CachedAssessment, type StoragePort } from '../src/storage/assessmentCache';
@@ -95,9 +95,9 @@ describe('AssessmentSyncQueue', () => {
     });
 
     const first = queue.recordSelection('assessment-1', 'q1', 'b').sync;
-    const second = queue.recordSelection('assessment-1', 'q1', 'a').sync;
     await Promise.resolve();
     expect(releases).toHaveLength(1);
+    const second = queue.recordSelection('assessment-1', 'q1', 'a').sync;
     releases.shift()!();
     await Promise.resolve();
     await Promise.resolve();
@@ -112,29 +112,59 @@ describe('AssessmentSyncQueue', () => {
     const cache = createAssessmentCache(new MemoryStorage());
     cache.saveAssessment(assessment());
     let releaseConflict!: () => void;
+    let serverAnswers: Record<string, string[]> = { q1: ['a'], q3: ['server-only'] };
+    let revision = 4;
     const updateAssessment = jest.fn()
       .mockImplementationOnce(async () => {
         await new Promise<void>((resolve) => { releaseConflict = resolve; });
         return {
           type: 'conflict',
-          current: { ...assessment(), revision: 4, answers: { q1: ['a'], q2: ['x'] } },
+          current: { ...assessment(), revision, answers: serverAnswers },
         };
       })
-      .mockResolvedValue({ type: 'updated', revision: 5 });
+      .mockImplementation(async ({ answers }) => {
+        serverAnswers = answers;
+        revision += 1;
+        return { type: 'updated', revision };
+      });
     const queue = new AssessmentSyncQueue({ cache, updateAssessment });
 
     const first = queue.recordSelection('assessment-1', 'q1', 'b').sync;
-    const second = queue.recordSelection('assessment-1', 'q2', 'y').sync;
     await Promise.resolve();
+    const second = queue.recordSelection('assessment-1', 'q2', 'y').sync;
     releaseConflict();
     await Promise.all([first, second]);
 
     expect(updateAssessment).toHaveBeenNthCalledWith(2, {
       assessmentId: 'assessment-1',
-      answers: { q1: ['b'], q2: ['y'] },
+      answers: { q1: ['b'], q2: ['y'], q3: ['server-only'] },
       expectedRevision: 4,
     });
-    expect(cache.getAssessment('assessment-1')?.answers).toEqual({ q1: ['b'], q2: ['y'] });
+    expect(serverAnswers).toEqual({ q1: ['b'], q2: ['y'], q3: ['server-only'] });
+    expect(cache.getAssessment('assessment-1')?.answers).toEqual(serverAnswers);
+  });
+
+  test('coalesces a restarted process selection with persisted pending work', async () => {
+    const cache = createAssessmentCache(new MemoryStorage());
+    cache.saveAssessment({ ...assessment(), answers: { q1: ['b'] } });
+    cache.savePendingUpdates([{
+      id: 'pending-1', assessmentId: 'assessment-1', answers: { q1: ['b'] },
+      expectedRevision: 1, changedQuestionIds: ['q1'],
+    }]);
+    const updateAssessment = jest.fn(async ({ expectedRevision }) => ({
+      type: 'updated' as const, revision: expectedRevision + 1,
+    }));
+    const restartedQueue = new AssessmentSyncQueue({ cache, updateAssessment });
+
+    const operation = restartedQueue.recordSelection('assessment-1', 'q2', 'y');
+
+    expect(cache.getPendingUpdates()).toEqual([expect.objectContaining({
+      assessmentId: 'assessment-1',
+      answers: { q1: ['b'], q2: ['y'] },
+      changedQuestionIds: ['q1', 'q2'],
+    })]);
+    await operation.sync;
+    expect(cache.getPendingUpdates()).toEqual([]);
   });
 });
 
@@ -153,11 +183,10 @@ class MemoryStorage implements StoragePort {
   }
 }
 
-function question(type: AssessmentQuestion['type']): AssessmentQuestion {
+function question(type: AnswerableAssessmentQuestion['type']): AnswerableAssessmentQuestion {
   return {
     id: 'q1', type, difficulty: 'easy', knowledgePoint: 'types', prompt: 'Pick',
     options: [{ id: 'a', text: 'A' }, { id: 'b', text: 'B' }],
-    correctOptionIds: ['a'], explanation: 'Because',
   };
 }
 
@@ -170,6 +199,7 @@ function assessment(): CachedAssessment {
       questions: [
         question('single_choice'),
         { ...question('multiple_choice'), id: 'q2', options: [{ id: 'x', text: 'X' }, { id: 'y', text: 'Y' }] },
+        { ...question('single_choice'), id: 'q3', options: [{ id: 'server-only', text: 'Server' }, { id: 'other', text: 'Other' }] },
       ],
     },
   };

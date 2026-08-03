@@ -21,13 +21,28 @@ type GenerationDependencies = {
 };
 
 const pollIntervals = [1000, 1500, 2000, 3000] as const;
+const defaultMaxPollingDurationMs = 5 * 60 * 1000;
+
+type GenerationControllerOptions = {
+  maxPollingDurationMs?: number;
+  now?: () => number;
+};
 
 export class GenerationController {
   private state: GenerationState = { status: 'idle', progress: 0 };
   private active = false;
   private runId = 0;
 
-  constructor(private readonly dependencies: GenerationDependencies) {}
+  private readonly maxPollingDurationMs: number;
+  private readonly now: () => number;
+
+  constructor(
+    private readonly dependencies: GenerationDependencies,
+    options: GenerationControllerOptions = {},
+  ) {
+    this.maxPollingDurationMs = options.maxPollingDurationMs ?? defaultMaxPollingDurationMs;
+    this.now = options.now ?? Date.now;
+  }
 
   getState(): GenerationState {
     return this.state;
@@ -68,6 +83,7 @@ export class GenerationController {
 
   private async poll(jobId: string, runId: number): Promise<void> {
     let attempt = 0;
+    const startedAt = this.now();
     while (this.isCurrent(runId)) {
       const delay = pollIntervals[Math.min(attempt, pollIntervals.length - 1)] ?? 3000;
       await this.dependencies.sleep(delay);
@@ -81,14 +97,29 @@ export class GenerationController {
         });
         return;
       }
-      if (job.status === 'completed' && job.assessmentId !== undefined) {
-        const assessment = await this.dependencies.getAssessment(job.assessmentId);
+      if (job.status === 'completed') {
+        const assessmentId = job.assessmentId;
+        if (assessmentId === undefined) {
+          this.setState({
+            status: 'failed', jobId, progress: job.progress,
+            error: localizeError('INCOMPLETE_JOB'), retryable: true,
+          });
+          return;
+        }
+        const assessment = await this.dependencies.getAssessment(assessmentId);
         if (!this.isCurrent(runId)) return;
         this.dependencies.cacheAssessment(assessment);
-        await this.dependencies.navigate(job.assessmentId);
+        await this.dependencies.navigate(assessmentId);
         if (this.isCurrent(runId)) {
-          this.setState({ status: 'completed', jobId, assessmentId: job.assessmentId, progress: 100 });
+          this.setState({ status: 'completed', jobId, assessmentId, progress: 100 });
         }
+        return;
+      }
+      if (this.now() - startedAt >= this.maxPollingDurationMs) {
+        this.setState({
+          status: 'failed', jobId, progress: job.progress,
+          error: localizeError('POLLING_TIMEOUT'), retryable: true,
+        });
         return;
       }
       this.setState({ status: 'polling', jobId, progress: job.progress });
@@ -116,5 +147,7 @@ function localizeError(error: unknown): string {
   if (code === 'INVALID_REQUEST') return '生成参数无效，请检查后重试。';
   if (code === 'PROVIDER_ERROR') return '生成服务暂时不可用，请稍后重试。';
   if (code === 'INVALID_MODEL_RESPONSE') return '生成内容校验失败，请重新生成。';
+  if (code === 'INCOMPLETE_JOB') return '生成结果不完整，请重新生成。';
+  if (code === 'POLLING_TIMEOUT' || code === 'REQUEST_TIMEOUT') return '生成等待超时，请重新生成。';
   return '网络连接异常，请稍后重试。';
 }
