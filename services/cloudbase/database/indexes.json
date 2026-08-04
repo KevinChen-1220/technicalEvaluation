@@ -6,7 +6,8 @@
       "name": "owner_updated_at",
       "keys": [
         { "field": "_openid", "order": 1 },
-        { "field": "updatedAt", "order": -1 }
+        { "field": "updatedAt", "order": -1 },
+        { "field": "_id", "order": -1 }
       ]
     },
     {

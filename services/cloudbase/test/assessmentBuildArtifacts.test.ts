@@ -11,7 +11,7 @@ describe('assessment deployment artifacts', () => {
     });
   });
 
-  test.each(['get-assessment', 'update-assessment'])('builds the %s function with pinned runtime dependency', (name) => {
+  test.each(['get-assessment', 'update-assessment', 'list-assessments', 'complete-assessment'])('builds the %s function with pinned runtime dependency', (name) => {
     const directory = join(serviceRoot, 'dist', name);
     expect(existsSync(join(directory, 'index.js'))).toBe(true);
     expect(JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8'))).toMatchObject({
@@ -27,6 +27,8 @@ describe('assessment deployment artifacts', () => {
     expect(config.functions).toEqual(expect.arrayContaining([
       expect.objectContaining({ name: 'get-assessment', timeout: 15 }),
       expect.objectContaining({ name: 'update-assessment', timeout: 15 }),
+      expect.objectContaining({ name: 'list-assessments', timeout: 15 }),
+      expect.objectContaining({ name: 'complete-assessment', timeout: 15 }),
     ]));
   });
 });

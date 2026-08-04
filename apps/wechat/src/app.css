@@ -171,6 +171,94 @@ page {
   line-height: 1.65;
 }
 
+.inline-action {
+  height: 40px;
+  margin-top: 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #354256;
+  font-size: 14px;
+  line-height: 38px;
+}
+
+.history-offline {
+  display: block;
+  margin: -10px 0 14px;
+  color: #a15c00;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.history-list {
+  display: block;
+}
+
+.history-row {
+  display: flex;
+  box-sizing: border-box;
+  min-height: 74px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 10px;
+  padding: 13px 14px;
+  border: 1px solid #dbe3ec;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.history-row--pressed {
+  background: #f1f5f9;
+}
+
+.history-row__main {
+  min-width: 0;
+}
+
+.history-row__topic {
+  display: block;
+  overflow: hidden;
+  color: #172033;
+  font-size: 16px;
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-row__meta {
+  display: block;
+  margin-top: 6px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.history-row__side {
+  display: flex;
+  min-width: 58px;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.history-status {
+  color: #526174;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.history-status--completed {
+  color: #0f766e;
+}
+
+.history-score {
+  margin-top: 6px;
+  color: #172033;
+  font-size: 14px;
+  font-weight: 700;
+}
+
 .fixed-navigation {
   position: fixed;
   right: 0;
@@ -500,4 +588,170 @@ page {
   justify-content: center;
   color: #526174;
   font-size: 15px;
+}
+
+.result-page {
+  box-sizing: border-box;
+  min-height: 100vh;
+  padding: 22px 18px 36px;
+}
+
+.result-header {
+  padding-bottom: 18px;
+  border-bottom: 1px solid #dbe3ec;
+}
+
+.result-topic,
+.result-level,
+.section-title {
+  display: block;
+  color: #172033;
+  font-weight: 700;
+}
+
+.result-topic {
+  font-size: 18px;
+  line-height: 1.4;
+}
+
+.result-level {
+  margin-top: 14px;
+  color: #0f766e;
+  font-size: 26px;
+  line-height: 1.25;
+}
+
+.result-summary {
+  display: block;
+  margin-top: 7px;
+  color: #526174;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+.result-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin: 18px 0;
+}
+
+.result-metric {
+  min-height: 70px;
+  padding: 12px 8px;
+  border: 1px solid #dbe3ec;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #64748b;
+  font-size: 12px;
+  text-align: center;
+}
+
+.result-metric__value {
+  display: block;
+  margin-bottom: 6px;
+  color: #172033;
+  font-size: 20px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.knowledge-section,
+.wrong-section {
+  margin-top: 22px;
+}
+
+.section-title {
+  font-size: 17px;
+  line-height: 1.4;
+}
+
+.knowledge-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 38px;
+  align-items: center;
+  border-bottom: 1px solid #e2e8f0;
+  color: #354256;
+  font-size: 14px;
+}
+
+.wrong-section__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.wrong-count {
+  color: #64748b;
+  font-size: 13px;
+}
+
+.wrong-question {
+  margin-bottom: 18px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid #dbe3ec;
+}
+
+.review-option {
+  display: flex;
+  box-sizing: border-box;
+  min-height: 48px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+  padding: 11px 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.review-option--correct {
+  border-color: #0f766e;
+  background: #eaf6f3;
+}
+
+.review-option--wrong {
+  border-color: #f3b4a8;
+  background: #fff4f1;
+}
+
+.review-badge {
+  flex: 0 0 auto;
+  color: #0f766e;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.review-option--wrong .review-badge {
+  color: #b42318;
+}
+
+.answer-line,
+.explanation-text {
+  display: block;
+  color: #354256;
+  font-size: 14px;
+  line-height: 1.65;
+}
+
+.explanation-text {
+  margin-top: 8px;
+  padding: 12px;
+  border-left: 3px solid #0f766e;
+  background: #eef5f4;
+}
+
+.wrong-pagination {
+  display: grid;
+  grid-template-columns: 1fr 54px 1fr;
+  gap: 10px;
+  align-items: center;
+  margin-top: 12px;
+  color: #526174;
+  font-size: 13px;
+  text-align: center;
 }

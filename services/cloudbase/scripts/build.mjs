@@ -10,6 +10,8 @@ const functions = [
   'get-generation-job',
   'get-assessment',
   'update-assessment',
+  'list-assessments',
+  'complete-assessment',
   'generation-worker',
 ];
 

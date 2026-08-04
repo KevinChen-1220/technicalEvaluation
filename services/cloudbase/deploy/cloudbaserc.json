@@ -34,6 +34,22 @@
       "installDependency": true
     },
     {
+      "name": "list-assessments",
+      "dir": "./list-assessments",
+      "handler": "index.main",
+      "runtime": "Nodejs20.19",
+      "timeout": 15,
+      "installDependency": true
+    },
+    {
+      "name": "complete-assessment",
+      "dir": "./complete-assessment",
+      "handler": "index.main",
+      "runtime": "Nodejs20.19",
+      "timeout": 15,
+      "installDependency": true
+    },
+    {
       "name": "generation-worker",
       "dir": "./generation-worker",
       "handler": "index.main",

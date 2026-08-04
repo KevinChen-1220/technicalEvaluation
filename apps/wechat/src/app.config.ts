@@ -1,5 +1,5 @@
 export default defineAppConfig({
-  pages: ['pages/generate/index', 'pages/answer/index', 'pages/history/index', 'pages/settings/index'],
+  pages: ['pages/generate/index', 'pages/answer/index', 'pages/result/index', 'pages/history/index', 'pages/settings/index'],
   window: {
     navigationBarBackgroundColor: '#F8FAFC',
     navigationBarTextStyle: 'black',

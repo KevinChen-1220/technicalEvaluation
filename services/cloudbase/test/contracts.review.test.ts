@@ -136,6 +136,8 @@ describe('CloudBase deployable configuration', () => {
       'get-generation-job': { invoke: 'auth != null' },
       'update-assessment': { invoke: 'auth != null' },
       'get-assessment': { invoke: 'auth != null' },
+      'list-assessments': { invoke: 'auth != null' },
+      'complete-assessment': { invoke: 'auth != null' },
       'update-user-settings': { invoke: 'auth != null' },
     });
   });

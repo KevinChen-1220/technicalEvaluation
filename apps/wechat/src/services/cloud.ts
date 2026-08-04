@@ -1,4 +1,9 @@
-import type { CachedAssessment } from '../storage/assessmentCache';
+import type { AssessmentResult } from '@dynamic-assessment/assessment-core';
+import type {
+  CachedAssessment,
+  CachedCompletedAssessment,
+  CachedDraftAssessment,
+} from '../storage/assessmentCache';
 import { cloudRuntime } from './cloudRuntime';
 
 export type CreateGenerationInput = {
@@ -22,9 +27,35 @@ export type UpdateAssessmentInput = {
   expectedRevision: number;
 };
 
+export type ListAssessmentsInput = {
+  cursor?: string | null;
+  pageSize?: number;
+};
+
+export type AssessmentSummary = {
+  id: string;
+  topic: string;
+  status: 'draft' | 'completed';
+  questionCount: number;
+  answeredCount: number;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  score: number | null;
+  correctCount: number | null;
+  accuracy: number | null;
+};
+
 export type UpdateAssessmentResponse =
   | { type: 'updated'; revision: number }
   | { type: 'conflict'; current: CachedAssessment };
+
+export type CompleteAssessmentResponse =
+  | { type: 'completed'; assessment: CachedCompletedAssessment }
+  | { type: 'conflict'; current: CachedAssessment }
+  | { type: 'not_found'; errorCode: 'INVALID_REQUEST' }
+  | { type: 'invalid'; errorCode: 'INVALID_REQUEST' };
 
 type CloudCall = (input: { name: string; data: Record<string, unknown> }) => Promise<{ result?: unknown }>;
 
@@ -91,6 +122,54 @@ export function createCloudClient(
       }
       throwPublicError(result);
     },
+    async listAssessments(input: ListAssessmentsInput = {}): Promise<{
+      type: 'listed';
+      summaries: AssessmentSummary[];
+      assessments: CachedAssessment[];
+      nextCursor: string | null;
+    }> {
+      const result = await call<unknown>('list-assessments', {
+        ...(input.cursor === undefined || input.cursor === null ? {} : { cursor: input.cursor }),
+        ...(input.pageSize === undefined ? {} : { pageSize: input.pageSize }),
+      });
+      if (
+        isRecord(result)
+        && result.type === 'listed'
+        && Array.isArray(result.summaries)
+        && result.summaries.every(isAssessmentSummary)
+        && Array.isArray(result.assessments)
+        && result.assessments.every(isCachedAssessment)
+        && (result.nextCursor === null || isNonEmptyString(result.nextCursor))
+      ) {
+        return result as {
+          type: 'listed';
+          summaries: AssessmentSummary[];
+          assessments: CachedAssessment[];
+          nextCursor: string | null;
+        };
+      }
+      throwPublicError(result);
+    },
+    async completeAssessment(input: UpdateAssessmentInput): Promise<CompleteAssessmentResponse> {
+      const result = await call<unknown>('complete-assessment', {
+        assessmentId: input.assessmentId,
+        answers: input.answers,
+        expectedRevision: input.expectedRevision,
+      });
+      if (isRecord(result) && result.type === 'completed' && isCompletedAssessment(result.assessment)) {
+        return { type: 'completed', assessment: result.assessment };
+      }
+      if (isRecord(result) && result.type === 'conflict' && isCachedAssessment(result.current)) {
+        return { type: 'conflict', current: result.current };
+      }
+      if (isRecord(result) && result.type === 'not_found' && result.errorCode === 'INVALID_REQUEST') {
+        return { type: 'not_found', errorCode: 'INVALID_REQUEST' };
+      }
+      if (isRecord(result) && result.type === 'invalid' && result.errorCode === 'INVALID_REQUEST') {
+        return { type: 'invalid', errorCode: 'INVALID_REQUEST' };
+      }
+      throwPublicError(result);
+    },
   };
 }
 
@@ -133,7 +212,32 @@ function isCachedAssessment(value: unknown): value is CachedAssessment {
     || !isNonEmptyString(value.id)
     || !isPositiveInteger(value.revision)
     || (value.status !== 'draft' && value.status !== 'completed')
-    || !isAnswerablePaper(value.paper)
+    || !isNonEmptyString(value.createdAt)
+    || !isNonEmptyString(value.updatedAt)
+    || !isRecord(value.answers)
+  ) return false;
+  if (value.status === 'draft') return isDraftAssessment(value);
+  return isCompletedAssessment(value);
+}
+
+function isDraftAssessment(value: Record<string, unknown>): value is CachedDraftAssessment {
+  return value.completedAt === null
+    && value.result === null
+    && isAnswerablePaper(value.paper)
+    && isAnswers(value.answers, value.paper);
+}
+
+function isCompletedAssessment(value: unknown): value is CachedCompletedAssessment {
+  if (
+    !isRecord(value)
+    || value.status !== 'completed'
+    || !isNonEmptyString(value.id)
+    || !isPositiveInteger(value.revision)
+    || !isNonEmptyString(value.createdAt)
+    || !isNonEmptyString(value.updatedAt)
+    || !isNonEmptyString(value.completedAt)
+    || !isFullPaper(value.paper)
+    || !isAssessmentResult(value.result)
     || !isAnswers(value.answers, value.paper)
   ) return false;
   return true;
@@ -153,6 +257,25 @@ function isAnswerablePaper(value: unknown): value is CachedAssessment['paper'] {
   const ids = new Set<string>();
   for (const question of value.questions) {
     if (!isAnswerableQuestion(question) || ids.has(question.id)) return false;
+    ids.add(question.id);
+  }
+  return true;
+}
+
+function isFullPaper(value: unknown): value is CachedCompletedAssessment['paper'] {
+  if (
+    !isRecord(value)
+    || !isNonEmptyString(value.id)
+    || !isNonEmptyString(value.topic)
+    || !isNonEmptyString(value.generatedAt)
+    || (value.questionCount !== 50 && value.questionCount !== 100)
+    || !isScoring(value.scoring)
+    || !Array.isArray(value.questions)
+    || value.questions.length !== value.questionCount
+  ) return false;
+  const ids = new Set<string>();
+  for (const question of value.questions) {
+    if (!isFullQuestion(question) || ids.has(question.id)) return false;
     ids.add(question.id);
   }
   return true;
@@ -194,6 +317,72 @@ function isAnswerableQuestion(value: unknown): value is CachedAssessment['paper'
   }
   return value.materials === undefined
     || (Array.isArray(value.materials) && value.materials.every(isMaterial));
+}
+
+function isFullQuestion(value: unknown): value is CachedCompletedAssessment['paper']['questions'][number] {
+  return isRecord(value)
+    && isNonEmptyString(value.id)
+    && (value.type === 'single_choice' || value.type === 'multiple_choice' || value.type === 'true_false')
+    && (value.difficulty === 'easy' || value.difficulty === 'medium' || value.difficulty === 'hard')
+    && isNonEmptyString(value.knowledgePoint)
+    && isNonEmptyString(value.prompt)
+    && Array.isArray(value.options)
+    && value.options.length >= 2
+    && value.options.every((option) => isRecord(option) && isNonEmptyString(option.id) && isNonEmptyString(option.text))
+    && Array.isArray(value.correctOptionIds)
+    && value.correctOptionIds.length > 0
+    && value.correctOptionIds.every(isNonEmptyString)
+    && isNonEmptyString(value.explanation)
+    && (value.materials === undefined || (Array.isArray(value.materials) && value.materials.every(isMaterial)));
+}
+
+function isAssessmentSummary(value: unknown): value is AssessmentSummary {
+  return isRecord(value)
+    && isNonEmptyString(value.id)
+    && isNonEmptyString(value.topic)
+    && (value.status === 'draft' || value.status === 'completed')
+    && Number.isInteger(value.questionCount)
+    && Number.isInteger(value.answeredCount)
+    && isPositiveInteger(value.revision)
+    && isNonEmptyString(value.createdAt)
+    && isNonEmptyString(value.updatedAt)
+    && (value.completedAt === null || isNonEmptyString(value.completedAt))
+    && (value.score === null || isFiniteNumber(value.score))
+    && (value.correctCount === null || Number.isInteger(value.correctCount))
+    && (value.accuracy === null || isFiniteNumber(value.accuracy));
+}
+
+function isAssessmentResult(value: unknown): value is AssessmentResult {
+  return isRecord(value)
+    && Number.isInteger(value.totalQuestions)
+    && Number.isInteger(value.correctCount)
+    && isFiniteNumber(value.score)
+    && isFiniteNumber(value.accuracy)
+    && isRecord(value.level)
+    && isFiniteNumber(value.level.minPercent)
+    && isFiniteNumber(value.level.maxPercent)
+    && isNonEmptyString(value.level.title)
+    && isNonEmptyString(value.level.summary)
+    && Array.isArray(value.questionResults)
+    && value.questionResults.every((result) => (
+      isRecord(result)
+      && isNonEmptyString(result.questionId)
+      && typeof result.isCorrect === 'boolean'
+      && Array.isArray(result.userOptionIds)
+      && result.userOptionIds.every(isNonEmptyString)
+      && Array.isArray(result.correctOptionIds)
+      && result.correctOptionIds.every(isNonEmptyString)
+    ))
+    && Array.isArray(value.knowledgePointResults)
+    && value.knowledgePointResults.every((result) => (
+      isRecord(result)
+      && isNonEmptyString(result.knowledgePoint)
+      && Number.isInteger(result.total)
+      && Number.isInteger(result.correct)
+      && isFiniteNumber(result.accuracy)
+    ))
+    && Array.isArray(value.wrongQuestionIds)
+    && value.wrongQuestionIds.every(isNonEmptyString);
 }
 
 function isMaterial(value: unknown): boolean {

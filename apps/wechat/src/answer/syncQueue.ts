@@ -32,6 +32,7 @@ export class AssessmentSyncQueue {
 
     const updated: CachedAssessment = {
       ...assessment,
+      updatedAt: new Date().toISOString(),
       answers: {
         ...assessment.answers,
         [questionId]: selectOption(question, assessment.answers[questionId] ?? [], optionId),
@@ -125,6 +126,12 @@ export class AssessmentSyncQueue {
     item: PendingAssessmentUpdate,
     server: CachedAssessment,
   ): Promise<void> {
+    if (server.status === 'completed') {
+      this.dependencies.cache.saveAssessment(server);
+      this.dependencies.cache.removePendingForAssessment(item.assessmentId);
+      this.statuses.set(item.assessmentId, 'synced');
+      return;
+    }
     const answers = { ...server.answers };
     const local = this.requireCached(item.assessmentId);
     const currentPending = this.requirePending(item.assessmentId);

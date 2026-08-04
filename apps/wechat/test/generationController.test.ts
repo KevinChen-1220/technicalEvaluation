@@ -172,6 +172,10 @@ const assessment: CachedAssessment = {
   revision: 1,
   status: 'draft',
   answers: {},
+  createdAt: '2026-08-03T10:00:00.000Z',
+  updatedAt: '2026-08-03T10:00:00.000Z',
+  completedAt: null,
+  result: null,
   paper: {
     id: 'paper-1',
     topic: 'TypeScript',

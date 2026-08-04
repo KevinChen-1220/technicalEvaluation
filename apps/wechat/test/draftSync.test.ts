@@ -193,6 +193,10 @@ function question(type: AnswerableAssessmentQuestion['type']): AnswerableAssessm
 function assessment(): CachedAssessment {
   return {
     id: 'assessment-1', revision: 1, status: 'draft', answers: { q1: ['a'] },
+    createdAt: '2026-08-03T10:00:00.000Z',
+    updatedAt: '2026-08-03T10:00:00.000Z',
+    completedAt: null,
+    result: null,
     paper: {
       id: 'paper-1', topic: 'TypeScript', questionCount: 50,
       generatedAt: '2026-08-03T10:00:00.000Z', scoring: { maxScore: 100, levels: [] },
