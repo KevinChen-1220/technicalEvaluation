@@ -11,6 +11,7 @@ import {
   type AssessmentCompareAndSwapPersistence,
 } from '../../shared/contracts';
 import { readTrustedOpenId } from '../trustedContext';
+import type { OperationalLogger } from '../operations/logger';
 
 export type PublicAssessment = {
   id: string;
@@ -58,7 +59,10 @@ export type AssessmentRepository = AssessmentCompareAndSwapPersistence & {
 };
 
 type AssessmentDependencies = { repository: AssessmentRepository };
-type AssessmentUpdateDependencies = AssessmentDependencies & { clock: { now(): Date } };
+type AssessmentUpdateDependencies = AssessmentDependencies & {
+  clock: { now(): Date };
+  logger?: OperationalLogger;
+};
 
 const notFound = { type: 'not_found', errorCode: 'INVALID_REQUEST' } as const;
 const invalid = { type: 'invalid', errorCode: 'INVALID_REQUEST' } as const;
@@ -113,6 +117,10 @@ export async function updateAssessmentAnswers(
     return { type: 'updated', revision: result.record.revision };
   }
 
+  dependencies.logger?.log({
+    eventName: 'sync_conflict',
+    assessmentId: parsed.assessmentId,
+  });
   const current = await dependencies.repository.findOwnedAssessment(parsed.assessmentId, ownerOpenId);
   return current === null ? notFound : { type: 'conflict', current: toPublicAssessment(current) };
 }
@@ -196,6 +204,10 @@ export async function completeAssessment(
     return { type: 'completed', assessment: toPublicCompletedAssessment(update.record) };
   }
 
+  dependencies.logger?.log({
+    eventName: 'sync_conflict',
+    assessmentId: parsed.assessmentId,
+  });
   const current = await dependencies.repository.findOwnedAssessment(parsed.assessmentId, ownerOpenId);
   if (current === null) return notFound;
   if (current.status === 'completed' && current.result !== null && current.completedAt !== null) {

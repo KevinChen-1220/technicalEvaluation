@@ -1,0 +1,11 @@
+{
+  "environment": "development",
+  "productVersion": "1.0.0",
+  "privacyPolicyVersion": "2026-08-10",
+  "serviceOperator": "待配置",
+  "modelDisclosure": "待配置",
+  "generativeAiRegistration": "待配置",
+  "miniProgramFiling": "待配置",
+  "reportRoute": "/pages/report/index",
+  "privacyRoute": "/pages/privacy/index"
+}

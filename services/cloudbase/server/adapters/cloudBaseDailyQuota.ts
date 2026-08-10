@@ -1,6 +1,7 @@
 import type { database as cloudDatabase } from 'wx-server-sdk';
 import type {
   DailyGenerationQuotaCounter,
+  GenerationRateLimitCounter,
   GenerationJob,
 } from '../../shared/contracts';
 import type { DailyGenerationQuota } from '../generation/jobService';
@@ -41,6 +42,17 @@ export class CloudBaseDailyQuota implements DailyGenerationQuota {
         const count = existingCounter?.count ?? 0;
         if (count >= this.dailyLimit) throw new QuotaExceededTransactionError();
 
+        const rateReference = transaction.collection('generation_rate_limits').doc(input.rateLimit.bucketId);
+        const existingRateCounter = readRateCounter(await getOptionalDocument(rateReference));
+        if (existingRateCounter !== null && (
+          existingRateCounter._openid !== input.ownerOpenId
+          || existingRateCounter.windowStartedAt !== input.rateLimit.windowStartedAt
+        )) {
+          throw new Error('Generation rate-limit counter transaction conflict.');
+        }
+        const rateCount = existingRateCounter?.count ?? 0;
+        if (rateCount >= input.rateLimit.limit) return { type: 'rate_limited' as const };
+
         const counter: DailyGenerationQuotaCounter = {
           _id: input.counterId,
           _openid: input.ownerOpenId,
@@ -50,6 +62,17 @@ export class CloudBaseDailyQuota implements DailyGenerationQuota {
           createdAt: existingCounter?.createdAt ?? input.now,
           updatedAt: input.now,
         };
+        const rateCounter: GenerationRateLimitCounter = {
+          _id: input.rateLimit.bucketId,
+          _openid: input.ownerOpenId,
+          schemaVersion: 1,
+          windowStartedAt: input.rateLimit.windowStartedAt,
+          expiresAt: input.rateLimit.expiresAt,
+          count: rateCount + 1,
+          createdAt: existingRateCounter?.createdAt ?? input.now,
+          updatedAt: input.now,
+        };
+        await rateReference.set({ data: rateCounter });
         await counterReference.set({ data: counter });
         await jobReference.set({ data: input.job });
         return { type: 'created' as const, job: input.job };
@@ -102,6 +125,24 @@ function readCounter(result: unknown): DailyGenerationQuotaCounter | null {
     throw new Error('Invalid daily quota counter state.');
   }
   return value as DailyGenerationQuotaCounter;
+}
+
+function readRateCounter(result: unknown): GenerationRateLimitCounter | null {
+  const value = readDocument(result);
+  if (value === undefined) return null;
+  if (
+    !isRecord(value)
+    || typeof value._id !== 'string'
+    || typeof value._openid !== 'string'
+    || typeof value.windowStartedAt !== 'string'
+    || typeof value.expiresAt !== 'string'
+    || !Number.isInteger(value.count)
+    || (value.count as number) < 0
+    || typeof value.createdAt !== 'string'
+  ) {
+    throw new Error('Invalid generation rate-limit counter state.');
+  }
+  return value as GenerationRateLimitCounter;
 }
 
 function readDocument(result: unknown): unknown {

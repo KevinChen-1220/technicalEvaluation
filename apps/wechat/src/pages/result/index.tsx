@@ -62,6 +62,12 @@ export default function ResultPage() {
         <View className='result-metric'><Text className='result-metric__value'>{view.summary.correctCount}/{view.summary.totalQuestions}</Text><Text>正确</Text></View>
         <View className='result-metric'><Text className='result-metric__value'>{view.summary.accuracy}%</Text><Text>正确率</Text></View>
       </View>
+      <Button
+        className='inline-action'
+        onClick={() => Taro.navigateTo({ url: `/pages/report/index?assessmentId=${encodeURIComponent(assessmentId)}` })}
+      >
+        投诉与反馈
+      </Button>
 
       <View className='knowledge-section'>
         <Text className='section-title'>知识点表现</Text>

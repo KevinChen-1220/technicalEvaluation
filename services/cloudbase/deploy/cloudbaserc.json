@@ -50,12 +50,51 @@
       "installDependency": true
     },
     {
+      "name": "get-user-settings",
+      "dir": "./get-user-settings",
+      "handler": "index.main",
+      "runtime": "Nodejs20.19",
+      "timeout": 15,
+      "installDependency": true
+    },
+    {
+      "name": "update-user-settings",
+      "dir": "./update-user-settings",
+      "handler": "index.main",
+      "runtime": "Nodejs20.19",
+      "timeout": 15,
+      "installDependency": true
+    },
+    {
+      "name": "create-report",
+      "dir": "./create-report",
+      "handler": "index.main",
+      "runtime": "Nodejs20.19",
+      "timeout": 15,
+      "installDependency": true
+    },
+    {
       "name": "generation-worker",
       "dir": "./generation-worker",
       "handler": "index.main",
       "runtime": "Nodejs20.19",
       "timeout": 600,
       "installDependency": true
+    },
+    {
+      "name": "retention-cleanup",
+      "dir": "./retention-cleanup",
+      "handler": "index.main",
+      "runtime": "Nodejs20.19",
+      "timeout": 120,
+      "installDependency": true,
+      "triggers": [
+        {
+          "name": "daily-retention-cleanup",
+          "type": "timer",
+          "config": "0 0 3 * * * *"
+        }
+      ]
     }
   ]
 }

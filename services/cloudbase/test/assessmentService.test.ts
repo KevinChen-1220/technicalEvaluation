@@ -106,10 +106,11 @@ describe('assessment service', () => {
   test('returns the current sanitized server record on a revision conflict', async () => {
     const current = { ...record(), revision: 4, answers: { q1: ['a'], q2: ['server'] } };
     const repository = new InMemoryAssessmentRepository([current]);
+    const logger = { events: [] as unknown[], log(event: unknown) { this.events.push(event); } };
 
     await expect(updateAssessmentAnswers({
       assessmentId: 'assessment-1', answers: { q1: ['b'] }, expectedRevision: 1,
-    }, trustedContext('owner-1'), { repository, clock: { now: () => now } })).resolves.toMatchObject({
+    }, trustedContext('owner-1'), { repository, clock: { now: () => now }, logger })).resolves.toMatchObject({
       type: 'conflict',
       current: {
         id: 'assessment-1', paper: expect.any(Object), answers: current.answers, status: 'draft', revision: 4,
@@ -120,6 +121,12 @@ describe('assessment service', () => {
     }, trustedContext('owner-1'), { repository, clock: { now: () => now } });
     expect(result.type === 'conflict' ? result.current.paper.questions[0] : null)
       .not.toHaveProperty('correctOptionIds');
+    expect(logger.events).toEqual([expect.objectContaining({
+      eventName: 'sync_conflict',
+      assessmentId: 'assessment-1',
+    })]);
+    expect(JSON.stringify(logger.events)).not.toContain('owner-1');
+    expect(JSON.stringify(logger.events)).not.toContain('server');
   });
 
   test('lists owned assessments with cursor pagination and safe completed result records', async () => {

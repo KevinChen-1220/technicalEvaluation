@@ -151,6 +151,7 @@ function dependencies(
   return {
     repository,
     completionClient,
+    outputModeration: { checkText: async () => ({ allowed: true }) },
     clock: { now: () => initialTime },
     ids: {
       leaseOwner: () => 'worker-1',

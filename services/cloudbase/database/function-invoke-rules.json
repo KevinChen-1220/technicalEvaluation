@@ -6,5 +6,7 @@
   "list-assessments": { "invoke": "auth != null" },
   "complete-assessment": { "invoke": "auth != null" },
   "get-assessment": { "invoke": "auth != null" },
-  "update-user-settings": { "invoke": "auth != null" }
+  "get-user-settings": { "invoke": "auth != null" },
+  "update-user-settings": { "invoke": "auth != null" },
+  "create-report": { "invoke": "auth != null" }
 }

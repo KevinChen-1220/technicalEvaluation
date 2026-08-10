@@ -8,6 +8,7 @@ import {
 import type { Assessment, GenerationJob } from '../../shared/contracts';
 import { GenerationServiceError, asGenerationServiceError, type SafeGenerationErrorCode } from './errors';
 import type { GenerationClock } from './jobService';
+import { type TextModerationPort } from '../moderation/ports';
 
 const batchSize = 10;
 export const generationWorkerBudget = {
@@ -15,6 +16,17 @@ export const generationWorkerBudget = {
   providerCallTimeoutMs: 40 * 1000,
   leaseDurationMs: 2 * 60 * 1000,
   minimumColdStartAndDatabaseMarginMs: 2 * 60 * 1000,
+} as const;
+
+const maxGeneratedBatchBytes = 120_000;
+
+export const generationResponseLimits = {
+  maxBatchBytes: maxGeneratedBatchBytes,
+  assertBatchWithinLimit(raw: string): void {
+    if (Buffer.byteLength(raw, 'utf8') > maxGeneratedBatchBytes) {
+      throw new GenerationServiceError('INVALID_MODEL_RESPONSE', true);
+    }
+  },
 } as const;
 
 export type CompletionBatchRequest = {
@@ -69,7 +81,11 @@ export type WorkerRepository = {
 };
 
 export type WorkerLogEvent = {
-  eventName: 'generation_batch_completed' | 'generation_batch_failed' | 'generation_job_completed';
+  eventName:
+    | 'generation_batch_completed'
+    | 'generation_batch_failed'
+    | 'generation_output_blocked'
+    | 'generation_job_completed';
   jobId: string;
   batchNumber: number;
   durationMs: number;
@@ -83,6 +99,7 @@ export type SafeGenerationLogger = {
 export type GenerationWorkerDependencies = {
   repository: WorkerRepository;
   completionClient: CompletionClient;
+  outputModeration: TextModerationPort;
   clock: GenerationClock;
   ids: {
     leaseOwner(): string;
@@ -175,6 +192,7 @@ export async function runGenerationWorker(
         totalBatches,
         includeScoring: batchIndex === 0,
       }, { signal: controller.signal });
+      generationResponseLimits.assertBatchWithinLimit(raw);
       const batch = parseGeneratedBatch(raw, batchIndex === 0);
       questions.push(...batch.questions);
       if (batch.scoring !== undefined) scoring = batch.scoring;
@@ -251,6 +269,37 @@ export async function runGenerationWorker(
       totalBatches,
       generatedAt,
       new GenerationServiceError('INVALID_MODEL_RESPONSE', true),
+    );
+  }
+
+  const outputModeration = await dependencies.outputModeration.checkText({
+    ownerOpenId: job._openid,
+    content: JSON.stringify({
+      topic: validation.paper.topic,
+      questions: validation.paper.questions.map((question) => ({
+        prompt: question.prompt,
+        options: question.options.map((option) => option.text),
+        explanation: question.explanation,
+      })),
+    }),
+    scene: 'generation_output',
+    title: 'SkillScope generated assessment',
+  });
+  if (!outputModeration.allowed) {
+    dependencies.logger.log({
+      eventName: 'generation_output_blocked',
+      jobId: job._id,
+      batchNumber: totalBatches,
+      durationMs: 0,
+      safeCode: 'CONTENT_BLOCKED',
+    });
+    return recordWorkerFailure(
+      dependencies,
+      job,
+      leaseOwner,
+      totalBatches,
+      generatedAt,
+      new GenerationServiceError('CONTENT_BLOCKED', false),
     );
   }
 

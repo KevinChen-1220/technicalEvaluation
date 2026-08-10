@@ -10,7 +10,12 @@ import {
   createMain as createWorkerMain,
   createRuntimeMain as createWorkerRuntimeMain,
 } from '../functions/generation-worker';
+import { createMain as createGetSettingsMain } from '../functions/get-user-settings';
+import { createMain as createUpdateSettingsMain } from '../functions/update-user-settings';
+import { createMain as createReportMain } from '../functions/create-report';
+import { createMain as createRetentionMain } from '../functions/retention-cleanup';
 import { GenerationServiceError } from '../server/generation/errors';
+import { CURRENT_PRIVACY_POLICY_VERSION, type Assessment, type UserReport, type UserSettings } from '../shared/contracts';
 
 jest.mock('wx-server-sdk', () => ({ getWXContext: jest.fn() }), { virtual: true });
 
@@ -93,6 +98,7 @@ describe('CloudBase generation function entries', () => {
     const dependencies: GenerationWorkerDependencies = {
       repository,
       completionClient: { complete: jest.fn() },
+      outputModeration: { checkText: async () => ({ allowed: true }) },
       clock: { now: () => new Date('2026-08-03T10:30:00.000Z') },
       ids: { leaseOwner: () => 'worker-1', assessmentId: (jobId) => `assessment-${jobId}` },
       logger: { log: jest.fn() },
@@ -120,6 +126,69 @@ describe('CloudBase generation function entries', () => {
     wxServerSdk.getWXContext.mockReturnValue({ OPENID: 'trusted-owner' });
     expect(getTrustedWeChatContext()).toBeDefined();
   });
+
+  test('settings entries use trusted context and trusted acceptance timestamp', async () => {
+    const dependencies = settingsDependencies();
+    wxServerSdk.getWXContext.mockReturnValue({ OPENID: 'owner-1' });
+
+    await expect(createUpdateSettingsMain(dependencies)({
+      privacyPolicyVersion: CURRENT_PRIVACY_POLICY_VERSION,
+      privacyConsentAt: 'spoofed',
+      ownerOpenId: 'spoofed',
+    }, {})).resolves.toEqual({
+      type: 'accepted',
+      settings: {
+        privacyPolicyVersion: CURRENT_PRIVACY_POLICY_VERSION,
+        privacyConsentAt: '2026-08-03T10:30:00.000Z',
+        hasCurrentPrivacyConsent: true,
+      },
+    });
+    await expect(createGetSettingsMain({ repository: dependencies.repository })({ ownerOpenId: 'spoofed' }, {}))
+      .resolves.toMatchObject({ type: 'found', settings: { hasCurrentPrivacyConsent: true } });
+    expect(dependencies.repository.records[0]).toMatchObject({ _openid: 'owner-1' });
+  });
+
+  test('report entry ignores spoofed reporter fields and persists only bounded public input', async () => {
+    const dependencies = reportDependencies([assessment('assessment-1', 'owner-1')]);
+    wxServerSdk.getWXContext.mockReturnValue({ OPENID: 'owner-1' });
+
+    await expect(createReportMain(dependencies)({
+      assessmentId: 'assessment-1',
+      reason: 'question_error',
+      detail: '题干有误',
+      policyVersion: CURRENT_PRIVACY_POLICY_VERSION,
+      status: 'closed',
+      operatorNotes: 'spoofed',
+      reporterOpenId: 'spoofed',
+    }, {})).resolves.toEqual({ type: 'created', reportId: 'report-1' });
+    expect(dependencies.repository.records).toEqual([
+      expect.objectContaining({
+        _id: 'report-1',
+        _openid: 'owner-1',
+        reason: 'question_error',
+        status: 'open',
+      }),
+    ]);
+    expect(JSON.stringify(dependencies.repository.records)).not.toContain('spoofed');
+  });
+
+  test('retention entry ignores event fields and returns redacted counts', async () => {
+    const dependencies = retentionDependencies();
+
+    await expect(createRetentionMain(dependencies)({
+      ownerOpenId: 'spoofed',
+      deleteAll: true,
+      apiKey: 'secret',
+    }, {})).resolves.toEqual({
+      generationJobs: 1,
+      dailyQuotas: 1,
+      rateBuckets: 1,
+      completedAssessments: 0,
+      reports: 0,
+    });
+    expect(JSON.stringify(dependencies.logger.events)).not.toContain('secret');
+    expect(JSON.stringify(dependencies.logger.events)).not.toContain('spoofed');
+  });
 });
 
 function jobDependencies(jobs: GenerationJob[]): GenerationJobServiceDependencies {
@@ -133,7 +202,11 @@ function jobDependencies(jobs: GenerationJob[]): GenerationJobServiceDependencie
       )) ?? null,
     },
     clock: { now: () => new Date('2026-08-03T10:30:00.000Z') },
-    ids: { jobId: () => 'job-1', quotaCounterId: () => 'quota-1' },
+    ids: {
+      jobId: () => 'job-1',
+      quotaCounterId: () => 'quota-1',
+      rateLimitBucketId: () => 'rate-1',
+    },
     quota: {
       reserveJob: async ({ job }) => {
         const existing = jobs.find((candidate) => candidate._id === job._id);
@@ -141,6 +214,104 @@ function jobDependencies(jobs: GenerationJob[]): GenerationJobServiceDependencie
         jobs.push(job);
         return { type: 'created', job };
       },
+    },
+    settings: { hasCurrentPrivacyConsent: async () => true },
+    inputModeration: { checkText: async () => ({ allowed: true }) },
+    logger: { log: jest.fn() },
+  };
+}
+
+function settingsDependencies() {
+  const repository = {
+    records: [] as UserSettings[],
+    async findByOwner(ownerOpenId: string) {
+      return this.records.find((record) => record._openid === ownerOpenId) ?? null;
+    },
+    async save(record: UserSettings) {
+      this.records = [record, ...this.records.filter((item) => item._id !== record._id)];
+      return record;
+    },
+    async hasCurrentPrivacyConsent(ownerOpenId: string, version: string) {
+      const record = await this.findByOwner(ownerOpenId);
+      return record?.privacyConsentVersion === version && record.privacyConsentAt !== null;
+    },
+  };
+  return {
+    repository,
+    clock: { now: () => new Date('2026-08-03T10:30:00.000Z') },
+    ids: { settingsId: (ownerOpenId: string) => `settings-${ownerOpenId}` },
+  };
+}
+
+function reportDependencies(assessments: Assessment[]) {
+  const repository = {
+    records: [] as UserReport[],
+    async create(report: UserReport) {
+      this.records.push(report);
+    },
+  };
+  return {
+    repository,
+    assessments: {
+      findOwnedAssessment: async (id: string, owner: string) => assessments.find((item) => item._id === id && item._openid === owner) ?? null,
+    },
+    clock: { now: () => new Date('2026-08-03T10:30:00.000Z') },
+    ids: { reportId: () => 'report-1' },
+  };
+}
+
+function retentionDependencies() {
+  const repository = {
+    deleteExpiredGenerationJobs: jest.fn(async () => 1),
+    deleteExpiredDailyQuotas: jest.fn(async () => 1),
+    deleteExpiredRateLimitBuckets: jest.fn(async () => 1),
+    deleteExpiredCompletedAssessments: jest.fn(async () => 0),
+    deleteExpiredReports: jest.fn(async () => 0),
+  };
+  const logger = { events: [] as unknown[], log(event: unknown) { this.events.push(event); } };
+  return {
+    repository,
+    clock: { now: () => new Date('2026-08-03T10:30:00.000Z') },
+    policy: {
+      batchSize: 50,
+      jobRetentionDays: 1,
+      quotaRetentionDays: 2,
+      rateLimitRetentionDays: 2,
+      completedAssessmentRetentionDays: 365,
+      reportRetentionDays: 365,
+    },
+    logger,
+  };
+}
+
+function assessment(id: string, owner: string): Assessment {
+  return {
+    _id: id,
+    _openid: owner,
+    schemaVersion: 1,
+    status: 'completed',
+    answers: {},
+    result: {
+      totalQuestions: 0,
+      correctCount: 0,
+      score: 0,
+      accuracy: 0,
+      level: { minPercent: 0, maxPercent: 100, title: '完成', summary: '完成' },
+      questionResults: [],
+      knowledgePointResults: [],
+      wrongQuestionIds: [],
+    },
+    revision: 1,
+    createdAt: '2026-08-03T10:30:00.000Z',
+    updatedAt: '2026-08-03T10:30:00.000Z',
+    completedAt: '2026-08-03T10:30:00.000Z',
+    paper: {
+      id,
+      topic: 'TypeScript',
+      questionCount: 50,
+      generatedAt: '2026-08-03T10:30:00.000Z',
+      scoring: { maxScore: 100, levels: [] },
+      questions: [],
     },
   };
 }

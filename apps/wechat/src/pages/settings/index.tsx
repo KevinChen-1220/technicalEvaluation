@@ -1,9 +1,15 @@
-import { Text, View } from '@tarojs/components';
+import Taro from '@tarojs/taro';
+import { Button, Text, View } from '@tarojs/components';
 import { FixedBottomNavigation } from '../../components/FixedBottomNavigation';
+import { CURRENT_PRIVACY_POLICY_VERSION, normalizeReleaseDisclosure } from '../../privacy/consent';
 import { createMiniProgramShellState } from '../../shell/viewModel';
 
 export default function SettingsPage() {
   const shell = createMiniProgramShellState();
+  const disclosure = normalizeReleaseDisclosure({
+    environment: 'development',
+    productVersion: '1.0.0',
+  });
 
   return (
     <View className='app-page'>
@@ -14,6 +20,34 @@ export default function SettingsPage() {
       <View className='disclosure'>
         <Text>{shell.settings.disclosure}</Text>
       </View>
+      <View className='settings-list'>
+        <View className='settings-row'>
+          <Text>产品版本</Text>
+          <Text>{disclosure.productVersion}</Text>
+        </View>
+        <View className='settings-row'>
+          <Text>隐私政策版本</Text>
+          <Text>{CURRENT_PRIVACY_POLICY_VERSION}</Text>
+        </View>
+        <View className='settings-row'>
+          <Text>服务主体</Text>
+          <Text>{disclosure.serviceOperator}</Text>
+        </View>
+        <View className='settings-row'>
+          <Text>模型披露</Text>
+          <Text>{disclosure.modelDisclosure}</Text>
+        </View>
+        <View className='settings-row'>
+          <Text>生成式 AI 备案</Text>
+          <Text>{disclosure.generativeAiRegistration}</Text>
+        </View>
+        <View className='settings-row'>
+          <Text>小程序备案</Text>
+          <Text>{disclosure.miniProgramFiling}</Text>
+        </View>
+      </View>
+      <Button className='inline-action' onClick={() => Taro.navigateTo({ url: '/pages/privacy/index' })}>隐私政策</Button>
+      <Button className='inline-action' onClick={() => Taro.navigateTo({ url: '/pages/report/index' })}>投诉与反馈</Button>
       <FixedBottomNavigation activeTab='settings' />
     </View>
   );

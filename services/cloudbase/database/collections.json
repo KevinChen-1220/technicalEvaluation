@@ -41,6 +41,16 @@
       }
     },
     {
+      "name": "generation_rate_limits",
+      "documentSchemaVersion": 1,
+      "required": ["_id", "_openid", "schemaVersion", "windowStartedAt", "expiresAt", "count", "createdAt", "updatedAt"],
+      "properties": {
+        "windowStartedAt": "timestamp",
+        "expiresAt": "timestamp",
+        "count": "integer:>=0"
+      }
+    },
+    {
       "name": "user_settings",
       "documentSchemaVersion": 1,
       "required": ["_id", "_openid", "schemaVersion", "locale", "privacyConsentVersion", "privacyConsentAt", "createdAt", "updatedAt"],
@@ -49,6 +59,18 @@
         "displayPreferences": "DisplayPreferences?",
         "privacyConsentVersion": "string",
         "privacyConsentAt": "timestamp|null"
+      }
+    },
+    {
+      "name": "user_reports",
+      "documentSchemaVersion": 1,
+      "required": ["_id", "_openid", "schemaVersion", "assessmentId", "reason", "policyVersion", "status", "createdAt", "updatedAt"],
+      "properties": {
+        "assessmentId": "string",
+        "reason": ["question_error", "content_safety", "privacy", "other"],
+        "detail": "string?",
+        "policyVersion": "string",
+        "status": ["open"]
       }
     }
   ]

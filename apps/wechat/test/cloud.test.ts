@@ -15,6 +15,13 @@ describe('Mini Program cloud adapter', () => {
       if (input.name === 'get-assessment') return { result: { type: 'not_found', errorCode: 'INVALID_REQUEST' } };
       if (input.name === 'list-assessments') return { result: { type: 'listed', summaries: [], assessments: [], nextCursor: null } };
       if (input.name === 'complete-assessment') return { result: { type: 'completed', assessment: completedAssessment() } };
+      if (input.name === 'get-user-settings') return { result: { type: 'not_found', errorCode: 'INVALID_REQUEST' } };
+      if (input.name === 'update-user-settings') return { result: { type: 'accepted', settings: {
+        privacyPolicyVersion: '2026-08-10',
+        privacyConsentAt: '2026-08-10T08:00:00.000Z',
+        hasCurrentPrivacyConsent: true,
+      } } };
+      if (input.name === 'create-report') return { result: { type: 'created', reportId: 'report-1' } };
       return { result: { type: 'updated', revision: 2 } };
     });
     const unsafe = { OPENID: 'spoofed', owner: 'spoofed', provider: 'x', model: 'x', endpoint: 'http://x', apiKey: 'secret' };
@@ -38,6 +45,21 @@ describe('Mini Program cloud adapter', () => {
       completedAt: string;
       owner: string;
     });
+    await client.getUserSettings({ owner: 'spoofed' } as Parameters<typeof client.getUserSettings>[0] & { owner: string });
+    await client.acceptPrivacyPolicy({
+      privacyPolicyVersion: '2026-08-10',
+      privacyConsentAt: 'spoofed-client-time',
+      owner: 'spoofed',
+    } as Parameters<typeof client.acceptPrivacyPolicy>[0] & { privacyConsentAt: string; owner: string });
+    await client.createReport({
+      assessmentId: 'assessment-1',
+      reason: 'content_safety',
+      detail: '题目内容不合适',
+      policyVersion: '2026-08-10',
+      status: 'closed',
+      operatorNotes: 'spoofed',
+      owner: 'spoofed',
+    } as Parameters<typeof client.createReport>[0] & { status: string; operatorNotes: string; owner: string });
 
     expect(calls).toEqual([
       { name: 'create-generation-job', data: { topic: 'TS', notes: 'types', questionCount: 50 } },
@@ -46,6 +68,14 @@ describe('Mini Program cloud adapter', () => {
       { name: 'update-assessment', data: { assessmentId: 'assessment-1', answers: { q1: ['a'] }, expectedRevision: 1 } },
       { name: 'list-assessments', data: { cursor: 'cursor-1', pageSize: 20 } },
       { name: 'complete-assessment', data: { assessmentId: 'assessment-1', answers: { q1: ['a'] }, expectedRevision: 2 } },
+      { name: 'get-user-settings', data: {} },
+      { name: 'update-user-settings', data: { privacyPolicyVersion: '2026-08-10' } },
+      { name: 'create-report', data: {
+        assessmentId: 'assessment-1',
+        reason: 'content_safety',
+        detail: '题目内容不合适',
+        policyVersion: '2026-08-10',
+      } },
     ]);
   });
 

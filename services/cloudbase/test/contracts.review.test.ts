@@ -127,6 +127,14 @@ describe('CloudBase deployable configuration', () => {
       read: 'doc._openid == auth.openid',
       write: false,
     });
+    expect(readJsonIfPresent(join(securityRulesDirectory, 'generation_rate_limits.json'))).toEqual({
+      read: false,
+      write: false,
+    });
+    expect(readJsonIfPresent(join(securityRulesDirectory, 'user_reports.json'))).toEqual({
+      read: false,
+      write: false,
+    });
   });
 
   test('uses an environment-level deny-by-default function invoke policy', () => {
@@ -138,8 +146,52 @@ describe('CloudBase deployable configuration', () => {
       'get-assessment': { invoke: 'auth != null' },
       'list-assessments': { invoke: 'auth != null' },
       'complete-assessment': { invoke: 'auth != null' },
+      'get-user-settings': { invoke: 'auth != null' },
       'update-user-settings': { invoke: 'auth != null' },
+      'create-report': { invoke: 'auth != null' },
     });
+  });
+
+  test('declares report and rate-limit collections with deployable indexes', () => {
+    const collections = readJsonIfPresent(join(databaseDirectory, 'collections.json')) as {
+      collections?: Array<{ name?: string; required?: string[] }>;
+    };
+    const indexes = readJsonIfPresent(join(databaseDirectory, 'indexes.json')) as {
+      indexes?: Array<{ collection?: string; name?: string; keys?: Array<{ field?: string; order?: number }> }>;
+    };
+
+    expect(collections.collections).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        name: 'generation_rate_limits',
+        required: expect.arrayContaining(['_id', '_openid', 'windowStartedAt', 'expiresAt', 'count']),
+      }),
+      expect.objectContaining({
+        name: 'user_reports',
+        required: expect.arrayContaining(['_id', '_openid', 'assessmentId', 'reason', 'policyVersion', 'status', 'createdAt']),
+      }),
+    ]));
+    expect(indexes.indexes).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        collection: 'generation_rate_limits',
+        name: 'expires_at',
+        keys: [{ field: 'expiresAt', order: 1 }],
+      }),
+      expect.objectContaining({
+        collection: 'user_reports',
+        name: 'owner_created_at',
+        keys: [
+          { field: '_openid', order: 1 },
+          { field: 'createdAt', order: -1 },
+        ],
+      }),
+    ]));
+  });
+
+  test('declares msgSecCheck OpenAPI permission only on client-triggered generation create', () => {
+    expect(readJsonIfPresent(join(__dirname, '..', 'functions', 'create-generation-job', 'config.json'))).toEqual({
+      permissions: { openapi: ['security.msgSecCheck'] },
+    });
+    expect(readJsonIfPresent(join(__dirname, '..', 'functions', 'generation-worker', 'config.json'))).toBeUndefined();
   });
 });
 

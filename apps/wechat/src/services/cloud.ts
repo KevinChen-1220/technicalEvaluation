@@ -57,6 +57,28 @@ export type CompleteAssessmentResponse =
   | { type: 'not_found'; errorCode: 'INVALID_REQUEST' }
   | { type: 'invalid'; errorCode: 'INVALID_REQUEST' };
 
+export type UserSettingsResponse =
+  | {
+      type: 'found';
+      settings: {
+        privacyPolicyVersion: string;
+        privacyConsentAt: string | null;
+        hasCurrentPrivacyConsent: boolean;
+      };
+    }
+  | { type: 'not_found'; errorCode: 'INVALID_REQUEST' };
+
+export type AcceptPrivacyPolicyInput = {
+  privacyPolicyVersion: string;
+};
+
+export type CreateReportInput = {
+  assessmentId: string;
+  reason: 'question_error' | 'content_safety' | 'privacy' | 'other';
+  detail?: string;
+  policyVersion: string;
+};
+
 type CloudCall = (input: { name: string; data: Record<string, unknown> }) => Promise<{ result?: unknown }>;
 
 type CloudClientOptions = { callTimeoutMs?: number };
@@ -170,6 +192,40 @@ export function createCloudClient(
       }
       throwPublicError(result);
     },
+    async getUserSettings(_input: Record<string, unknown> = {}): Promise<UserSettingsResponse> {
+      const result = await call<unknown>('get-user-settings', {});
+      if (isRecord(result) && result.type === 'not_found' && result.errorCode === 'INVALID_REQUEST') {
+        return { type: 'not_found', errorCode: 'INVALID_REQUEST' };
+      }
+      if (isRecord(result) && result.type === 'found' && isPublicUserSettings(result.settings)) {
+        return {
+          type: 'found',
+          settings: result.settings as UserSettingsResponse extends { type: 'found'; settings: infer S } ? S : never,
+        };
+      }
+      throwPublicError(result);
+    },
+    async acceptPrivacyPolicy(input: AcceptPrivacyPolicyInput): Promise<Extract<UserSettingsResponse, { type: 'found' }>['settings']> {
+      const result = await call<unknown>('update-user-settings', {
+        privacyPolicyVersion: input.privacyPolicyVersion,
+      });
+      if (isRecord(result) && result.type === 'accepted' && isPublicUserSettings(result.settings)) {
+        return result.settings as Extract<UserSettingsResponse, { type: 'found' }>['settings'];
+      }
+      throwPublicError(result);
+    },
+    async createReport(input: CreateReportInput): Promise<{ type: 'created'; reportId: string }> {
+      const result = await call<unknown>('create-report', {
+        assessmentId: input.assessmentId,
+        reason: input.reason,
+        ...(input.detail === undefined ? {} : { detail: input.detail }),
+        policyVersion: input.policyVersion,
+      });
+      if (isRecord(result) && result.type === 'created' && isNonEmptyString(result.reportId)) {
+        return { type: 'created', reportId: result.reportId };
+      }
+      throwPublicError(result);
+    },
   };
 }
 
@@ -178,12 +234,22 @@ export const cloudClient = createCloudClient();
 function isSafeErrorCode(value: string): boolean {
   return value === 'INVALID_REQUEST'
     || value === 'QUOTA_EXCEEDED'
+    || value === 'PRIVACY_CONSENT_REQUIRED'
+    || value === 'CONTENT_BLOCKED'
+    || value === 'RATE_LIMITED'
     || value === 'PROVIDER_ERROR'
     || value === 'INVALID_MODEL_RESPONSE'
     || value === 'CONFIGURATION_ERROR'
     || value === 'INTERNAL_ERROR'
     || value === 'INCOMPLETE_JOB'
     || value === 'REQUEST_TIMEOUT';
+}
+
+function isPublicUserSettings(value: unknown): boolean {
+  return isRecord(value)
+    && isNonEmptyString(value.privacyPolicyVersion)
+    && (value.privacyConsentAt === null || isNonEmptyString(value.privacyConsentAt))
+    && typeof value.hasCurrentPrivacyConsent === 'boolean';
 }
 
 function isGenerationStatus(value: unknown): value is GenerationJobStatus['status'] {

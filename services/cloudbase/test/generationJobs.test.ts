@@ -84,8 +84,12 @@ function createDependencies(repository = new ObservableJobRepository()): TestDep
         ? `stable-${ownerOpenId}-${clientRequestId}`
         : `random-job-${sequence += 1}`,
       quotaCounterId: (ownerOpenId, utcDay) => `quota-${ownerOpenId}-${utcDay}`,
+      rateLimitBucketId: (ownerOpenId, windowStartedAt) => `rate-${ownerOpenId}-${windowStartedAt}`,
     },
     quota: new ObservableAtomicDailyQuota(repository, 2),
+    settings: { hasCurrentPrivacyConsent: async () => true },
+    inputModeration: { checkText: async () => ({ allowed: true }) },
+    logger: { log: jest.fn() },
   };
 }
 

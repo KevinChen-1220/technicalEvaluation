@@ -16,6 +16,7 @@ export {
 } from './errors';
 
 export const COLLECTION_SCHEMA_VERSION = 1 as const;
+export const CURRENT_PRIVACY_POLICY_VERSION = '2026-08-10' as const;
 
 export type GenerationRequest = {
   topic: string;
@@ -54,6 +55,17 @@ export type DailyGenerationQuotaCounter = {
   updatedAt: string;
 };
 
+export type GenerationRateLimitCounter = {
+  _id: string;
+  _openid: string;
+  schemaVersion: typeof COLLECTION_SCHEMA_VERSION;
+  windowStartedAt: string;
+  expiresAt: string;
+  count: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type AssessmentStatus = 'draft' | 'completed';
 
 export type Assessment = {
@@ -83,6 +95,21 @@ export type UserSettings = {
   displayPreferences?: DisplayPreferences;
   privacyConsentVersion: string;
   privacyConsentAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type ReportReason = 'question_error' | 'content_safety' | 'privacy' | 'other';
+
+export type UserReport = {
+  _id: string;
+  _openid: string;
+  schemaVersion: typeof COLLECTION_SCHEMA_VERSION;
+  assessmentId: string;
+  reason: ReportReason;
+  detail?: string;
+  policyVersion: string;
+  status: 'open';
   createdAt: string;
   updatedAt: string;
 };

@@ -50,6 +50,29 @@
         { "field": "_openid", "order": 1 },
         { "field": "utcDay", "order": 1 }
       ]
+    },
+    {
+      "collection": "generation_rate_limits",
+      "name": "expires_at",
+      "keys": [
+        { "field": "expiresAt", "order": 1 }
+      ]
+    },
+    {
+      "collection": "user_reports",
+      "name": "owner_created_at",
+      "keys": [
+        { "field": "_openid", "order": 1 },
+        { "field": "createdAt", "order": -1 }
+      ]
+    },
+    {
+      "collection": "user_reports",
+      "name": "assessment_created_at",
+      "keys": [
+        { "field": "assessmentId", "order": 1 },
+        { "field": "createdAt", "order": -1 }
+      ]
     }
   ]
 }

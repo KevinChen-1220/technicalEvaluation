@@ -27,10 +27,39 @@ describe('CloudBase deployment artifacts', () => {
     expect(config.functionRoot).toBe('.');
     expect(config.functions).toEqual(expect.arrayContaining([
       expect.objectContaining({
+        name: 'get-user-settings',
+        dir: './get-user-settings',
+        handler: 'index.main',
+        timeout: 15,
+      }),
+      expect.objectContaining({
+        name: 'update-user-settings',
+        dir: './update-user-settings',
+        handler: 'index.main',
+        timeout: 15,
+      }),
+      expect.objectContaining({
+        name: 'create-report',
+        dir: './create-report',
+        handler: 'index.main',
+        timeout: 15,
+      }),
+      expect.objectContaining({
         name: 'generation-worker',
         dir: './generation-worker',
         handler: 'index.main',
         timeout: 600,
+      }),
+      expect.objectContaining({
+        name: 'retention-cleanup',
+        dir: './retention-cleanup',
+        handler: 'index.main',
+        timeout: 120,
+        triggers: [{
+          name: 'daily-retention-cleanup',
+          type: 'timer',
+          config: '0 0 3 * * * *',
+        }],
       }),
     ]));
     const worker = config.functions?.find((entry) => entry.name === 'generation-worker');

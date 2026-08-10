@@ -13,6 +13,7 @@ describe('CloudBase atomic daily quota', () => {
       ownerOpenId: 'owner-1',
       utcDay: '2026-08-03',
       now: '2026-08-03T10:30:00.000Z',
+      rateLimit: makeRateLimit(),
     })).resolves.toMatchObject({ type: 'created' });
     expect(database.document('daily_generation_quotas', 'quota-owner-1-2026-08-03'))
       .toMatchObject({ count: 1 });
@@ -29,6 +30,7 @@ describe('CloudBase atomic daily quota', () => {
       ownerOpenId: 'owner-1',
       utcDay: '2026-08-03',
       now: '2026-08-03T10:30:00.000Z',
+      rateLimit: makeRateLimit(),
     };
 
     await expect(quota.reserveJob(input)).rejects.toThrow('simulated job write failure');
@@ -46,6 +48,7 @@ describe('CloudBase atomic daily quota', () => {
       ownerOpenId: 'owner-1',
       utcDay: '2026-08-03',
       now: '2026-08-03T10:30:00.000Z',
+      rateLimit: makeRateLimit(),
     })));
 
     expect(results.filter((result) => result.type === 'created')).toHaveLength(2);
@@ -65,6 +68,7 @@ describe('CloudBase atomic daily quota', () => {
       ownerOpenId: 'owner-1',
       utcDay: '2026-08-03',
       now: '2026-08-03T10:30:00.000Z',
+      rateLimit: makeRateLimit(),
     };
 
     await expect(quota.reserveJob(input)).rejects.toThrow('simulated job write failure');
@@ -90,6 +94,7 @@ describe('CloudBase atomic daily quota', () => {
       ownerOpenId: 'owner-1',
       utcDay: '2026-08-03',
       now: '2026-08-03T10:30:00.000Z',
+      rateLimit: makeRateLimit(),
     })).resolves.toMatchObject({ type: 'existing', job: { status: 'completed' } });
     expect(database.document('daily_generation_quotas', 'quota-owner-1-2026-08-03')).toBeUndefined();
   });
@@ -109,6 +114,7 @@ describe('CloudBase atomic daily quota', () => {
       ownerOpenId: 'owner-1',
       utcDay: '2026-08-03',
       now: '2026-08-03T10:30:00.000Z',
+      rateLimit: makeRateLimit(),
     })).rejects.toThrow('Invalid generation job state.');
     expect(database.document('generation_jobs', 'job-1')).toMatchObject({ status: 'corrupt' });
     expect(database.document('daily_generation_quotas', 'quota-owner-1-2026-08-03')).toBeUndefined();
@@ -124,9 +130,11 @@ describe('CloudBase atomic daily quota', () => {
       ownerOpenId: 'owner-1',
       utcDay: '2026-08-03',
       now: '2026-08-03T10:30:00.000Z',
+      rateLimit: makeRateLimit(),
     });
 
     expect(database.committedWrites).toEqual([
+      'generation_rate_limits:rate-owner-1-2026-08-03T10:30:00.000Z',
       'daily_generation_quotas:quota-owner-1-2026-08-03',
       'generation_jobs:job-1',
     ]);
@@ -236,5 +244,14 @@ function makeJob(id: string): GenerationJob {
     createdAt: '2026-08-03T10:30:00.000Z',
     updatedAt: '2026-08-03T10:30:00.000Z',
     expiresAt: '2026-08-04T10:30:00.000Z',
+  };
+}
+
+function makeRateLimit() {
+  return {
+    bucketId: 'rate-owner-1-2026-08-03T10:30:00.000Z',
+    windowStartedAt: '2026-08-03T10:30:00.000Z',
+    expiresAt: '2026-08-03T10:31:00.000Z',
+    limit: 3,
   };
 }

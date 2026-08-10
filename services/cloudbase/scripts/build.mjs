@@ -1,4 +1,4 @@
-import { copyFile, mkdir, rm } from 'node:fs/promises';
+import { copyFile, mkdir, rm, stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
@@ -12,7 +12,11 @@ const functions = [
   'update-assessment',
   'list-assessments',
   'complete-assessment',
+  'get-user-settings',
+  'update-user-settings',
+  'create-report',
   'generation-worker',
+  'retention-cleanup',
 ];
 
 await rm(outputRoot, { recursive: true, force: true });
@@ -33,6 +37,20 @@ for (const functionName of functions) {
     logLevel: 'warning',
   });
   await copyFile(join(sourceDirectory, 'package.json'), join(outputDirectory, 'package.json'));
+  const configPath = join(sourceDirectory, 'config.json');
+  if (await exists(configPath)) {
+    await copyFile(configPath, join(outputDirectory, 'config.json'));
+  }
 }
 
 await copyFile(join(serviceRoot, 'deploy', 'cloudbaserc.json'), join(outputRoot, 'cloudbaserc.json'));
+
+async function exists(path) {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if (error?.code === 'ENOENT') return false;
+    throw error;
+  }
+}

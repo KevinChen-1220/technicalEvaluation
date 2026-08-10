@@ -1,6 +1,7 @@
 import { readTrustedOpenId } from '../trustedContext';
 import {
   InvalidContractInputError,
+  CURRENT_PRIVACY_POLICY_VERSION,
   createGenerationJob as createGenerationJobRecord,
   sanitizeGenerationRequest,
   type GenerationJob,
@@ -8,6 +9,8 @@ import {
   type GenerationRequest,
 } from '../../shared/contracts';
 import { GenerationServiceError, type SafeGenerationErrorCode } from './errors';
+import { ownerCorrelationHash, type OperationalLogger } from '../operations/logger';
+import { type TextModerationPort } from '../moderation/ports';
 
 export type GenerationJobRepository = {
   findIdempotent(ownerOpenId: string, clientRequestId: string): Promise<GenerationJob | null>;
@@ -19,7 +22,13 @@ export type GenerationClock = { now(): Date };
 export type GenerationJobIdSource = {
   jobId(ownerOpenId: string, clientRequestId?: string): string;
   quotaCounterId(ownerOpenId: string, utcDay: string): string;
+  rateLimitBucketId(ownerOpenId: string, windowStartedAt: string): string;
 };
+
+export const shortWindowRateLimit = {
+  windowMs: 60 * 1000,
+  limit: 3,
+} as const;
 
 export type DailyGenerationQuota = {
   reserveJob(input: {
@@ -28,9 +37,16 @@ export type DailyGenerationQuota = {
     ownerOpenId: string;
     utcDay: string;
     now: string;
+    rateLimit: {
+      bucketId: string;
+      windowStartedAt: string;
+      expiresAt: string;
+      limit: number;
+    };
   }): Promise<
     | { type: 'created' | 'existing'; job: GenerationJob }
     | { type: 'quota_exceeded' }
+    | { type: 'rate_limited' }
   >;
 };
 
@@ -39,6 +55,11 @@ export type GenerationJobServiceDependencies = {
   clock: GenerationClock;
   ids: GenerationJobIdSource;
   quota: DailyGenerationQuota;
+  settings: {
+    hasCurrentPrivacyConsent(ownerOpenId: string, version: string): Promise<boolean>;
+  };
+  inputModeration: TextModerationPort;
+  logger: OperationalLogger;
 };
 
 export type CreateGenerationJobResponse = {
@@ -75,8 +96,37 @@ export async function createGenerationJob(
     }
   }
 
+  const hasConsent = await dependencies.settings.hasCurrentPrivacyConsent(
+    ownerOpenId,
+    CURRENT_PRIVACY_POLICY_VERSION,
+  );
+  if (!hasConsent) {
+    dependencies.logger.log({
+      eventName: 'generation_privacy_consent_required',
+      ownerHash: ownerCorrelationHash(ownerOpenId),
+      safeCode: 'PRIVACY_CONSENT_REQUIRED',
+    });
+    throw new GenerationServiceError('PRIVACY_CONSENT_REQUIRED', false);
+  }
+
+  const moderation = await dependencies.inputModeration.checkText({
+    ownerOpenId,
+    content: moderationContent(parsed.request),
+    scene: 'generation_input',
+    title: 'SkillScope generation input',
+  });
+  if (!moderation.allowed) {
+    dependencies.logger.log({
+      eventName: 'generation_input_blocked',
+      ownerHash: ownerCorrelationHash(ownerOpenId),
+      safeCode: 'CONTENT_BLOCKED',
+    });
+    throw new GenerationServiceError('CONTENT_BLOCKED', false);
+  }
+
   const current = dependencies.clock.now();
   const utcDay = current.toISOString().slice(0, 10);
+  const rateWindow = rateWindowFor(current);
   const job = createGenerationJobRecord({
     id: dependencies.ids.jobId(ownerOpenId, parsed.clientRequestId),
     request: parsed.request,
@@ -89,9 +139,28 @@ export async function createGenerationJob(
     ownerOpenId,
     utcDay,
     now: current.toISOString(),
+    rateLimit: {
+      bucketId: dependencies.ids.rateLimitBucketId(ownerOpenId, rateWindow.windowStartedAt),
+      windowStartedAt: rateWindow.windowStartedAt,
+      expiresAt: rateWindow.expiresAt,
+      limit: shortWindowRateLimit.limit,
+    },
   });
   if (reservation.type === 'quota_exceeded') {
+    dependencies.logger.log({
+      eventName: 'generation_quota_exhausted',
+      ownerHash: ownerCorrelationHash(ownerOpenId),
+      safeCode: 'QUOTA_EXCEEDED',
+    });
     throw new GenerationServiceError('QUOTA_EXCEEDED', false);
+  }
+  if (reservation.type === 'rate_limited') {
+    dependencies.logger.log({
+      eventName: 'generation_rate_limited',
+      ownerHash: ownerCorrelationHash(ownerOpenId),
+      safeCode: 'RATE_LIMITED',
+    });
+    throw new GenerationServiceError('RATE_LIMITED', false);
   }
   return { jobId: reservation.job._id, status: reservation.job.status };
 }
@@ -175,11 +244,26 @@ function requireTrustedOwner(context: unknown): string {
 
 function isSafeErrorCode(value: unknown): value is SafeGenerationErrorCode {
   return value === 'INVALID_REQUEST'
+    || value === 'PRIVACY_CONSENT_REQUIRED'
+    || value === 'CONTENT_BLOCKED'
+    || value === 'RATE_LIMITED'
     || value === 'QUOTA_EXCEEDED'
     || value === 'PROVIDER_ERROR'
     || value === 'INVALID_MODEL_RESPONSE'
     || value === 'CONFIGURATION_ERROR'
     || value === 'INTERNAL_ERROR';
+}
+
+function moderationContent(request: GenerationRequest): string {
+  return request.notes === undefined ? request.topic : `${request.topic}\n${request.notes}`;
+}
+
+function rateWindowFor(date: Date): { windowStartedAt: string; expiresAt: string } {
+  const startMs = Math.floor(date.getTime() / shortWindowRateLimit.windowMs) * shortWindowRateLimit.windowMs;
+  return {
+    windowStartedAt: new Date(startMs).toISOString(),
+    expiresAt: new Date(startMs + shortWindowRateLimit.windowMs).toISOString(),
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

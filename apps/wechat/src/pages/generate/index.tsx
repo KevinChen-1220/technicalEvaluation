@@ -4,8 +4,13 @@ import { Button, Input, Text, Textarea, View } from '@tarojs/components';
 import { FixedBottomNavigation } from '../../components/FixedBottomNavigation';
 import { GenerationController, type GenerationState } from '../../generation/controller';
 import { cloudClient } from '../../services/cloud';
+import {
+  CURRENT_PRIVACY_POLICY_VERSION,
+  createPrivacyConsentViewModel,
+  type PrivacyConsentRecord,
+} from '../../privacy/consent';
 import { createMiniProgramShellState, normalizeQuestionCount } from '../../shell/viewModel';
-import { assessmentCache } from '../../storage/runtime';
+import { assessmentCache, privacyConsentStore } from '../../storage/runtime';
 
 export default function GeneratePage() {
   const shell = createMiniProgramShellState();
@@ -13,6 +18,8 @@ export default function GeneratePage() {
   const [notes, setNotes] = useState('');
   const [questionCount, setQuestionCount] = useState<50 | 100>(50);
   const [generation, setGeneration] = useState<GenerationState>({ status: 'idle', progress: 0 });
+  const [privacyConsent, setPrivacyConsent] = useState<PrivacyConsentRecord | undefined>(() => privacyConsentStore.get());
+  const [acceptingPrivacy, setAcceptingPrivacy] = useState(false);
   const controllerRef = useRef<GenerationController>();
 
   if (controllerRef.current === undefined) {
@@ -34,10 +41,55 @@ export default function GeneratePage() {
   }
 
   useEffect(() => () => controllerRef.current?.cancel(), []);
+  useEffect(() => {
+    let mounted = true;
+    async function refreshConsent(): Promise<void> {
+      try {
+        const result = await cloudClient.getUserSettings({});
+        if (result.type === 'found' && result.settings.hasCurrentPrivacyConsent) {
+          const record = {
+            privacyPolicyVersion: result.settings.privacyPolicyVersion,
+            privacyConsentAt: result.settings.privacyConsentAt,
+          };
+          privacyConsentStore.save(record);
+          if (mounted) setPrivacyConsent(record);
+        }
+      } catch {
+        // Local gate remains in place when settings cannot be refreshed.
+      }
+    }
+    void refreshConsent();
+    return () => { mounted = false; };
+  }, []);
 
   const active = generation.status === 'creating' || generation.status === 'polling';
+  const privacyGate = createPrivacyConsentViewModel(privacyConsent);
+
+  async function acceptPrivacy(): Promise<void> {
+    setAcceptingPrivacy(true);
+    try {
+      const settings = await cloudClient.acceptPrivacyPolicy({
+        privacyPolicyVersion: CURRENT_PRIVACY_POLICY_VERSION,
+      });
+      const record = {
+        privacyPolicyVersion: settings.privacyPolicyVersion,
+        privacyConsentAt: settings.privacyConsentAt,
+      };
+      privacyConsentStore.save(record);
+      setPrivacyConsent(record);
+      await Taro.showToast({ title: '已记录隐私授权', icon: 'success' });
+    } catch {
+      await Taro.showToast({ title: '暂时无法记录授权', icon: 'none' });
+    } finally {
+      setAcceptingPrivacy(false);
+    }
+  }
 
   function submit(): void {
+    if (privacyGate.requiresConsentForGeneration) {
+      void Taro.showToast({ title: '请先同意隐私政策', icon: 'none' });
+      return;
+    }
     if (topic.trim().length === 0) {
       void Taro.showToast({ title: '请输入测评主题', icon: 'none' });
       return;
@@ -55,6 +107,19 @@ export default function GeneratePage() {
         <Text className='page-title'>{shell.generate.title}</Text>
         <Text className='page-subtitle'>填写主题与重点，生成一份技能测评。</Text>
       </View>
+
+      {privacyGate.requiresConsentForGeneration ? (
+        <View className='privacy-gate'>
+          <Text className='privacy-gate__title'>{privacyGate.title}</Text>
+          <Text className='privacy-gate__text'>生成测评前需要确认当前隐私政策版本。历史记录可继续本地查看。</Text>
+          <View className='privacy-gate__actions'>
+            <Button className='inline-action' onClick={() => Taro.navigateTo({ url: '/pages/privacy/index' })}>{privacyGate.reviewLabel}</Button>
+            <Button className='inline-action inline-action--primary' disabled={acceptingPrivacy} onClick={() => { void acceptPrivacy(); }}>
+              {acceptingPrivacy ? '记录中...' : privacyGate.acceptLabel}
+            </Button>
+          </View>
+        </View>
+      ) : null}
 
       <View className='form-section'>
         <Text className='field-label'>{shell.generate.topicLabel}</Text>
@@ -74,7 +139,7 @@ export default function GeneratePage() {
           className='text-area'
           value={notes}
           placeholder={shell.generate.notesPlaceholder}
-          maxlength={500}
+          maxlength={2000}
           adjustPosition
           cursorSpacing={28}
           onInput={(event) => setNotes(event.detail.value)}
@@ -100,7 +165,7 @@ export default function GeneratePage() {
         </View>
       </View>
 
-      <Button className='primary-action' type='primary' disabled={active} onClick={submit}>
+      <Button className='primary-action' type='primary' disabled={active || privacyGate.requiresConsentForGeneration} onClick={submit}>
         {active ? (
           <View className='button-loading' aria-label='正在生成'>
             <Text>生成中 {generation.progress}%</Text>
