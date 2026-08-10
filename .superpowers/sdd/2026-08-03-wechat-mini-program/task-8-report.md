@@ -25,15 +25,17 @@ DONE locally, with external WeChat account/AppID/login/device blockers recorded.
 - RED (security follow-up): formal `--check-only` exited successfully, the preflight script was absent, tracked extensionless PEM content and `id_*` names passed scanning, staging/unknown moderation bypass returned allow, and operations docs did not state the external availability boundary.
 - GREEN (security follow-up): formal check-only rejection, isolated preflight mode, all-tracked-file binary-safe scanning, exact development-only bypass, placeholder/provider gates, and documentation contracts pass in the focused CloudBase suite.
 - RED/GREEN (security self-review): `--tracked-file` initially replaced the real Git file list; a failing bypass test was added, then the scanner changed to merge injected entries with `git ls-files`. The final formal same-run was repeated after this fix.
+- RED (formal downgrade follow-up): the complete formal npm command accepted `--file ... --mode development` and returned disclosure-only success; `--preflight-only` could also return before the full release pipeline, while unknown arguments were ignored.
+- GREEN (formal downgrade follow-up): disclosure and formal preflight moved to independent CLIs backed by a shared validation module; the formal runner now rejects downgrade, duplicate, missing-value, and unknown arguments before any preflight or build. Both argument arrangements are covered through the complete npm command.
 
 ## Verification
 
 - `npm run verify:wechat-release:formal -- --check-only`: failed immediately as required; formal cannot report release success through a static-only path.
 - `npm run verify:wechat-release:formal-preflight -- --disclosure-file <temporary-valid-fixture>`: passed and explicitly reported that full release verification was not run.
 - First formal same-run attempt was correctly stopped by the source scanner because the process URL/provider values duplicated tracked test literals; no scanner exception was added. Subsequent runs used process-only verification values and passed from clean artifacts, including a final rerun after scanner self-review; the fixture was deleted immediately afterward.
-- Root tests: 34 suites / 230 tests.
+- Root tests: 34 suites / 231 tests.
 - WeChat tests: 15 suites / 77 tests.
-- CloudBase tests: 17 suites / 138 tests.
+- CloudBase tests: 17 suites / 139 tests.
 - Typechecks: root, WeChat, and CloudBase passed.
 - Builds: CloudBase build, Expo web export, and production `build:weapp` passed.
 - Web/native checks: `verify:web` and `verify:assets` passed.
@@ -42,6 +44,7 @@ DONE locally, with external WeChat account/AppID/login/device blockers recorded.
 - Release disclosure: repository production template failed in 1.3 seconds before builds as expected; a temporary valid production disclosure passed clean formal build plus same-run artifact comparison, then was deleted.
 - Moderation: unsafe bypass is allowed only when `SKILLSCOPE_ENV=development` and `SKILLSCOPE_ALLOW_UNSAFE_MODERATION=true` match exactly; unset, typo, staging, test, production, and unknown environments fail closed.
 - Formal moderation preflight: requires production environment plus non-placeholder `CONTENT_SAFETY_URL`, `CONTENT_SAFETY_API_KEY`, and `CONTENT_SAFETY_PROVIDER`; URL must remain credential-free HTTPS. Provider availability still requires external hosted smoke.
+- Formal argument boundary: complete npm invocations with `--file ... --mode development`, reversed ordering, `--dist`, `--preflight-only`, `--check-only`, and unknown arguments all failed before preflight/build. The final same-run used only `--disclosure-file` and delegated artifact comparison to `verify-wechat-disclosure.mjs`.
 - miniprogram-ci: dry-run passed without credentials and redacted private key paths.
 - npm audit: `npm audit --omit=optional --json` returned 125 advisories (low 1, moderate 44, high 36, critical 44); disposition is documented in `docs/wechat/release-audit.md`. `npm audit fix --package-lock-only --dry-run` exceeded 180 seconds and was terminated without applying changes.
 

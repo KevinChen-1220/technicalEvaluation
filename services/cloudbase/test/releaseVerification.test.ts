@@ -64,7 +64,8 @@ describe('WeChat release verification assets', () => {
 
     expect(rootPackage.scripts['verify:wechat-release']).toBe('node scripts/verify-wechat-release.mjs --profile development');
     expect(rootPackage.scripts['verify:wechat-release:formal']).toBe('node scripts/verify-wechat-release.mjs --profile formal');
-    expect(rootPackage.scripts['verify:wechat-release:formal-preflight']).toBe('node scripts/verify-wechat-release.mjs --profile formal --preflight-only');
+    expect(rootPackage.scripts['verify:wechat-disclosure:dev']).toBe('node scripts/verify-wechat-disclosure.mjs --file docs/wechat/release-disclosure.development.json --mode development');
+    expect(rootPackage.scripts['verify:wechat-release:formal-preflight']).toBe('node scripts/verify-wechat-formal-preflight.mjs');
     expect(rootPackage.scripts['wechat:ci:dry-run']).toContain('scripts/wechat-miniprogram-ci.mjs --mode dry-run');
     expect(rootPackage.scripts['wechat:ci:preview']).toContain('scripts/wechat-miniprogram-ci.mjs --mode preview');
     expect(rootPackage.scripts['wechat:ci:upload']).toContain('scripts/wechat-miniprogram-ci.mjs --mode upload');
@@ -110,7 +111,7 @@ describe('WeChat release verification assets', () => {
 
   test('passes development disclosure but fails formal production placeholders', () => {
     execFileSync(process.execPath, [
-      join(repoRoot, 'scripts', 'verify-wechat-release.mjs'),
+      join(repoRoot, 'scripts', 'verify-wechat-disclosure.mjs'),
       '--file',
       join(repoRoot, 'docs/wechat/release-disclosure.development.json'),
       '--mode',
@@ -118,7 +119,7 @@ describe('WeChat release verification assets', () => {
     ], { cwd: repoRoot });
 
     const formal = spawnSync(process.execPath, [
-      join(repoRoot, 'scripts', 'verify-wechat-release.mjs'),
+      join(repoRoot, 'scripts', 'verify-wechat-disclosure.mjs'),
       '--file',
       join(repoRoot, 'docs/wechat/release-disclosure.production.template.json'),
       '--mode',
@@ -149,7 +150,7 @@ describe('WeChat release verification assets', () => {
       writeFileSync(join(dist, 'settings.js'), JSON.stringify(disclosure));
 
       execFileSync(process.execPath, [
-        join(repoRoot, 'scripts', 'verify-wechat-release.mjs'),
+        join(repoRoot, 'scripts', 'verify-wechat-disclosure.mjs'),
         '--file', file,
         '--mode', 'production',
         '--dist', dist,
@@ -157,7 +158,7 @@ describe('WeChat release verification assets', () => {
 
       writeFileSync(join(dist, 'settings.js'), `${JSON.stringify(disclosure)}\n待配置`);
       const packagedPlaceholder = spawnSync(process.execPath, [
-        join(repoRoot, 'scripts', 'verify-wechat-release.mjs'),
+        join(repoRoot, 'scripts', 'verify-wechat-disclosure.mjs'),
         '--file', file,
         '--mode', 'production',
         '--dist', dist,
@@ -190,7 +191,7 @@ describe('WeChat release verification assets', () => {
       writeFileSync(join(dist, 'settings.js'), JSON.stringify(disclosure));
 
       const formal = spawnSync(process.execPath, [
-        join(repoRoot, 'scripts', 'verify-wechat-release.mjs'),
+        join(repoRoot, 'scripts', 'verify-wechat-disclosure.mjs'),
         '--file', file,
         '--mode', 'production',
         '--dist', dist,
@@ -203,7 +204,48 @@ describe('WeChat release verification assets', () => {
     }
   });
 
-  test('formal candidate rejects check-only and keeps preflight as a separate non-release mode', () => {
+  test('formal runner rejects every downgrade or unknown argument regardless of arrangement', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'skill-scope-formal-preflight-'));
+    try {
+      const file = join(directory, 'production.json');
+      writeFileSync(file, JSON.stringify({
+        environment: 'production', productVersion: '1.0.0', privacyPolicyVersion: '2026-08-10',
+        serviceOperator: 'Skill Scope Technology Co., Ltd.', modelDisclosure: 'Production Model 1',
+        generativeAiRegistration: 'Registration 2026-001', miniProgramFiling: 'ICP 20260001',
+        reportRoute: '/pages/report/index', privacyRoute: '/pages/privacy/index',
+      }));
+      const environment = {
+        ...process.env,
+        TARO_APP_CLOUDBASE_ENV_ID: 'prod-cloudbase-1',
+        SKILLSCOPE_ENV: 'production',
+        CONTENT_SAFETY_URL: 'https://moderation.skillscope.invalid/v1/check',
+        CONTENT_SAFETY_API_KEY: 'formal-test-secret',
+        CONTENT_SAFETY_PROVIDER: 'skillscope-moderation',
+        SKILLSCOPE_ALLOW_UNSAFE_MODERATION: 'false',
+      };
+      const downgradeCases = [
+        ['--file', join(repoRoot, 'docs/wechat/release-disclosure.development.json'), '--mode', 'development'],
+        ['--mode', 'development', '--file', join(repoRoot, 'docs/wechat/release-disclosure.development.json')],
+        ['--file', join(repoRoot, 'docs/wechat/release-disclosure.development.json'), '--dist', 'apps/wechat/dist', '--mode', 'development'],
+        ['--preflight-only', '--disclosure-file', file],
+        ['--disclosure-file', file, '--preflight-only'],
+        ['--mystery', 'value', '--check-only'],
+      ];
+
+      for (const extraArgs of downgradeCases) {
+        const result = spawnNpm([
+          'run', 'verify:wechat-release:formal', '--', ...extraArgs,
+        ], { cwd: repoRoot, env: environment });
+        expect(result.status).not.toBe(0);
+        expect(`${result.stdout}${result.stderr}`).toMatch(/formal.*(?:unsupported|not allowed).*(?:--file|--mode|--dist|--preflight-only|--mystery)/i);
+        expect(`${result.stdout}${result.stderr}`).not.toContain('release candidate verification passed for formal');
+      }
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test('formal preflight is an independent script with placeholder gates', () => {
     const directory = mkdtempSync(join(tmpdir(), 'skill-scope-formal-preflight-'));
     try {
       const file = join(directory, 'production.json');
@@ -214,24 +256,10 @@ describe('WeChat release verification assets', () => {
         reportRoute: '/pages/report/index', privacyRoute: '/pages/privacy/index',
       }));
       const baseArgs = [
-        join(repoRoot, 'scripts', 'verify-wechat-release.mjs'), '--profile', 'formal',
+        join(repoRoot, 'scripts', 'verify-wechat-formal-preflight.mjs'),
         '--disclosure-file', file,
       ];
-      const formalCheckOnly = spawnSync(process.execPath, [...baseArgs, '--check-only'], {
-        cwd: repoRoot, encoding: 'utf8',
-        env: {
-          ...process.env,
-          TARO_APP_CLOUDBASE_ENV_ID: 'prod-cloudbase-1',
-          SKILLSCOPE_ENV: 'production',
-          CONTENT_SAFETY_URL: 'https://moderation.skillscope.invalid/v1/check',
-          CONTENT_SAFETY_API_KEY: 'formal-test-secret',
-          CONTENT_SAFETY_PROVIDER: 'skillscope-moderation',
-        },
-      });
-      expect(formalCheckOnly.status).not.toBe(0);
-      expect(`${formalCheckOnly.stdout}${formalCheckOnly.stderr}`).toMatch(/formal.*check-only.*not allowed/i);
-
-      const missingSafety = spawnSync(process.execPath, [...baseArgs, '--preflight-only'], {
+      const missingSafety = spawnSync(process.execPath, baseArgs, {
         cwd: repoRoot, encoding: 'utf8',
         env: {
           ...process.env,
@@ -251,7 +279,7 @@ describe('WeChat release verification assets', () => {
         ['CONTENT_SAFETY_API_KEY', 'changeme', /CONTENT_SAFETY_API_KEY.*placeholder/i],
         ['CONTENT_SAFETY_PROVIDER', 'TBD', /CONTENT_SAFETY_PROVIDER.*placeholder/i],
       ] as const) {
-        const placeholder = spawnSync(process.execPath, [...baseArgs, '--preflight-only'], {
+        const placeholder = spawnSync(process.execPath, baseArgs, {
           cwd: repoRoot, encoding: 'utf8',
           env: {
             ...process.env,
@@ -373,3 +401,13 @@ describe('WeChat release verification assets', () => {
     }
   });
 });
+
+function spawnNpm(
+  args: string[],
+  options: { cwd: string; env: NodeJS.ProcessEnv },
+): ReturnType<typeof spawnSync> {
+  if (process.platform === 'win32') {
+    return spawnSync('cmd.exe', ['/d', '/c', 'npm', ...args], { ...options, encoding: 'utf8' });
+  }
+  return spawnSync('npm', args, { ...options, encoding: 'utf8' });
+}

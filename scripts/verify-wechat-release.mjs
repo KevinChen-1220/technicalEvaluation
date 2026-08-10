@@ -1,37 +1,24 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, extname, join, relative, resolve } from 'node:path';
+import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { verifyFormalPreflight } from './wechat-release-validation.mjs';
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
-const args = parseArgs(process.argv.slice(2));
+const args = parseReleaseArgs(process.argv.slice(2));
+verifyReleaseCandidate({
+  profile: args.profile ?? 'development',
+  checkOnly: args['check-only'] === true,
+  disclosureFile: args['disclosure-file'],
+});
 
-if (args.file) {
-  verifyDisclosure({
-    file: resolve(repoRoot, args.file),
-    mode: args.mode ?? 'development',
-    dist: args.dist === undefined ? undefined : resolve(repoRoot, args.dist),
-  });
-  process.stdout.write(`release disclosure ${args.mode ?? 'development'} verification passed\n`);
-} else {
-  verifyReleaseCandidate({
-    profile: args.profile ?? 'development',
-    checkOnly: args['check-only'] === true,
-    preflightOnly: args['preflight-only'] === true,
-    disclosureFile: args['disclosure-file'],
-  });
-}
-
-function verifyReleaseCandidate({ profile, checkOnly, preflightOnly, disclosureFile: selectedDisclosureFile }) {
+function verifyReleaseCandidate({ profile, checkOnly, disclosureFile: selectedDisclosureFile }) {
   if (!['development', 'trial', 'formal'].includes(profile)) {
     fail([`Unsupported release profile: ${profile}`]);
   }
   if (profile === 'formal' && checkOnly) {
     fail(['formal profile check-only is not allowed; run the full formal verifier or formal preflight command']);
-  }
-  if (preflightOnly && profile !== 'formal') {
-    fail(['preflight-only is only supported by the formal profile']);
   }
 
   const disclosureFile = selectedDisclosureFile ?? (profile === 'formal'
@@ -44,14 +31,8 @@ function verifyReleaseCandidate({ profile, checkOnly, preflightOnly, disclosureF
   evidence.push(`static contracts: passed for ${profile}`);
 
   if (profile === 'formal') {
-    verifyFormalPreflight(disclosureFile);
+    verifyFormalPreflight({ repoRoot, disclosureFile });
     evidence.push('formal preflight: passed');
-  }
-
-  if (preflightOnly) {
-    process.stdout.write('formal release preflight passed; full release verification was not run\n');
-    process.stdout.write('external blockers recorded\n');
-    return;
   }
 
   if (checkOnly) {
@@ -98,13 +79,13 @@ function verifyReleaseCandidate({ profile, checkOnly, preflightOnly, disclosureF
   }
 
   const disclosureResult = run(process.execPath, [
-    'scripts/verify-wechat-release.mjs',
+    'scripts/verify-wechat-disclosure.mjs',
     '--file', disclosureFile,
     '--mode', mode,
     ...(mode === 'production' ? ['--dist', 'apps/wechat/dist'] : []),
   ]);
   evidence.push(formatCommandEvidence(process.execPath, [
-    'scripts/verify-wechat-release.mjs',
+    'scripts/verify-wechat-disclosure.mjs',
     '--file', disclosureFile,
     '--mode', mode,
     ...(mode === 'production' ? ['--dist', 'apps/wechat/dist'] : []),
@@ -132,45 +113,6 @@ function verifyReleaseCandidate({ profile, checkOnly, preflightOnly, disclosureF
 
   process.stdout.write(`release candidate verification passed for ${profile}\n`);
   process.stdout.write('external blockers recorded\n');
-}
-
-function verifyDisclosure({ file, mode, dist, requireDist = true }) {
-  if (mode !== 'development' && mode !== 'production') {
-    fail([`Unsupported mode: ${mode}`]);
-  }
-  if (!existsSync(file)) {
-    fail([`${file} does not exist`]);
-  }
-
-  const disclosure = JSON.parse(readFileSync(file, 'utf8'));
-  const required = [
-    'productVersion',
-    'privacyPolicyVersion',
-    'serviceOperator',
-    'modelDisclosure',
-    'generativeAiRegistration',
-    'miniProgramFiling',
-    'reportRoute',
-    'privacyRoute',
-  ];
-  const missing = required.filter((field) => !isNonEmpty(disclosure[field]));
-
-  if (disclosure.environment !== mode) {
-    fail([`release disclosure environment must be ${mode}`]);
-  }
-
-  if (mode === 'production') {
-    const placeholders = required.filter((field) => isPlaceholder(disclosure[field]));
-    if (missing.length > 0 || placeholders.length > 0) {
-      fail([...missing, ...placeholders].map((field) => `${field} is required for production`));
-    }
-    if (requireDist && !dist) fail(['--dist is required for production']);
-    if (dist) verifyBuiltDisclosure(dist, disclosure, required);
-  }
-
-  if (mode === 'development' && missing.length > 0) {
-    fail(missing.map((field) => `${field} is required`));
-  }
 }
 
 function verifyStaticReleaseContracts(profile, options = { inspectDist: true }) {
@@ -283,55 +225,9 @@ function verifyStaticReleaseContracts(profile, options = { inspectDist: true }) 
   if (options.inspectDist) verifyNoFixtureInDistIfPresent();
 }
 
-function verifyFormalPreflight(disclosureFile) {
-  verifyDisclosure({
-    file: resolve(repoRoot, disclosureFile),
-    mode: 'production',
-    requireDist: false,
-  });
-  const missing = [];
-  if (process.env.SKILLSCOPE_ENV !== 'production') missing.push('SKILLSCOPE_ENV must be production');
-  verifyFormalConfigurationValue('CONTENT_SAFETY_URL', process.env.CONTENT_SAFETY_URL, missing);
-  verifyFormalConfigurationValue('CONTENT_SAFETY_API_KEY', process.env.CONTENT_SAFETY_API_KEY, missing);
-  verifyFormalConfigurationValue('CONTENT_SAFETY_PROVIDER', process.env.CONTENT_SAFETY_PROVIDER, missing);
-  if (process.env.SKILLSCOPE_ALLOW_UNSAFE_MODERATION === 'true') {
-    missing.push('SKILLSCOPE_ALLOW_UNSAFE_MODERATION cannot be true for formal release');
-  }
-  if (isNonEmpty(process.env.CONTENT_SAFETY_URL)) {
-    try {
-      const url = new URL(process.env.CONTENT_SAFETY_URL);
-      if (url.protocol !== 'https:' || url.username || url.password) missing.push('CONTENT_SAFETY_URL must be a credential-free HTTPS URL');
-    } catch {
-      missing.push('CONTENT_SAFETY_URL must be a valid HTTPS URL');
-    }
-  }
-  if (missing.length > 0) fail(missing);
-}
-
-function verifyFormalConfigurationValue(name, value, findings) {
-  if (!isNonEmpty(value)) {
-    findings.push(`${name} is required`);
-  } else if (isPlaceholder(value)) {
-    findings.push(`${name} cannot be a placeholder`);
-  }
-}
-
 function cleanReleaseArtifacts() {
   for (const path of ['apps/wechat/dist', 'services/cloudbase/dist']) {
     rmSync(join(repoRoot, path), { recursive: true, force: true });
-  }
-}
-
-function verifyBuiltDisclosure(directory, disclosure, fields) {
-  const packagedText = readableFiles(directory)
-    .map((path) => readFileSync(path, 'utf8'))
-    .join('\n');
-  if (/待配置|\\u5f85\\u914d\\u7f6e/i.test(packagedText)) {
-    fail(['dist contains a release disclosure placeholder']);
-  }
-  const absent = fields.filter((field) => !packagedText.includes(disclosure[field]));
-  if (absent.length > 0) {
-    fail(absent.map((field) => `dist does not contain matching ${field}`));
   }
 }
 
@@ -436,27 +332,39 @@ function formatCommandEvidence(command, commandArgs, result, informational = fal
   ].join('\n');
 }
 
-function parseArgs(values) {
+function parseReleaseArgs(values) {
   const parsed = {};
+  const formalRequested = values.some((value, index) => value === '--profile' && values[index + 1] === 'formal');
+  const valueArguments = new Set(['--profile', '--disclosure-file']);
+  const booleanArguments = new Set(['--check-only']);
+
   for (let index = 0; index < values.length; index += 1) {
     const key = values[index];
-    if (key === '--file' || key === '--mode' || key === '--dist' || key === '--profile' || key === '--disclosure-file') {
-      parsed[key.slice(2)] = values[index + 1];
-      index += 1;
-    } else if (key === '--check-only' || key === '--preflight-only') {
-      parsed[key.slice(2)] = true;
+    if (!valueArguments.has(key) && !booleanArguments.has(key)) {
+      fail([formalRequested
+        ? `formal profile has unsupported argument ${key}`
+        : `Unsupported release argument ${key}`]);
     }
+    const name = key.slice(2);
+    if (parsed[name] !== undefined) {
+      fail([formalRequested
+        ? `formal profile does not allow duplicate argument ${key}`
+        : `Duplicate release argument ${key}`]);
+    }
+    if (booleanArguments.has(key)) {
+      parsed[name] = true;
+      continue;
+    }
+    const value = values[index + 1];
+    if (value === undefined || value.startsWith('--')) {
+      fail([formalRequested
+        ? `formal profile requires a value for ${key}`
+        : `Missing value for release argument ${key}`]);
+    }
+    parsed[name] = value;
+    index += 1;
   }
   return parsed;
-}
-
-function isNonEmpty(value) {
-  return typeof value === 'string' && value.trim().length > 0;
-}
-
-function isPlaceholder(value) {
-  return typeof value !== 'string'
-    || /待配置|\b(?:tbd|todo|example|placeholder|changeme)\b/i.test(value.trim());
 }
 
 function redact(value) {

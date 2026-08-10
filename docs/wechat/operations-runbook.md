@@ -18,7 +18,7 @@ formal preflight 只验证配置形状和部署能力声明，不会向审核 pr
 
 Taro 构建通过 `TARO_APP_RELEASE_DISCLOSURE_FILE` 选择仓库根相对或绝对 JSON。未指定时使用开发披露，设置页显示 `待配置`。production JSON 的必填字段为空或包含 `待配置`、`TBD`、`example`、`placeholder`、`changeme` 时，Taro config 会直接终止构建。
 
-正式构建完成后运行 `node scripts/verify-wechat-release.mjs --file <真实披露.json> --mode production --dist apps/wechat/dist`。验证器会核对包内披露值与 JSON 一致，并拒绝包内残留的 `待配置`。生产披露 JSON 由运营方在发布环境提供，不在仓库模板中伪造。
+正式构建完成后运行 `node scripts/verify-wechat-disclosure.mjs --file <真实披露.json> --mode production --dist apps/wechat/dist`。独立 disclosure 验证器会核对包内披露值与 JSON 一致，并拒绝包内残留的 `待配置`。生产披露 JSON 由运营方在发布环境提供，不在仓库模板中伪造。
 
 ## 发布验证与上传
 
@@ -27,6 +27,8 @@ Taro 构建通过 `TARO_APP_RELEASE_DISCLOSURE_FILE` 选择仓库根相对或绝
 Profile 说明见 `docs/wechat/release-profiles.md`。development/trial 可以显式开启 `TARO_APP_RELEASE_FIXTURE_MODE=enabled` 做无模型密钥的 DevTools fixture 烟测；formal profile 禁止 fixture，且要求真实生产 CloudBase env id 和生产 disclosure。
 
 `npm run verify:wechat-release:formal-preflight -- --disclosure-file <真实披露.json>` 只做 formal 配置预检，不能作为发布候选验证成功。正式候选必须执行完整的 `npm run verify:wechat-release:formal -- --disclosure-file <真实披露.json>`。
+
+formal release runner 只接受脚本固定的 `--profile formal` 和一个可选的 `--disclosure-file <真实披露.json>`。附加 `--file`、`--mode`、`--dist`、`--preflight-only`、`--check-only`、重复参数或任何未知参数都会在预检和构建前失败；disclosure-only 与 preflight-only 只能通过各自独立脚本执行，不能让 formal release runner 提前成功返回。
 
 微信 CI 上传脚本：
 
