@@ -11,10 +11,16 @@ describe('WeChat release verification assets', () => {
       'docs/wechat/privacy-policy.zh-CN.md',
       'docs/wechat/privacy-data-map.md',
       'docs/wechat/operations-runbook.md',
+      'docs/wechat/release-profiles.md',
+      'docs/wechat/release-audit.md',
+      'docs/wechat/release-evidence/2026-08-10-local-release-candidate.md',
+      'docs/wechat/release-evidence/external-smoke-checklist.md',
+      'docs/wechat/release-evidence/screenshot-naming.md',
       'docs/wechat/release-disclosure.development.json',
       'docs/wechat/release-disclosure.production.template.json',
       'apps/wechat/cloudbase.env.development.example',
       'apps/wechat/cloudbase.env.production.example',
+      'apps/wechat/project.private.config.example.json',
       'services/cloudbase/env.development.example',
       'services/cloudbase/env.production.example',
     ];
@@ -24,6 +30,56 @@ describe('WeChat release verification assets', () => {
       expect(existsSync(fullPath)).toBe(true);
       expect(readFileSync(fullPath, 'utf8')).toMatch(/SkillScope|技能测评|隐私|CloudBase|待配置/);
     }
+  });
+
+  test('exposes one release verification command and keeps private WeChat config out of git', () => {
+    const rootPackage = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
+    const gitignore = readFileSync(join(repoRoot, '.gitignore'), 'utf8');
+    const publicProjectConfig = JSON.parse(readFileSync(join(repoRoot, 'apps/wechat/project.config.json'), 'utf8'));
+    const privateTemplate = JSON.parse(readFileSync(join(repoRoot, 'apps/wechat/project.private.config.example.json'), 'utf8'));
+
+    expect(rootPackage.scripts['verify:wechat-release']).toBe('node scripts/verify-wechat-release.mjs --profile development');
+    expect(rootPackage.scripts['wechat:ci:dry-run']).toContain('scripts/wechat-miniprogram-ci.mjs --mode dry-run');
+    expect(rootPackage.scripts['wechat:ci:preview']).toContain('scripts/wechat-miniprogram-ci.mjs --mode preview');
+    expect(rootPackage.scripts['wechat:ci:upload']).toContain('scripts/wechat-miniprogram-ci.mjs --mode upload');
+    expect(publicProjectConfig.appid).toBe('touristappid');
+    expect(privateTemplate.appid).toBe('wx-your-mini-program-appid');
+    expect(gitignore).toMatch(/apps\/wechat\/project\.private\.config\.json/);
+    expect(gitignore).toMatch(/apps\/wechat\/private\.\*\.key/);
+  });
+
+  test('miniprogram-ci dry run works without credentials and redacts private key paths', () => {
+    const dryRun = spawnSync(process.execPath, [
+      join(repoRoot, 'scripts', 'wechat-miniprogram-ci.mjs'),
+      '--mode', 'dry-run',
+      '--project-path', join(repoRoot, 'apps/wechat'),
+      '--version', '0.0.0-task8',
+      '--description', 'Task 8 dry run',
+    ], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        WECHAT_PRIVATE_KEY_PATH: join(repoRoot, 'apps/wechat/private.secret.key'),
+      },
+    });
+
+    expect(dryRun.status).toBe(0);
+    expect(dryRun.stdout).toContain('miniprogram-ci dry run passed');
+    expect(dryRun.stdout).not.toContain('private.secret.key');
+  });
+
+  test('release candidate verifier can run static checks without external credentials', () => {
+    const check = spawnSync(process.execPath, [
+      join(repoRoot, 'scripts', 'verify-wechat-release.mjs'),
+      '--profile',
+      'development',
+      '--check-only',
+    ], { cwd: repoRoot, encoding: 'utf8' });
+
+    expect(check.status).toBe(0);
+    expect(check.stdout).toContain('release candidate static verification passed');
+    expect(check.stdout).toContain('external blockers recorded');
   });
 
   test('passes development disclosure but fails formal production placeholders', () => {

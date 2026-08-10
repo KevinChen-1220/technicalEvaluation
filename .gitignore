@@ -13,6 +13,9 @@ expo-*.log
 .superpowers/sdd/
 .worktrees/
 apps/wechat/.swc/
+apps/wechat/project.private.config.json
+apps/wechat/private.*.key
+apps/wechat/keys/
 .env
 .env.*
 !.env.example

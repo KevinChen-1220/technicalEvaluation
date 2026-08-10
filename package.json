@@ -27,8 +27,13 @@
     "build:cloudbase": "npm --workspace @dynamic-assessment/cloudbase run build",
     "scan:secrets:source": "node scripts/scan-secrets.mjs --target source package.json packages apps services scripts docs",
     "scan:secrets:wechat-dist": "node scripts/scan-secrets.mjs --target dist apps/wechat/dist",
+    "verify:wechat-release": "node scripts/verify-wechat-release.mjs --profile development",
     "verify:wechat-release:dev": "node scripts/verify-wechat-release.mjs --file docs/wechat/release-disclosure.development.json --mode development",
-    "verify:wechat-release:formal": "node scripts/verify-wechat-release.mjs --file docs/wechat/release-disclosure.production.template.json --mode production --dist apps/wechat/dist"
+    "verify:wechat-release:formal": "node scripts/verify-wechat-release.mjs --file docs/wechat/release-disclosure.production.template.json --mode production --dist apps/wechat/dist",
+    "wechat:ci:dry-run": "node scripts/wechat-miniprogram-ci.mjs --mode dry-run",
+    "wechat:ci:preview": "node scripts/wechat-miniprogram-ci.mjs --mode preview",
+    "wechat:ci:upload": "node scripts/wechat-miniprogram-ci.mjs --mode upload",
+    "wechat:devtools:smoke": "node scripts/wechat-devtools-smoke.mjs"
   },
   "dependencies": {
     "@expo/metro-runtime": "~5.0.5",
@@ -48,6 +53,7 @@
     "@types/jest": "^29.5.14",
     "@types/react": "~19.0.10",
     "jest": "^29.7.0",
+    "miniprogram-ci": "^2.1.31",
     "pngjs": "^7.0.0",
     "ts-jest": "^29.4.0",
     "typescript": "~5.8.3"

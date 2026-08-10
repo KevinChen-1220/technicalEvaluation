@@ -6,6 +6,8 @@ import type {
 } from '../storage/assessmentCache';
 import { cloudRuntime } from './cloudRuntime';
 
+declare const require: (moduleName: string) => { createReleaseFixtureCloudClient: () => ReturnType<typeof createCloudClient> };
+
 export type CreateGenerationInput = {
   topic: string;
   notes?: string;
@@ -229,7 +231,14 @@ export function createCloudClient(
   };
 }
 
-export const cloudClient = createCloudClient();
+export const cloudClient = createRuntimeCloudClient();
+
+export function createRuntimeCloudClient(): ReturnType<typeof createCloudClient> {
+  if (process.env.TARO_APP_RELEASE_FIXTURE_MODE === 'enabled') {
+    return require('../fixtures/releaseFixtureClient').createReleaseFixtureCloudClient();
+  }
+  return createCloudClient();
+}
 
 function isSafeErrorCode(value: string): boolean {
   return value === 'INVALID_REQUEST'

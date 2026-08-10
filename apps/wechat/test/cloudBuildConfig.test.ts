@@ -75,6 +75,76 @@ describe('WeChat CloudBase build configuration', () => {
       }
     },
   );
+
+  test('allows deterministic release fixtures only outside the formal profile', () => {
+    const previousMode = process.env.TARO_APP_RELEASE_FIXTURE_MODE;
+    const previousProfile = process.env.TARO_APP_RELEASE_PROFILE;
+    try {
+      process.env.TARO_APP_RELEASE_FIXTURE_MODE = 'enabled';
+      process.env.TARO_APP_RELEASE_PROFILE = 'development';
+      jest.resetModules();
+
+      const config = require('../config').default as { env?: Record<string, string> };
+
+      expect(config.env?.TARO_APP_RELEASE_FIXTURE_MODE).toBe('"enabled"');
+    } finally {
+      restoreEnv('TARO_APP_RELEASE_FIXTURE_MODE', previousMode);
+      restoreEnv('TARO_APP_RELEASE_PROFILE', previousProfile);
+      jest.resetModules();
+    }
+  });
+
+  test('rejects deterministic release fixtures in the formal profile', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'skill-scope-disclosure-'));
+    const previousMode = process.env.TARO_APP_RELEASE_FIXTURE_MODE;
+    const previousProfile = process.env.TARO_APP_RELEASE_PROFILE;
+    const previousDisclosure = process.env.TARO_APP_RELEASE_DISCLOSURE_FILE;
+    const previousEnv = process.env.TARO_APP_CLOUDBASE_ENV_ID;
+    try {
+      const file = join(directory, 'production.json');
+      writeFileSync(file, JSON.stringify(completeProductionDisclosure()));
+      process.env.TARO_APP_RELEASE_DISCLOSURE_FILE = file;
+      process.env.TARO_APP_RELEASE_FIXTURE_MODE = 'enabled';
+      process.env.TARO_APP_RELEASE_PROFILE = 'formal';
+      process.env.TARO_APP_CLOUDBASE_ENV_ID = 'prod-cloudbase-release-1';
+      jest.resetModules();
+
+      expect(() => require('../config')).toThrow(/fixture/i);
+    } finally {
+      restoreEnv('TARO_APP_RELEASE_FIXTURE_MODE', previousMode);
+      restoreEnv('TARO_APP_RELEASE_PROFILE', previousProfile);
+      restoreEnv('TARO_APP_RELEASE_DISCLOSURE_FILE', previousDisclosure);
+      restoreEnv('TARO_APP_CLOUDBASE_ENV_ID', previousEnv);
+      rmSync(directory, { recursive: true, force: true });
+      jest.resetModules();
+    }
+  });
+
+  test('requires a production CloudBase environment for the formal profile', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'skill-scope-disclosure-'));
+    const previousMode = process.env.TARO_APP_RELEASE_FIXTURE_MODE;
+    const previousProfile = process.env.TARO_APP_RELEASE_PROFILE;
+    const previousDisclosure = process.env.TARO_APP_RELEASE_DISCLOSURE_FILE;
+    const previousEnv = process.env.TARO_APP_CLOUDBASE_ENV_ID;
+    try {
+      const file = join(directory, 'production.json');
+      writeFileSync(file, JSON.stringify(completeProductionDisclosure()));
+      process.env.TARO_APP_RELEASE_DISCLOSURE_FILE = file;
+      process.env.TARO_APP_RELEASE_FIXTURE_MODE = 'disabled';
+      process.env.TARO_APP_RELEASE_PROFILE = 'formal';
+      delete process.env.TARO_APP_CLOUDBASE_ENV_ID;
+      jest.resetModules();
+
+      expect(() => require('../config')).toThrow(/CloudBase/);
+    } finally {
+      restoreEnv('TARO_APP_RELEASE_FIXTURE_MODE', previousMode);
+      restoreEnv('TARO_APP_RELEASE_PROFILE', previousProfile);
+      restoreEnv('TARO_APP_RELEASE_DISCLOSURE_FILE', previousDisclosure);
+      restoreEnv('TARO_APP_CLOUDBASE_ENV_ID', previousEnv);
+      rmSync(directory, { recursive: true, force: true });
+      jest.resetModules();
+    }
+  });
 });
 
 function completeProductionDisclosure() {
@@ -89,4 +159,9 @@ function completeProductionDisclosure() {
     reportRoute: '/pages/report/index',
     privacyRoute: '/pages/privacy/index',
   };
+}
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
 }

@@ -14,6 +14,22 @@ Taro 构建通过 `TARO_APP_RELEASE_DISCLOSURE_FILE` 选择仓库根相对或绝
 
 正式构建完成后运行 `node scripts/verify-wechat-release.mjs --file <真实披露.json> --mode production --dist apps/wechat/dist`。验证器会核对包内披露值与 JSON 一致，并拒绝包内残留的 `待配置`。生产披露 JSON 由运营方在发布环境提供，不在仓库模板中伪造。
 
+## 发布验证与上传
+
+本地发布候选统一执行 `npm run verify:wechat-release`。该命令会跑 Expo/WeChat/CloudBase/core 测试、typecheck、web build、asset check、CloudBase build、production `build:weapp`、source/dist secret scan、release disclosure 验证、npm audit 记录和微信开发者工具 CLI 证据采集。
+
+Profile 说明见 `docs/wechat/release-profiles.md`。development/trial 可以显式开启 `TARO_APP_RELEASE_FIXTURE_MODE=enabled` 做无模型密钥的 DevTools fixture 烟测；formal profile 禁止 fixture，且要求真实生产 CloudBase env id 和生产 disclosure。
+
+微信 CI 上传脚本：
+
+- `npm run wechat:ci:dry-run`：只检查 project path、版本、描述和参数摘要，不要求 AppID/私钥。
+- `npm run wechat:ci:preview`：需要 `WECHAT_APP_ID`、`WECHAT_PRIVATE_KEY_PATH`、`WECHAT_RELEASE_VERSION`、`WECHAT_RELEASE_DESC`。
+- `npm run wechat:ci:upload`：同 preview，并使用 `WECHAT_CI_ROBOT` 选择 1-30 号 CI 机器人。
+
+`apps/wechat/project.config.json` 保持 `touristappid`，真实 AppID 写入本机 `apps/wechat/project.private.config.json`。复制 `apps/wechat/project.private.config.example.json` 后填写；真实私有配置和 `private.*.key` 已在 `.gitignore` 中禁止提交。
+
+微信开发者工具 CLI 记录通过 `npm run wechat:devtools:smoke` 生成到 `docs/wechat/release-evidence/2026-08-10-devtools-cli.md`。未登录、无 AppID、无真机时只能记录外部 blocker，不能声明截图或真机通过。
+
 ## 数据保留
 
 每日清理任务按 `RETENTION_BATCH_SIZE` 分批执行。默认参数为：生成作业 1 天、日配额和短窗桶 2 天、长期未更新草稿 30 天、已完成测评 365 天、投诉反馈 365 天。分别通过 `GENERATION_JOB_RETENTION_DAYS`、`QUOTA_RETENTION_DAYS`、`RATE_LIMIT_RETENTION_DAYS`、`DRAFT_ASSESSMENT_RETENTION_DAYS`、`COMPLETED_ASSESSMENT_RETENTION_DAYS`、`REPORT_RETENTION_DAYS` 配置；草稿严格按 `updatedAt` 清理。
