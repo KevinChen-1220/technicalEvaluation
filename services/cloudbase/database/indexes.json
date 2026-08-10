@@ -11,6 +11,14 @@
       ]
     },
     {
+      "collection": "assessments",
+      "name": "status_updated_at",
+      "keys": [
+        { "field": "status", "order": 1 },
+        { "field": "updatedAt", "order": 1 }
+      ]
+    },
+    {
       "collection": "generation_jobs",
       "name": "owner_status_updated_at",
       "keys": [

@@ -46,6 +46,81 @@ describe('WeChat release verification assets', () => {
     expect(`${formal.stdout}${formal.stderr}`).toMatch(/serviceOperator|modelDisclosure|miniProgramFiling/);
   });
 
+  test('formal verification requires matching disclosure in dist and rejects packaged placeholders', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'skill-scope-release-'));
+    try {
+      const disclosure = {
+        environment: 'production',
+        productVersion: '1.0.0',
+        privacyPolicyVersion: '2026-08-10',
+        serviceOperator: 'Skill Scope Technology Co., Ltd.',
+        modelDisclosure: 'Production Model 1',
+        generativeAiRegistration: 'Registration 2026-001',
+        miniProgramFiling: 'ICP 20260001',
+        reportRoute: '/pages/report/index',
+        privacyRoute: '/pages/privacy/index',
+      };
+      const file = join(directory, 'production.json');
+      const dist = join(directory, 'dist');
+      require('node:fs').mkdirSync(dist);
+      writeFileSync(file, JSON.stringify(disclosure));
+      writeFileSync(join(dist, 'settings.js'), JSON.stringify(disclosure));
+
+      execFileSync(process.execPath, [
+        join(repoRoot, 'scripts', 'verify-wechat-release.mjs'),
+        '--file', file,
+        '--mode', 'production',
+        '--dist', dist,
+      ], { cwd: repoRoot });
+
+      writeFileSync(join(dist, 'settings.js'), `${JSON.stringify(disclosure)}\n待配置`);
+      const packagedPlaceholder = spawnSync(process.execPath, [
+        join(repoRoot, 'scripts', 'verify-wechat-release.mjs'),
+        '--file', file,
+        '--mode', 'production',
+        '--dist', dist,
+      ], { cwd: repoRoot, encoding: 'utf8' });
+      expect(packagedPlaceholder.status).not.toBe(0);
+      expect(`${packagedPlaceholder.stdout}${packagedPlaceholder.stderr}`).toMatch(/dist.*placeholder/i);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test('formal verification rejects a disclosure marked as development', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'skill-scope-release-mode-'));
+    try {
+      const disclosure = {
+        environment: 'development',
+        productVersion: '1.0.0',
+        privacyPolicyVersion: '2026-08-10',
+        serviceOperator: 'Skill Scope QA Operator',
+        modelDisclosure: 'Skill Scope QA Model',
+        generativeAiRegistration: 'Registration 2026-001',
+        miniProgramFiling: 'ICP 20260001',
+        reportRoute: '/pages/report/index',
+        privacyRoute: '/pages/privacy/index',
+      };
+      const file = join(directory, 'development.json');
+      const dist = join(directory, 'dist');
+      require('node:fs').mkdirSync(dist);
+      writeFileSync(file, JSON.stringify(disclosure));
+      writeFileSync(join(dist, 'settings.js'), JSON.stringify(disclosure));
+
+      const formal = spawnSync(process.execPath, [
+        join(repoRoot, 'scripts', 'verify-wechat-release.mjs'),
+        '--file', file,
+        '--mode', 'production',
+        '--dist', dist,
+      ], { cwd: repoRoot, encoding: 'utf8' });
+
+      expect(formal.status).not.toBe(0);
+      expect(`${formal.stdout}${formal.stderr}`).toMatch(/environment.*production/i);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
   test('secret scanner rejects common keys and server-only env names in compiled output', () => {
     const directory = mkdtempSync(join(tmpdir(), 'skill-scope-scan-'));
     try {

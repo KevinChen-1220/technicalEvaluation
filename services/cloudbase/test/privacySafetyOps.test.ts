@@ -31,6 +31,7 @@ import {
   type WorkerProgressInput,
 } from '../server/generation/worker';
 import { runRetentionCleanup, type RetentionRepository } from '../server/retention/service';
+import { retentionPolicyFromEnvironment } from '../server/retention/policy';
 
 jest.mock('wx-server-sdk', () => ({ getWXContext: jest.fn() }), { virtual: true });
 
@@ -255,6 +256,7 @@ describe('reports and retention', () => {
       dailyQuotas: 3,
       rateBuckets: 5,
       assessments: 2,
+      draftAssessments: 4,
       reports: 1,
     });
     const logger = { events: [] as unknown[], log(event: unknown) { this.events.push(event); } };
@@ -267,6 +269,7 @@ describe('reports and retention', () => {
         jobRetentionDays: 1,
         quotaRetentionDays: 2,
         rateLimitRetentionDays: 2,
+        staleDraftAssessmentRetentionDays: 30,
         completedAssessmentRetentionDays: 365,
         reportRetentionDays: 365,
       },
@@ -275,13 +278,25 @@ describe('reports and retention', () => {
       generationJobs: 42,
       dailyQuotas: 3,
       rateBuckets: 5,
+      draftAssessments: 4,
       completedAssessments: 2,
       reports: 1,
     });
-    expect(repository.batchSizes).toEqual([50, 50, 50, 50, 50]);
+    expect(repository.batchSizes).toEqual([50, 50, 50, 50, 50, 50]);
+    expect(repository.draftCutoffs).toEqual(['2026-07-11T08:00:00.000Z']);
     expect(JSON.stringify(logger.events)).toContain('retention_cleanup_completed');
     expect(JSON.stringify(logger.events)).not.toContain('owner-');
     expect(JSON.stringify(logger.events)).not.toContain('topic');
+  });
+
+  test('uses an independently configurable stale-draft retention window', () => {
+    expect(retentionPolicyFromEnvironment({
+      DRAFT_ASSESSMENT_RETENTION_DAYS: '14',
+      COMPLETED_ASSESSMENT_RETENTION_DAYS: '730',
+    })).toMatchObject({
+      staleDraftAssessmentRetentionDays: 14,
+      completedAssessmentRetentionDays: 730,
+    });
   });
 });
 
@@ -441,11 +456,13 @@ function workerDependencies(
 
 class MemoryRetentionRepository implements RetentionRepository {
   readonly batchSizes: number[] = [];
+  readonly draftCutoffs: string[] = [];
   constructor(private readonly counts: {
     generationJobs: number;
     dailyQuotas: number;
     rateBuckets: number;
     assessments: number;
+    draftAssessments: number;
     reports: number;
   }) {}
   async deleteExpiredGenerationJobs(input: { before: string; limit: number }): Promise<number> {
@@ -463,6 +480,11 @@ class MemoryRetentionRepository implements RetentionRepository {
   async deleteExpiredCompletedAssessments(input: { before: string; limit: number }): Promise<number> {
     this.batchSizes.push(input.limit);
     return this.counts.assessments;
+  }
+  async deleteExpiredDraftAssessments(input: { before: string; limit: number }): Promise<number> {
+    this.batchSizes.push(input.limit);
+    this.draftCutoffs.push(input.before);
+    return this.counts.draftAssessments;
   }
   async deleteExpiredReports(input: { before: string; limit: number }): Promise<number> {
     this.batchSizes.push(input.limit);

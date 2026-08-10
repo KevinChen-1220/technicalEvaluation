@@ -1,5 +1,8 @@
 import { defineConfig } from '@tarojs/cli';
 import path from 'node:path';
+import { loadSelectedReleaseDisclosure } from './releaseDisclosure';
+
+const releaseDisclosure = loadSelectedReleaseDisclosure();
 
 export default defineConfig({
   projectName: 'dynamic-assessment-wechat',
@@ -8,6 +11,7 @@ export default defineConfig({
     TARO_APP_CLOUDBASE_ENV_ID: JSON.stringify(
       process.env.TARO_APP_CLOUDBASE_ENV_ID?.trim() ?? '',
     ),
+    TARO_APP_RELEASE_DISCLOSURE_JSON: JSON.stringify(JSON.stringify(releaseDisclosure)),
   },
   designWidth: 375,
   deviceRatio: {

@@ -75,4 +75,21 @@ describe('CloudBase deployment artifacts', () => {
       .toBeLessThan(generationWorkerBudget.leaseDurationMs);
     expect(worker?.timeout).toBeLessThanOrEqual(900);
   });
+
+  test('deploys the compound index used by stale-draft retention', () => {
+    const indexes = JSON.parse(readFileSync(join(serviceRoot, 'database', 'indexes.json'), 'utf8')) as {
+      indexes?: unknown[];
+    };
+
+    expect(indexes.indexes).toEqual(expect.arrayContaining([
+      {
+        collection: 'assessments',
+        name: 'status_updated_at',
+        keys: [
+          { field: 'status', order: 1 },
+          { field: 'updatedAt', order: 1 },
+        ],
+      },
+    ]));
+  });
 });

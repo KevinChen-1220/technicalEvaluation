@@ -5,6 +5,7 @@ export type RetentionPolicy = {
   jobRetentionDays: number;
   quotaRetentionDays: number;
   rateLimitRetentionDays: number;
+  staleDraftAssessmentRetentionDays: number;
   completedAssessmentRetentionDays: number;
   reportRetentionDays: number;
 };
@@ -13,6 +14,7 @@ export type RetentionCounts = {
   generationJobs: number;
   dailyQuotas: number;
   rateBuckets: number;
+  draftAssessments: number;
   completedAssessments: number;
   reports: number;
 };
@@ -21,6 +23,7 @@ export type RetentionRepository = {
   deleteExpiredGenerationJobs(input: { before: string; limit: number }): Promise<number>;
   deleteExpiredDailyQuotas(input: { before: string; limit: number }): Promise<number>;
   deleteExpiredRateLimitBuckets(input: { before: string; limit: number }): Promise<number>;
+  deleteExpiredDraftAssessments(input: { before: string; limit: number }): Promise<number>;
   deleteExpiredCompletedAssessments(input: { before: string; limit: number }): Promise<number>;
   deleteExpiredReports(input: { before: string; limit: number }): Promise<number>;
 };
@@ -48,6 +51,10 @@ export async function runRetentionCleanup(
     }),
     rateBuckets: await dependencies.repository.deleteExpiredRateLimitBuckets({
       before: cutoff(now, dependencies.policy.rateLimitRetentionDays),
+      limit,
+    }),
+    draftAssessments: await dependencies.repository.deleteExpiredDraftAssessments({
+      before: cutoff(now, dependencies.policy.staleDraftAssessmentRetentionDays),
       limit,
     }),
     completedAssessments: await dependencies.repository.deleteExpiredCompletedAssessments({

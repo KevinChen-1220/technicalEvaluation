@@ -28,7 +28,7 @@
     "scan:secrets:source": "node scripts/scan-secrets.mjs --target source package.json packages apps services scripts docs",
     "scan:secrets:wechat-dist": "node scripts/scan-secrets.mjs --target dist apps/wechat/dist",
     "verify:wechat-release:dev": "node scripts/verify-wechat-release.mjs --file docs/wechat/release-disclosure.development.json --mode development",
-    "verify:wechat-release:formal": "node scripts/verify-wechat-release.mjs --file docs/wechat/release-disclosure.production.template.json --mode production"
+    "verify:wechat-release:formal": "node scripts/verify-wechat-release.mjs --file docs/wechat/release-disclosure.production.template.json --mode production --dist apps/wechat/dist"
   },
   "dependencies": {
     "@expo/metro-runtime": "~5.0.5",

@@ -6,6 +6,18 @@
 
 `create-generation-job` 使用微信 `security.msgSecCheck` 处理用户输入，因为它由小程序用户触发，可以带受信 OpenID。`generation-worker` 是定时/后台异步 worker，不能假设存在小程序云调用凭证或 `wxCloudApiToken`，所以输出审核必须走服务端 HTTPS `CONTENT_SAFETY_*`。
 
+输出审核使用独立的 5 秒 `AbortController` 超时，并将响应体限制为 16 KiB；超时、响应过大、非 JSON、非 2xx 或审核服务异常均 fail closed，不保存模型输出。
+
+## 发布披露
+
+Taro 构建通过 `TARO_APP_RELEASE_DISCLOSURE_FILE` 选择仓库根相对或绝对 JSON。未指定时使用开发披露，设置页显示 `待配置`。production JSON 的必填字段为空或包含 `待配置`、`TBD`、`example`、`placeholder`、`changeme` 时，Taro config 会直接终止构建。
+
+正式构建完成后运行 `node scripts/verify-wechat-release.mjs --file <真实披露.json> --mode production --dist apps/wechat/dist`。验证器会核对包内披露值与 JSON 一致，并拒绝包内残留的 `待配置`。生产披露 JSON 由运营方在发布环境提供，不在仓库模板中伪造。
+
+## 数据保留
+
+每日清理任务按 `RETENTION_BATCH_SIZE` 分批执行。默认参数为：生成作业 1 天、日配额和短窗桶 2 天、长期未更新草稿 30 天、已完成测评 365 天、投诉反馈 365 天。分别通过 `GENERATION_JOB_RETENTION_DAYS`、`QUOTA_RETENTION_DAYS`、`RATE_LIMIT_RETENTION_DAYS`、`DRAFT_ASSESSMENT_RETENTION_DAYS`、`COMPLETED_ASSESSMENT_RETENTION_DAYS`、`REPORT_RETENTION_DAYS` 配置；草稿严格按 `updatedAt` 清理。
+
 ## 告警阈值
 
 - 生成延迟：P95 超过 120 秒持续 10 分钟。

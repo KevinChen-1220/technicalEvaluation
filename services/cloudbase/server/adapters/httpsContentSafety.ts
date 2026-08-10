@@ -9,11 +9,20 @@ export type ContentSafetyFetchTransport = (
     body: string;
     signal?: AbortSignal;
   },
-) => Promise<{ ok: boolean; json(): Promise<unknown> }>;
+  ) => Promise<{
+    ok: boolean;
+    headers?: { get(name: string): string | null };
+    arrayBuffer(): Promise<ArrayBuffer>;
+  }>;
+
+const defaultTimeoutMs = 5_000;
+const defaultMaxResponseBytes = 16 * 1024;
 
 export function createHttpsContentSafetyModeration(options: {
   environment: Record<string, string | undefined>;
   fetch: ContentSafetyFetchTransport;
+  timeoutMs?: number;
+  maxResponseBytes?: number;
 }): TextModerationPort {
   const production = options.environment.SKILLSCOPE_ENV === 'production';
   const url = options.environment.CONTENT_SAFETY_URL?.trim();
@@ -24,9 +33,13 @@ export function createHttpsContentSafetyModeration(options: {
     return allowAllTextModeration;
   }
   const endpoint = normalizeHttpsUrl(url);
+  const timeoutMs = positiveInteger(options.timeoutMs, defaultTimeoutMs);
+  const maxResponseBytes = positiveInteger(options.maxResponseBytes, defaultMaxResponseBytes);
 
   return {
     async checkText(input) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const response = await options.fetch(endpoint, {
           method: 'POST',
@@ -40,14 +53,33 @@ export function createHttpsContentSafetyModeration(options: {
             title: input.title,
             content: input.content,
           }),
+          signal: controller.signal,
         });
         if (!response.ok) return { allowed: false };
-        return isAllowed(await response.json()) ? { allowed: true } : { allowed: false };
+        if (contentLengthExceeds(response.headers?.get('content-length'), maxResponseBytes)) {
+          return { allowed: false };
+        }
+        const body = await response.arrayBuffer();
+        if (body.byteLength > maxResponseBytes) return { allowed: false };
+        const parsed = JSON.parse(new TextDecoder().decode(body)) as unknown;
+        return isAllowed(parsed) ? { allowed: true } : { allowed: false };
       } catch {
         return { allowed: false };
+      } finally {
+        clearTimeout(timeout);
       }
     },
   };
+}
+
+function positiveInteger(value: number | undefined, fallback: number): number {
+  return Number.isInteger(value) && (value ?? 0) > 0 ? value as number : fallback;
+}
+
+function contentLengthExceeds(value: string | null | undefined, maximum: number): boolean {
+  if (value === undefined || value === null || value.trim() === '') return false;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > maximum;
 }
 
 function normalizeHttpsUrl(value: string): string {

@@ -183,6 +183,7 @@ describe('CloudBase generation function entries', () => {
       generationJobs: 1,
       dailyQuotas: 1,
       rateBuckets: 1,
+      draftAssessments: 0,
       completedAssessments: 0,
       reports: 0,
     });
@@ -265,6 +266,7 @@ function retentionDependencies() {
     deleteExpiredGenerationJobs: jest.fn(async () => 1),
     deleteExpiredDailyQuotas: jest.fn(async () => 1),
     deleteExpiredRateLimitBuckets: jest.fn(async () => 1),
+    deleteExpiredDraftAssessments: jest.fn(async () => 0),
     deleteExpiredCompletedAssessments: jest.fn(async () => 0),
     deleteExpiredReports: jest.fn(async () => 0),
   };
@@ -277,6 +279,7 @@ function retentionDependencies() {
       jobRetentionDays: 1,
       quotaRetentionDays: 2,
       rateLimitRetentionDays: 2,
+      staleDraftAssessmentRetentionDays: 30,
       completedAssessmentRetentionDays: 365,
       reportRetentionDays: 365,
     },

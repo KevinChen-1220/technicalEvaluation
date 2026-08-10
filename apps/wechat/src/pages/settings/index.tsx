@@ -1,15 +1,12 @@
 import Taro from '@tarojs/taro';
 import { Button, Text, View } from '@tarojs/components';
 import { FixedBottomNavigation } from '../../components/FixedBottomNavigation';
-import { CURRENT_PRIVACY_POLICY_VERSION, normalizeReleaseDisclosure } from '../../privacy/consent';
+import { releaseDisclosure } from '../../privacy/releaseDisclosure';
 import { createMiniProgramShellState } from '../../shell/viewModel';
 
 export default function SettingsPage() {
   const shell = createMiniProgramShellState();
-  const disclosure = normalizeReleaseDisclosure({
-    environment: 'development',
-    productVersion: '1.0.0',
-  });
+  const disclosure = releaseDisclosure;
 
   return (
     <View className='app-page'>
@@ -27,7 +24,7 @@ export default function SettingsPage() {
         </View>
         <View className='settings-row'>
           <Text>隐私政策版本</Text>
-          <Text>{CURRENT_PRIVACY_POLICY_VERSION}</Text>
+          <Text>{disclosure.privacyPolicyVersion}</Text>
         </View>
         <View className='settings-row'>
           <Text>服务主体</Text>
@@ -46,8 +43,8 @@ export default function SettingsPage() {
           <Text>{disclosure.miniProgramFiling}</Text>
         </View>
       </View>
-      <Button className='inline-action' onClick={() => Taro.navigateTo({ url: '/pages/privacy/index' })}>隐私政策</Button>
-      <Button className='inline-action' onClick={() => Taro.navigateTo({ url: '/pages/report/index' })}>投诉与反馈</Button>
+      <Button className='inline-action' onClick={() => Taro.navigateTo({ url: disclosure.privacyRoute })}>隐私政策</Button>
+      <Button className='inline-action' onClick={() => Taro.navigateTo({ url: disclosure.reportRoute })}>投诉与反馈</Button>
       <FixedBottomNavigation activeTab='settings' />
     </View>
   );

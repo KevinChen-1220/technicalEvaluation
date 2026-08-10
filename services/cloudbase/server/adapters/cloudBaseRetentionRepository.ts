@@ -18,6 +18,13 @@ export class CloudBaseRetentionRepository implements RetentionRepository {
     return removeExpired(this.database, 'generation_rate_limits', { expiresAt: this.database.command.lte(input.before) }, input.limit);
   }
 
+  async deleteExpiredDraftAssessments(input: { before: string; limit: number }): Promise<number> {
+    return removeExpired(this.database, 'assessments', {
+      status: 'draft',
+      updatedAt: this.database.command.lte(input.before),
+    }, input.limit);
+  }
+
   async deleteExpiredCompletedAssessments(input: { before: string; limit: number }): Promise<number> {
     return removeExpired(this.database, 'assessments', { status: 'completed', completedAt: this.database.command.lte(input.before) }, input.limit);
   }

@@ -20,6 +20,7 @@ import type { GenerationWorkerDependencies } from './generation/worker';
 import type { AcceptPrivacyPolicyDependencies, SettingsDependencies } from './settings/service';
 import type { CreateReportDependencies } from './reports/service';
 import type { RetentionDependencies } from './retention/service';
+import { retentionPolicyFromEnvironment } from './retention/policy';
 import type { OperationalEvent } from './operations/logger';
 
 const dailyGenerationLimit = 5;
@@ -110,14 +111,7 @@ export function getRetentionDependencies(): RetentionDependencies {
   return {
     repository: getRetentionRepository(),
     clock: systemClock,
-    policy: {
-      batchSize: parsePositiveInteger(process.env.RETENTION_BATCH_SIZE, 50, 100),
-      jobRetentionDays: parsePositiveInteger(process.env.GENERATION_JOB_RETENTION_DAYS, 1, 30),
-      quotaRetentionDays: parsePositiveInteger(process.env.QUOTA_RETENTION_DAYS, 2, 30),
-      rateLimitRetentionDays: parsePositiveInteger(process.env.RATE_LIMIT_RETENTION_DAYS, 2, 30),
-      completedAssessmentRetentionDays: parsePositiveInteger(process.env.COMPLETED_ASSESSMENT_RETENTION_DAYS, 365, 3650),
-      reportRetentionDays: parsePositiveInteger(process.env.REPORT_RETENTION_DAYS, 365, 3650),
-    },
+    policy: retentionPolicyFromEnvironment(process.env),
     logger: { log: (event) => cloudLogger.info(event) },
   };
 }
@@ -199,10 +193,4 @@ function getDatabase(): ReturnType<typeof database> {
 
 function digest(value: string): string {
   return createHash('sha256').update(value).digest('hex');
-}
-
-function parsePositiveInteger(value: string | undefined, fallback: number, max: number): number {
-  if (value === undefined) return fallback;
-  const parsed = Number(value);
-  return Number.isInteger(parsed) && parsed > 0 && parsed <= max ? parsed : fallback;
 }

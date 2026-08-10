@@ -40,7 +40,10 @@ describe('content safety adapters', () => {
   });
 
   test('uses server-only HTTPS output moderation and blocks on service failure', async () => {
-    const fetch = jest.fn(async () => ({ ok: true, json: async () => ({ allowed: true }) })) as unknown as ContentSafetyFetchTransport;
+    const fetch = jest.fn(async () => ({
+      ok: true,
+      arrayBuffer: async () => new TextEncoder().encode('{"allowed":true}').buffer,
+    })) as unknown as ContentSafetyFetchTransport;
     const moderation = createHttpsContentSafetyModeration({
       environment: {
         SKILLSCOPE_ENV: 'production',
@@ -71,7 +74,10 @@ describe('content safety adapters', () => {
         CONTENT_SAFETY_URL: 'https://safety.example/check',
         CONTENT_SAFETY_API_KEY: 'server-secret',
       },
-      fetch: jest.fn(async () => ({ ok: false, json: async () => ({}) })) as unknown as ContentSafetyFetchTransport,
+      fetch: jest.fn(async () => ({
+        ok: false,
+        arrayBuffer: async () => new ArrayBuffer(0),
+      })) as unknown as ContentSafetyFetchTransport,
     });
     await expect(failing.checkText({
       ownerOpenId: 'owner-1', content: 'x', scene: 'generation_output', title: 'x',
@@ -87,5 +93,52 @@ describe('content safety adapters', () => {
       environment: { SKILLSCOPE_ENV: 'development' },
       fetch: jest.fn() as unknown as ContentSafetyFetchTransport,
     })).toBeDefined();
+  });
+
+  test('aborts a hung output moderation request on its own timeout and fails closed', async () => {
+    jest.useFakeTimers();
+    try {
+      const fetchMock = jest.fn((_url: string, init: Parameters<ContentSafetyFetchTransport>[1]) => new Promise<never>((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+      }));
+      const moderation = createHttpsContentSafetyModeration({
+        environment: {
+          SKILLSCOPE_ENV: 'production',
+          CONTENT_SAFETY_URL: 'https://safety.example/check',
+          CONTENT_SAFETY_API_KEY: 'server-secret',
+        },
+        fetch: fetchMock as ContentSafetyFetchTransport,
+        timeoutMs: 25,
+      });
+
+      const result = moderation.checkText({
+        ownerOpenId: 'owner-1', content: 'x', scene: 'generation_output', title: 'x',
+      });
+      await jest.advanceTimersByTimeAsync(25);
+
+      await expect(result).resolves.toEqual({ allowed: false });
+      expect(fetchMock.mock.calls[0]?.[1].signal?.aborted).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('rejects an oversized output moderation response before JSON parsing', async () => {
+    const moderation = createHttpsContentSafetyModeration({
+      environment: {
+        SKILLSCOPE_ENV: 'production',
+        CONTENT_SAFETY_URL: 'https://safety.example/check',
+        CONTENT_SAFETY_API_KEY: 'server-secret',
+      },
+      fetch: jest.fn(async () => ({
+        ok: true,
+        arrayBuffer: async () => new TextEncoder().encode('{"allowed":true}').buffer,
+      })) as unknown as ContentSafetyFetchTransport,
+      maxResponseBytes: 8,
+    });
+
+    await expect(moderation.checkText({
+      ownerOpenId: 'owner-1', content: 'x', scene: 'generation_output', title: 'x',
+    })).resolves.toEqual({ allowed: false });
   });
 });

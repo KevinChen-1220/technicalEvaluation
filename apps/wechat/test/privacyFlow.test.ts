@@ -34,6 +34,10 @@ describe('Mini Program privacy flow', () => {
     expect(normalizeReleaseDisclosure({
       environment: 'development',
       productVersion: '1.0.0',
+      serviceOperator: '待配置',
+      modelDisclosure: '待配置',
+      generativeAiRegistration: '待配置',
+      miniProgramFiling: '待配置',
     })).toMatchObject({
       serviceOperator: '待配置',
       modelDisclosure: '待配置',
@@ -44,6 +48,10 @@ describe('Mini Program privacy flow', () => {
     expect(() => normalizeReleaseDisclosure({
       environment: 'production',
       productVersion: '1.0.0',
+      serviceOperator: 'TBD',
+      modelDisclosure: 'Model 1',
+      generativeAiRegistration: 'Registration 1',
+      miniProgramFiling: 'Filing 1',
     })).toThrow('Production release disclosure is incomplete.');
   });
 
