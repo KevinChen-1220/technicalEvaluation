@@ -12,7 +12,7 @@ export type ContentSafetyFetchTransport = (
   ) => Promise<{
     ok: boolean;
     headers?: { get(name: string): string | null };
-    arrayBuffer(): Promise<ArrayBuffer>;
+    body: ReadableStream<Uint8Array> | null;
   }>;
 
 const defaultTimeoutMs = 5_000;
@@ -57,10 +57,11 @@ export function createHttpsContentSafetyModeration(options: {
         });
         if (!response.ok) return { allowed: false };
         if (contentLengthExceeds(response.headers?.get('content-length'), maxResponseBytes)) {
+          await response.body?.cancel();
           return { allowed: false };
         }
-        const body = await response.arrayBuffer();
-        if (body.byteLength > maxResponseBytes) return { allowed: false };
+        const body = await readBoundedBody(response.body, maxResponseBytes);
+        if (body === null) return { allowed: false };
         const parsed = JSON.parse(new TextDecoder().decode(body)) as unknown;
         return isAllowed(parsed) ? { allowed: true } : { allowed: false };
       } catch {
@@ -70,6 +71,49 @@ export function createHttpsContentSafetyModeration(options: {
       }
     },
   };
+}
+
+async function readBoundedBody(
+  body: ReadableStream<Uint8Array> | null,
+  maximum: number,
+): Promise<Uint8Array | null> {
+  if (body === null) return null;
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let byteLength = 0;
+  try {
+    while (true) {
+      const result = await reader.read();
+      if (result.done) break;
+      byteLength += result.value.byteLength;
+      if (byteLength > maximum) {
+        await cancelReader(reader);
+        return null;
+      }
+      chunks.push(result.value);
+    }
+  } catch (error) {
+    await cancelReader(reader);
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+
+  const merged = new Uint8Array(byteLength);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return merged;
+}
+
+async function cancelReader(reader: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
+  try {
+    await reader.cancel();
+  } catch {
+    // The moderation decision remains fail-closed even if transport cleanup fails.
+  }
 }
 
 function positiveInteger(value: number | undefined, fallback: number): number {

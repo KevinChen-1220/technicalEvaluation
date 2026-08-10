@@ -42,7 +42,7 @@ describe('content safety adapters', () => {
   test('uses server-only HTTPS output moderation and blocks on service failure', async () => {
     const fetch = jest.fn(async () => ({
       ok: true,
-      arrayBuffer: async () => new TextEncoder().encode('{"allowed":true}').buffer,
+      body: readableBody([new TextEncoder().encode('{"allowed":true}')]),
     })) as unknown as ContentSafetyFetchTransport;
     const moderation = createHttpsContentSafetyModeration({
       environment: {
@@ -76,7 +76,7 @@ describe('content safety adapters', () => {
       },
       fetch: jest.fn(async () => ({
         ok: false,
-        arrayBuffer: async () => new ArrayBuffer(0),
+        body: null,
       })) as unknown as ContentSafetyFetchTransport,
     });
     await expect(failing.checkText({
@@ -123,7 +123,13 @@ describe('content safety adapters', () => {
     }
   });
 
-  test('rejects an oversized output moderation response before JSON parsing', async () => {
+  test('cancels an oversized multi-chunk response without reading later chunks', async () => {
+    const read = jest.fn()
+      .mockResolvedValueOnce({ done: false, value: new Uint8Array(10) })
+      .mockResolvedValueOnce({ done: false, value: new Uint8Array(7) })
+      .mockResolvedValueOnce({ done: false, value: new Uint8Array(100) });
+    const cancel = jest.fn(async () => undefined);
+    const releaseLock = jest.fn();
     const moderation = createHttpsContentSafetyModeration({
       environment: {
         SKILLSCOPE_ENV: 'production',
@@ -132,13 +138,48 @@ describe('content safety adapters', () => {
       },
       fetch: jest.fn(async () => ({
         ok: true,
-        arrayBuffer: async () => new TextEncoder().encode('{"allowed":true}').buffer,
+        body: { getReader: () => ({ read, cancel, releaseLock }) },
       })) as unknown as ContentSafetyFetchTransport,
-      maxResponseBytes: 8,
+      maxResponseBytes: 16,
     });
 
     await expect(moderation.checkText({
       ownerOpenId: 'owner-1', content: 'x', scene: 'generation_output', title: 'x',
     })).resolves.toEqual({ allowed: false });
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(cancel).toHaveBeenCalledTimes(1);
+    expect(releaseLock).toHaveBeenCalledTimes(1);
+  });
+
+  test('accepts a valid response exactly at the 16 KiB byte limit', async () => {
+    const prefix = '{"allowed":true,"padding":"';
+    const suffix = '"}';
+    const responseText = `${prefix}${'x'.repeat(16 * 1024 - prefix.length - suffix.length)}${suffix}`;
+    const encoded = new TextEncoder().encode(responseText);
+    const moderation = createHttpsContentSafetyModeration({
+      environment: {
+        SKILLSCOPE_ENV: 'production',
+        CONTENT_SAFETY_URL: 'https://safety.example/check',
+        CONTENT_SAFETY_API_KEY: 'server-secret',
+      },
+      fetch: jest.fn(async () => ({
+        ok: true,
+        body: readableBody([encoded.slice(0, 10_000), encoded.slice(10_000)]),
+      })) as unknown as ContentSafetyFetchTransport,
+    });
+
+    expect(encoded.byteLength).toBe(16 * 1024);
+    await expect(moderation.checkText({
+      ownerOpenId: 'owner-1', content: 'x', scene: 'generation_output', title: 'x',
+    })).resolves.toEqual({ allowed: true });
   });
 });
+
+function readableBody(chunks: Uint8Array[]): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(chunk);
+      controller.close();
+    },
+  });
+}

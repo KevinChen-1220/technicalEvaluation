@@ -77,7 +77,14 @@ export function getGenerationWorkerDependencies(): GenerationWorkerDependencies 
     }),
     outputModeration: createHttpsContentSafetyModeration({
       environment: process.env,
-      fetch: ((url, options) => fetch(url, options)) as ContentSafetyFetchTransport,
+      fetch: (async (url, options) => {
+        const response = await fetch(url, options);
+        return {
+          ok: response.ok,
+          headers: response.headers,
+          body: response.body,
+        };
+      }) satisfies ContentSafetyFetchTransport,
     }),
     clock: systemClock,
     ids: serverIds,
