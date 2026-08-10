@@ -1,8 +1,10 @@
 import {
   createHistoryController,
   getAssessmentOpenTarget,
+  getAssessmentRecordForOpen,
   reconcileAssessmentRecords,
 } from '../src/services/assessment-sync';
+import { AssessmentSyncQueue } from '../src/answer/syncQueue';
 import {
   createAssessmentCache,
   type CachedAssessment,
@@ -68,6 +70,62 @@ describe('assessment history and reconciliation', () => {
     }));
   });
 
+  test('rebuilds history state from cache after a successful pending replay', async () => {
+    const cache = createAssessmentCache(new MemoryStorage());
+    const local = record({ revision: 3, answers: { q1: ['b'] } });
+    cache.saveAssessment(local);
+    cache.savePendingUpdates([{
+      id: 'assessment:assessment-1',
+      version: 1,
+      assessmentId: 'assessment-1',
+      expectedRevision: 3,
+      answers: local.answers,
+      changedQuestionIds: ['q1'],
+    }]);
+    const controller = createHistoryController({
+      cache,
+      listAssessments: async () => ({
+        assessments: [record({
+          revision: 4,
+          answers: { q1: ['server'], q2: ['x'] },
+          updatedAt: '2026-08-03T10:05:00.000Z',
+        })],
+        nextCursor: null,
+      }),
+      syncPendingUpdate: async (update) => {
+        const current = cache.getAssessment(update.assessmentId)!;
+        cache.saveAssessment({
+          ...current,
+          revision: update.expectedRevision + 1,
+          answers: update.answers,
+          updatedAt: '2026-08-03T10:06:00.000Z',
+        });
+        cache.removePendingForAssessment(update.assessmentId);
+      },
+    });
+
+    controller.loadCached();
+    const refreshed = await controller.refreshFromCloud();
+
+    expect(refreshed.records[0]).toMatchObject({
+      id: 'assessment-1',
+      revision: 5,
+      answers: { q1: ['b'], q2: ['x'] },
+    });
+    expect(cache.getPendingUpdates()).toEqual([]);
+  });
+
+  test('opens the newest cached revision instead of downgrading it with a stale history row', () => {
+    const staleHistoryRecord = record({ revision: 4, answers: { q1: ['b'] } });
+    const replayedCacheRecord = record({
+      revision: 5,
+      answers: { q1: ['b'], q2: ['x'] },
+      updatedAt: '2026-08-03T10:06:00.000Z',
+    });
+
+    expect(getAssessmentRecordForOpen(staleHistoryRecord, replayedCacheRecord)).toBe(replayedCacheRecord);
+  });
+
   test('keeps pending local answers over a higher-revision cloud draft and queues one CAS update', () => {
     const local = record({
       id: 'assessment-1',
@@ -108,6 +166,89 @@ describe('assessment history and reconciliation', () => {
       changedQuestionIds: ['q1', 'q2'],
     })]);
     expect(reconciled.syncRequests).toHaveLength(1);
+  });
+
+  test('replays pending answers from a newer local draft when the cloud draft is stale', () => {
+    const local = record({
+      revision: 5,
+      answers: { q1: ['b'], q2: ['local'] },
+      updatedAt: '2026-08-03T10:05:00.000Z',
+    });
+    const pending: PendingAssessmentUpdate = {
+      id: 'assessment:assessment-1',
+      version: 3,
+      assessmentId: 'assessment-1',
+      expectedRevision: 5,
+      answers: local.answers,
+      changedQuestionIds: ['q1', 'q2'],
+    };
+
+    const reconciled = reconcileAssessmentRecords({
+      localRecords: [local],
+      cloudRecords: [record({
+        revision: 4,
+        answers: { q1: ['server'], q2: ['server'] },
+        updatedAt: '2026-08-03T10:04:00.000Z',
+      })],
+      pendingUpdates: [pending],
+    });
+
+    expect(reconciled.records[0]).toMatchObject({
+      revision: 5,
+      answers: { q1: ['b'], q2: ['local'] },
+    });
+    expect(reconciled.syncRequests).toEqual([expect.objectContaining({
+      expectedRevision: 5,
+      answers: { q1: ['b'], q2: ['local'] },
+    })]);
+  });
+
+  test('keeps equal-revision pending answers when cloud is newer and another local answer is edited', async () => {
+    const cache = createAssessmentCache(new MemoryStorage());
+    const local = record({
+      revision: 3,
+      answers: { q1: ['b'] },
+      updatedAt: '2026-08-03T10:00:00.000Z',
+    });
+    const pending: PendingAssessmentUpdate = {
+      id: 'assessment:assessment-1',
+      version: 1,
+      assessmentId: 'assessment-1',
+      expectedRevision: 3,
+      answers: local.answers,
+      changedQuestionIds: ['q1'],
+    };
+    const reconciled = reconcileAssessmentRecords({
+      localRecords: [local],
+      cloudRecords: [record({
+        revision: 3,
+        answers: { q1: ['server'], q2: [] },
+        updatedAt: '2026-08-03T10:05:00.000Z',
+      })],
+      pendingUpdates: [pending],
+    });
+    cache.saveAssessments(reconciled.records);
+    cache.savePendingUpdates(reconciled.pendingUpdates);
+    const updateAssessment = jest.fn(async ({ expectedRevision }) => ({
+      type: 'updated' as const,
+      revision: expectedRevision + 1,
+    }));
+    const queue = new AssessmentSyncQueue({ cache, updateAssessment });
+
+    const operation = queue.recordSelection('assessment-1', 'q2', 'y');
+
+    expect(cache.getPendingUpdates()).toEqual([expect.objectContaining({
+      assessmentId: 'assessment-1',
+      answers: { q1: ['b'], q2: ['y'] },
+      changedQuestionIds: ['q1', 'q2'],
+      expectedRevision: 3,
+    })]);
+    await operation.sync;
+    expect(updateAssessment).toHaveBeenCalledWith({
+      assessmentId: 'assessment-1',
+      answers: { q1: ['b'], q2: ['y'] },
+      expectedRevision: 3,
+    });
   });
 
   test('treats a completed cloud record as authoritative and clears stale local draft pending work', () => {

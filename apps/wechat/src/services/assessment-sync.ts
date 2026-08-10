@@ -64,8 +64,9 @@ export function reconcileAssessmentRecords(input: ReconcileInput): ReconcileResu
       continue;
     }
 
-    const pendingMerge = pending !== undefined && local !== undefined && cloud !== undefined && cloud.revision > local.revision
-      ? mergePendingDraft(cloud, local, pending)
+    const chosen = chooseRecord(local, cloud);
+    const pendingMerge = pending !== undefined && chosen?.status === 'draft'
+      ? mergePendingDraft(chosen, local, pending)
       : null;
 
     if (pendingMerge !== null) {
@@ -75,7 +76,6 @@ export function reconcileAssessmentRecords(input: ReconcileInput): ReconcileResu
       continue;
     }
 
-    const chosen = chooseRecord(local, cloud);
     if (chosen !== undefined) records.push(chosen);
     if (pending !== undefined) pendingUpdates.push(pending);
   }
@@ -116,6 +116,13 @@ export function getAssessmentOpenTarget(record: CachedAssessment): AssessmentOpe
     assessmentId: record.id,
     startIndex: findFirstUnansweredQuestionIndex(record.paper as never, record.answers),
   };
+}
+
+export function getAssessmentRecordForOpen(
+  historyRecord: CachedAssessment | undefined,
+  cachedRecord: CachedAssessment | undefined,
+): CachedAssessment | undefined {
+  return chooseRecord(historyRecord, cachedRecord);
 }
 
 export function createHistoryController(dependencies: {
@@ -160,7 +167,7 @@ export function createHistoryController(dependencies: {
         dependencies.cache.saveAssessments(reconciled.records);
         dependencies.cache.savePendingUpdates(reconciled.pendingUpdates);
         await Promise.all(reconciled.syncRequests.map((update) => dependencies.syncPendingUpdate?.(update)));
-        return setRecords(reconciled.records, 'ready', page.nextCursor);
+        return setRecords(dependencies.cache.listAssessments(), 'ready', page.nextCursor);
       } catch {
         return setRecords(dependencies.cache.listAssessments(), state.records.length > 0 ? 'offline' : 'error', state.nextCursor);
       }
@@ -169,22 +176,22 @@ export function createHistoryController(dependencies: {
 }
 
 function mergePendingDraft(
-  cloud: CachedAssessment,
-  local: CachedAssessment,
+  base: CachedAssessment,
+  local: CachedAssessment | undefined,
   pending: PendingAssessmentUpdate,
 ): { record: CachedAssessment; pending: PendingAssessmentUpdate } | null {
-  if (cloud.status !== 'draft') return null;
-  const answers = { ...cloud.answers };
+  if (base.status !== 'draft') return null;
+  const answers = { ...base.answers };
   for (const questionId of pending.changedQuestionIds) {
-    answers[questionId] = local.answers[questionId] ?? [];
+    answers[questionId] = pending.answers[questionId] ?? local?.answers[questionId] ?? [];
   }
-  const record = { ...cloud, answers };
+  const record = { ...base, answers };
   return {
     record,
     pending: {
       ...pending,
       answers,
-      expectedRevision: cloud.revision,
+      expectedRevision: base.revision,
     },
   };
 }

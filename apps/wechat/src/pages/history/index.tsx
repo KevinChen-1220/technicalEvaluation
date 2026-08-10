@@ -2,7 +2,12 @@ import { useEffect, useRef, useState } from 'react';
 import Taro from '@tarojs/taro';
 import { Button, Text, View } from '@tarojs/components';
 import { FixedBottomNavigation } from '../../components/FixedBottomNavigation';
-import { getAssessmentOpenTarget, createHistoryController, type HistoryState } from '../../services/assessment-sync';
+import {
+  createHistoryController,
+  getAssessmentOpenTarget,
+  getAssessmentRecordForOpen,
+  type HistoryState,
+} from '../../services/assessment-sync';
 import { cloudClient } from '../../services/cloud';
 import { createMiniProgramShellState } from '../../shell/viewModel';
 import { assessmentCache, assessmentSyncQueue } from '../../storage/runtime';
@@ -35,7 +40,10 @@ export default function HistoryPage() {
   }, []);
 
   async function openAssessment(id: string): Promise<void> {
-    const record = history.records.find((candidate) => candidate.id === id) ?? assessmentCache.getAssessment(id);
+    const record = getAssessmentRecordForOpen(
+      history.records.find((candidate) => candidate.id === id),
+      assessmentCache.getAssessment(id),
+    );
     if (record === undefined) return;
     assessmentCache.saveAssessment(record);
     const target = getAssessmentOpenTarget(record);
