@@ -1,7 +1,7 @@
 # 2026-08-10 本地发布候选验证输出
 
 Profile: development
-Generated at: 2026-08-10T12:23:02.321Z
+Generated at: 2026-08-10T12:30:53.034Z
 
 ## Commands
 
@@ -12,25 +12,25 @@ clean release artifacts: apps/wechat/dist and services/cloudbase/dist removed
 Status: exit 0
 
 ```text
-PASS src/features/config/modelConfigStore.test.ts
-PASS src/features/assessment/wrongQuestionReview.test.ts
 PASS services/cloudbase/test/cloudBaseGenerationRepository.test.ts
-PASS packages/assessment-core/test/assessmentCore.contract.test.ts
-PASS src/features/assessment/samplePaper.test.ts
 PASS src/features/assessment/legacyHistoryMigration.test.ts
+PASS src/services/aiClient.test.ts
+PASS src/features/config/modelConfigStore.test.ts
+PASS src/components/questionMaterialLayout.test.ts
+PASS services/cloudbase/test/cloudBaseRetentionRepository.test.ts
 PASS services/cloudbase/test/cloudBaseAssessmentRepository.test.ts
 PASS src/features/assessment/scoring.test.ts
-PASS src/layout/mobileLayout.test.ts
-PASS services/cloudbase/test/cloudBaseRetentionRepository.test.ts
-PASS src/features/config/modelConfig.test.ts
 PASS src/features/assessment/questionNavigation.test.ts
+PASS src/features/assessment/samplePaper.test.ts
+PASS src/layout/mobileLayout.test.ts
 PASS src/components/loadingAnimation.test.ts
+PASS src/features/config/modelConfig.test.ts
 PASS src/features/assessment/assessmentBriefDefaults.test.ts
 
 Test Suites: 34 passed, 34 total
 Tests:       277 passed, 277 total
 Snapshots:   0 total
-Time:        8.988 s
+Time:        8.269 s
 Ran all test suites.
 ```
 
@@ -42,22 +42,22 @@ Status: exit 0
 PASS test/releaseFixtureClient.test.ts
 PASS test/cloud.test.ts
 PASS test/assessmentSync.test.ts
+PASS test/draftSync.test.ts
 PASS test/generationController.test.ts
 PASS test/privacyFlow.test.ts
-PASS test/draftSync.test.ts
-PASS test/submitFlow.test.ts
 PASS test/viewModel.test.ts
+PASS test/submitFlow.test.ts
 PASS test/resultViewModel.test.ts
+PASS test/cloudRuntime.test.ts
 PASS test/navigation.test.ts
 PASS test/materialLayout.test.ts
-PASS test/cloudRuntime.test.ts
 PASS test/appStartup.test.ts
 PASS test/draftDto.test.ts
 
 Test Suites: 15 passed, 15 total
 Tests:       77 passed, 77 total
 Snapshots:   0 total
-Time:        4.042 s
+Time:        4.02 s
 Ran all test suites.
 ```
 
@@ -72,10 +72,10 @@ PASS test/privacySafetyOps.test.ts
 PASS test/contentSafetyAdapters.test.ts
 PASS test/assessmentService.test.ts
 PASS test/contracts.review.test.ts
+PASS test/cloudBaseDailyQuota.test.ts
 PASS test/assessmentFunctionEntries.test.ts
 PASS test/generationJobs.test.ts
 PASS test/openAICompletionClient.test.ts
-PASS test/cloudBaseDailyQuota.test.ts
 PASS test/contracts.test.ts
 PASS test/cloudBaseGenerationRepository.test.ts
 PASS test/cloudBaseAssessmentRepository.test.ts
@@ -84,7 +84,7 @@ PASS test/cloudBaseRetentionRepository.test.ts
 Test Suites: 17 passed, 17 total
 Tests:       185 passed, 185 total
 Snapshots:   0 total
-Time:        7.795 s, estimated 9 s
+Time:        7.764 s, estimated 8 s
 Ran all test suites matching /services\\cloudbase\\test/i.
 ```
 
@@ -146,7 +146,7 @@ Status: exit 0
 
 Using (experimental) base path: /technicalEvaluation
 Starting Metro Bundler
-Web Bundled 189ms node_modules\expo\AppEntry.js (203 modules)
+Web Bundled 182ms node_modules\expo\AppEntry.js (209 modules)
 
 › Assets (1):
 node_modules\expo-sqlite\web\wa-sqlite\wa-sqlite.b87fca4d817b5bd329636d467d159c21.wasm (617 kB)
