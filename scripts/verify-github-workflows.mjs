@@ -99,6 +99,76 @@ const uploadStepAllowlist = [
   },
 ];
 
+const releasePaths = [
+  '.github/workflows/**',
+  'apps/wechat/**',
+  'docs/wechat/**',
+  'packages/**',
+  'scripts/**',
+  'services/cloudbase/**',
+  'package.json',
+  'package-lock.json',
+];
+
+const wechatReleaseWorkflowAllowlist = {
+  name: 'WeChat Mini Program Release',
+  on: {
+    pull_request: { paths: releasePaths },
+    push: { branches: ['main'], paths: releasePaths },
+    workflow_dispatch: {
+      inputs: {
+        publish_target: {
+          description: 'Run checks only or upload after protected approval',
+          type: 'choice',
+          required: true,
+          default: 'checks',
+          options: ['checks', 'upload'],
+        },
+        release_version: {
+          description: 'WeChat upload version, for example 1.0.0',
+          required: false,
+          default: '1.0.0',
+        },
+        release_description: {
+          description: 'WeChat upload description',
+          required: false,
+          default: 'SkillScope release candidate',
+        },
+        robot: {
+          description: 'miniprogram-ci robot number 1-30',
+          required: false,
+          default: '1',
+        },
+        disclosure_file: {
+          description: 'Production disclosure JSON path committed by the operator',
+          required: false,
+          default: 'docs/wechat/release-disclosure.production.json',
+        },
+      },
+    },
+  },
+  permissions: { contents: 'read' },
+  concurrency: {
+    group: 'wechat-release-${{ github.workflow }}-${{ github.ref }}',
+    'cancel-in-progress': false,
+  },
+  jobs: {
+    'release-checks': {
+      'runs-on': 'ubuntu-latest',
+      permissions: { contents: 'read' },
+      steps: releaseCheckStepAllowlist,
+    },
+    upload: {
+      if: "github.event_name == 'workflow_dispatch' && inputs.publish_target == 'upload'",
+      needs: 'release-checks',
+      'runs-on': 'ubuntu-latest',
+      environment: { name: 'wechat-production' },
+      permissions: { contents: 'read' },
+      steps: uploadStepAllowlist,
+    },
+  },
+};
+
 verifyWorkflowSyntax();
 verifyPackageScripts();
 verifyWeChatReleaseWorkflow();
@@ -145,6 +215,7 @@ function verifyWeChatReleaseWorkflow() {
   const workflow = parseYamlFile(workflowPath);
   verifyActionPins(workflowPath, workflow);
   verifyInputsAreNotInterpolatedInRunBlocks(workflowPath, workflow);
+  verifyCanonicalWorkflow(workflow, wechatReleaseWorkflowAllowlist);
   const on = workflow.on ?? workflow.true;
   const jobs = workflow.jobs ?? {};
   const releaseChecks = jobs['release-checks'];
@@ -309,6 +380,48 @@ function verifyCanonicalSteps(label, actual, expected) {
       || !isDeepStrictEqual(normalizeStepRuns(actual), normalizeStepRuns(expected))) {
     fail(`${label} steps must exactly match the canonical allowlist`);
   }
+}
+
+function verifyCanonicalWorkflow(actual, expected) {
+  const normalizedActual = normalizeStepRuns(actual);
+  const normalizedExpected = normalizeStepRuns(expected);
+  if (isDeepStrictEqual(normalizedActual, normalizedExpected)) return;
+
+  const difference = findFirstDifference(normalizedActual, normalizedExpected);
+  fail(`canonical workflow mismatch at ${formatPath(difference)}`);
+}
+
+function findFirstDifference(actual, expected, path = []) {
+  if (isDeepStrictEqual(actual, expected)) return null;
+  if (Array.isArray(actual) || Array.isArray(expected)) {
+    if (!Array.isArray(actual) || !Array.isArray(expected)) return path;
+    if (actual.length !== expected.length) return [...path, 'length'];
+    for (let index = 0; index < expected.length; index += 1) {
+      const difference = findFirstDifference(actual[index], expected[index], [...path, index]);
+      if (difference) return difference;
+    }
+    return path;
+  }
+  if (isRecord(actual) || isRecord(expected)) {
+    if (!isRecord(actual) || !isRecord(expected)) return path;
+    for (const key of Object.keys(actual)) {
+      if (!Object.hasOwn(expected, key)) return [...path, key];
+    }
+    for (const key of Object.keys(expected)) {
+      if (!Object.hasOwn(actual, key)) return [...path, key];
+      const difference = findFirstDifference(actual[key], expected[key], [...path, key]);
+      if (difference) return difference;
+    }
+    return path;
+  }
+  return path;
+}
+
+function formatPath(path) {
+  if (!path || path.length === 0) return '<root>';
+  return path.reduce((result, part) => (
+    typeof part === 'number' ? `${result}[${part}]` : result ? `${result}.${part}` : part
+  ), '');
 }
 
 function normalizeStepRuns(value, key = null) {

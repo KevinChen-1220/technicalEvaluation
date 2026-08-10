@@ -158,6 +158,57 @@ describe('WeChat release verification assets', () => {
       }),
     },
     {
+      name: 'a self-hosted release-check runner',
+      expected: /canonical workflow.*jobs\.release-checks\.runs-on/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        workflow.jobs['release-checks']['runs-on'] = ['self-hosted', 'linux'];
+      }),
+    },
+    {
+      name: 'workflow-level run shell defaults',
+      expected: /canonical workflow.*defaults/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        workflow.defaults = { run: { shell: 'bash {0}' } };
+      }),
+    },
+    {
+      name: 'release-check job run shell defaults',
+      expected: /canonical workflow.*jobs\.release-checks\.defaults/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        workflow.jobs['release-checks'].defaults = { run: { shell: 'bash {0}' } };
+      }),
+    },
+    {
+      name: 'BASH_ENV exposed at upload job scope',
+      expected: /canonical workflow.*jobs\.upload\.env/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        workflow.jobs.upload.env = { BASH_ENV: '/tmp/attacker-profile' };
+      }),
+    },
+    {
+      name: 'NODE_OPTIONS exposed at workflow scope',
+      expected: /canonical workflow.*env/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        workflow.env = { NODE_OPTIONS: '--require ./attacker.js' };
+      }),
+    },
+    {
+      name: 'a container on the upload job',
+      expected: /canonical workflow.*jobs\.upload\.container/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        workflow.jobs.upload.container = { image: 'attacker.invalid/release:latest' };
+      }),
+    },
+    {
+      name: 'services on the release-check job',
+      expected: /canonical workflow.*jobs\.release-checks\.services/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        workflow.jobs['release-checks'].services = {
+          proxy: { image: 'attacker.invalid/proxy:latest' },
+        };
+      }),
+    },
+    {
       name: 'an upload job that runs before formal verification',
       expected: /formal.*before.*upload/i,
       mutate: (source: string) => mutateWorkflow(source, (workflow) => {
