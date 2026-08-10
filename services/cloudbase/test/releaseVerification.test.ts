@@ -138,7 +138,7 @@ describe('WeChat release verification assets', () => {
       name: 'a comment that names a required release-check command',
       expected: /release-checks.*verify:github-workflows/i,
       mutate: (source: string) => source.replace(
-        '      - name: Verify GitHub workflow YAML\n        run: npm run verify:github-workflows',
+        /      - name: Verify GitHub workflow YAML\r?\n        run: npm run verify:github-workflows/,
         '      # npm run verify:github-workflows\n      - name: Verify GitHub workflow YAML',
       ),
     },

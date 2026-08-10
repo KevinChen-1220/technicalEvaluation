@@ -1,7 +1,7 @@
 # 2026-08-10 微信开发者工具 CLI 记录
 
 CLI: C:\Program Files (x86)\Tencent\微信web开发者工具\cli.bat
-Project: E:\Project\technicalEvaluation\.worktrees\wechat-mini-program\apps\wechat
+Project: E:\Project\technicalEvaluation\apps\wechat
 
 Status: 微信开发者工具已安装，但 CLI 用户态未初始化。
 

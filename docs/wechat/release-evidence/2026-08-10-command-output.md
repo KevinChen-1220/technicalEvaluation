@@ -1,7 +1,7 @@
 # 2026-08-10 本地发布候选验证输出
 
 Profile: development
-Generated at: 2026-08-10T12:30:53.034Z
+Generated at: 2026-08-10T12:40:33.635Z
 
 ## Commands
 
@@ -12,25 +12,25 @@ clean release artifacts: apps/wechat/dist and services/cloudbase/dist removed
 Status: exit 0
 
 ```text
-PASS services/cloudbase/test/cloudBaseGenerationRepository.test.ts
-PASS src/features/assessment/legacyHistoryMigration.test.ts
+PASS packages/assessment-core/test/assessmentCore.contract.test.ts
 PASS src/services/aiClient.test.ts
-PASS src/features/config/modelConfigStore.test.ts
-PASS src/components/questionMaterialLayout.test.ts
-PASS services/cloudbase/test/cloudBaseRetentionRepository.test.ts
+PASS src/features/assessment/legacyHistoryMigration.test.ts
 PASS services/cloudbase/test/cloudBaseAssessmentRepository.test.ts
+PASS src/features/assessment/wrongQuestionReview.test.ts
+PASS src/layout/mobileLayout.test.ts
+PASS services/cloudbase/test/cloudBaseRetentionRepository.test.ts
+PASS src/features/assessment/samplePaper.test.ts
+PASS src/features/config/modelConfig.test.ts
 PASS src/features/assessment/scoring.test.ts
 PASS src/features/assessment/questionNavigation.test.ts
-PASS src/features/assessment/samplePaper.test.ts
-PASS src/layout/mobileLayout.test.ts
-PASS src/components/loadingAnimation.test.ts
-PASS src/features/config/modelConfig.test.ts
+PASS src/components/questionMaterialLayout.test.ts
 PASS src/features/assessment/assessmentBriefDefaults.test.ts
+PASS src/components/loadingAnimation.test.ts
 
 Test Suites: 34 passed, 34 total
 Tests:       277 passed, 277 total
 Snapshots:   0 total
-Time:        8.269 s
+Time:        8.765 s, estimated 9 s
 Ran all test suites.
 ```
 
@@ -39,25 +39,25 @@ Ran all test suites.
 Status: exit 0
 
 ```text
-PASS test/releaseFixtureClient.test.ts
-PASS test/cloud.test.ts
 PASS test/assessmentSync.test.ts
-PASS test/draftSync.test.ts
-PASS test/generationController.test.ts
+PASS test/resultViewModel.test.ts
 PASS test/privacyFlow.test.ts
 PASS test/viewModel.test.ts
-PASS test/submitFlow.test.ts
-PASS test/resultViewModel.test.ts
 PASS test/cloudRuntime.test.ts
+PASS test/draftDto.test.ts
+PASS test/appStartup.test.ts
 PASS test/navigation.test.ts
 PASS test/materialLayout.test.ts
-PASS test/appStartup.test.ts
-PASS test/draftDto.test.ts
+PASS test/cloud.test.ts
+PASS test/generationController.test.ts
+PASS test/releaseFixtureClient.test.ts
+PASS test/draftSync.test.ts
+PASS test/submitFlow.test.ts
 
 Test Suites: 15 passed, 15 total
 Tests:       77 passed, 77 total
 Snapshots:   0 total
-Time:        4.02 s
+Time:        4.181 s, estimated 16 s
 Ran all test suites.
 ```
 
@@ -70,21 +70,21 @@ PASS test/buildArtifacts.test.ts
 PASS test/generationWorker.test.ts
 PASS test/privacySafetyOps.test.ts
 PASS test/contentSafetyAdapters.test.ts
-PASS test/assessmentService.test.ts
 PASS test/contracts.review.test.ts
-PASS test/cloudBaseDailyQuota.test.ts
-PASS test/assessmentFunctionEntries.test.ts
+PASS test/assessmentService.test.ts
 PASS test/generationJobs.test.ts
+PASS test/assessmentFunctionEntries.test.ts
 PASS test/openAICompletionClient.test.ts
+PASS test/cloudBaseRetentionRepository.test.ts
+PASS test/cloudBaseDailyQuota.test.ts
 PASS test/contracts.test.ts
 PASS test/cloudBaseGenerationRepository.test.ts
 PASS test/cloudBaseAssessmentRepository.test.ts
-PASS test/cloudBaseRetentionRepository.test.ts
 
 Test Suites: 17 passed, 17 total
 Tests:       185 passed, 185 total
 Snapshots:   0 total
-Time:        7.764 s, estimated 8 s
+Time:        8.144 s, estimated 9 s
 Ran all test suites matching /services\\cloudbase\\test/i.
 ```
 
@@ -146,7 +146,7 @@ Status: exit 0
 
 Using (experimental) base path: /technicalEvaluation
 Starting Metro Bundler
-Web Bundled 182ms node_modules\expo\AppEntry.js (209 modules)
+Web Bundled 200ms node_modules\expo\AppEntry.js (187 modules)
 
 › Assets (1):
 node_modules\expo-sqlite\web\wa-sqlite\wa-sqlite.b87fca4d817b5bd329636d467d159c21.wasm (617 kB)
@@ -203,8 +203,8 @@ Status: exit 0
 ```text
 
 
-● Webpack █████████████████████████ sealing (78%)
- chunk modules optimization
+● Webpack █████████████████████████ sealing (87%)
+ code generation
 
 
 ● Webpack █████████████████████████ sealing (88%)
@@ -293,7 +293,7 @@ WeChat DevTools CLI initialization blocker recorded
 
 - apps/wechat/dist/app.json: 839821f2c2685ee8656f7b543dae00d7f4511ebc74bf23ffd30253d1d127c6c6
 - apps/wechat/dist/app.js: dba05d0faf7f47415b297b2318d669351cb320041f2418fe7a7fbb4f6ab35c08
-- services/cloudbase/dist/cloudbaserc.json: 782aafab342bb93a781ede059a0dc9739bae128aa9fe583cabc8d4b13cd57abf
+- services/cloudbase/dist/cloudbaserc.json: b9a9b4581decfcfb5f581f9cbe56ad4034081671a95cd3b0d07ec62b0dc571fb
 
 ## External Blockers
 
