@@ -95,16 +95,6 @@ function verifyWeChatReleaseWorkflow() {
     }
   }
 
-  const secretReferences = collectSecretReferences(workflow);
-  for (const reference of secretReferences) {
-    if (!isUploadEnvironmentPath(reference.path)) {
-      fail(`secret references are only allowed in upload job env: ${reference.name} at ${reference.path.join('.')}`);
-    }
-  }
-  if (secretReferences.some((reference) => reference.path[1] === 'release-checks')) {
-    fail('release-checks job must not reference secrets');
-  }
-
   const uploadIf = String(upload.if ?? '');
   if (uploadIf !== "github.event_name == 'workflow_dispatch' && inputs.publish_target == 'upload'") {
     fail('upload job must be workflow_dispatch-only');
@@ -112,34 +102,64 @@ function verifyWeChatReleaseWorkflow() {
   if (!isExactEnvironment(upload.environment, 'wechat-production')) {
     fail('upload environment must be exactly wechat-production');
   }
+  if (Object.hasOwn(upload, 'timeout-minutes')) {
+    fail('upload job must not define timeout-minutes');
+  }
+  if (hasRunShell(workflow.defaults) || hasRunShell(upload.defaults)) {
+    fail('upload job must use the GitHub default shell failure propagation');
+  }
 
-  const requiredSecrets = [
-    'WECHAT_APP_ID',
-    'WECHAT_PRIVATE_KEY_PEM',
-    'TARO_APP_CLOUDBASE_ENV_ID',
-    'CONTENT_SAFETY_URL',
-    'CONTENT_SAFETY_API_KEY',
-    'CONTENT_SAFETY_PROVIDER',
+  const uploadSteps = Array.isArray(upload.steps) ? upload.steps : [];
+  const protectedStepSpecs = [
+    {
+      label: 'WeChat upload key',
+      name: 'Write WeChat upload key',
+      bindings: [
+        ['WECHAT_PRIVATE_KEY_PEM', 'WECHAT_PRIVATE_KEY_PEM'],
+      ],
+    },
+    {
+      label: 'formal release verification',
+      name: 'Run formal release verification',
+      command: 'npm run verify:wechat-release:formal -- --disclosure-file "$DISCLOSURE_FILE"',
+      bindings: [
+        ['TARO_APP_CLOUDBASE_ENV_ID', 'TARO_APP_CLOUDBASE_ENV_ID'],
+        ['CONTENT_SAFETY_URL', 'CONTENT_SAFETY_URL'],
+        ['CONTENT_SAFETY_API_KEY', 'CONTENT_SAFETY_API_KEY'],
+        ['CONTENT_SAFETY_PROVIDER', 'CONTENT_SAFETY_PROVIDER'],
+      ],
+    },
+    {
+      label: 'WeChat upload',
+      name: 'Upload to WeChat draft',
+      command: 'npm run wechat:ci:upload',
+      bindings: [
+        ['WECHAT_APP_ID', 'WECHAT_APP_ID'],
+      ],
+    },
   ];
-  const configuredSecrets = new Set(secretReferences.map((reference) => reference.name));
-  for (const secret of requiredSecrets) {
-    if (!configuredSecrets.has(secret)) fail(`upload job is missing required upload secret ${secret}`);
+
+  const protectedSteps = new Map();
+  for (const spec of protectedStepSpecs) {
+    const matches = uploadSteps
+      .map((step, index) => ({ step, index }))
+      .filter(({ step }) => isRecord(step) && step.name === spec.name);
+    if (matches.length !== 1) {
+      fail(`upload job must have exactly one ${spec.label} step`);
+      continue;
+    }
+    const resolved = matches[0];
+    protectedSteps.set(spec.name, resolved);
+    if (spec.command) verifyCriticalUploadStep(spec.label, resolved.step, spec.command);
   }
 
-  const uploadRuns = workflowRuns(upload);
-  const formalCommand = 'npm run verify:wechat-release:formal';
-  const uploadCommand = 'npm run wechat:ci:upload';
-  const formalIndexes = commandStartIndexes(uploadRuns, formalCommand);
-  const uploadIndexes = commandStartIndexes(uploadRuns, uploadCommand);
-  if (formalIndexes.length !== 1) {
-    fail(`upload job must have exactly one run starting with ${formalCommand}`);
-  }
-  if (uploadIndexes.length !== 1) {
-    fail(`upload job must have exactly one run starting with ${uploadCommand}`);
-  }
-  if (formalIndexes.length === 1 && uploadIndexes.length === 1 && formalIndexes[0] >= uploadIndexes[0]) {
+  const formalStep = protectedSteps.get('Run formal release verification');
+  const uploadStep = protectedSteps.get('Upload to WeChat draft');
+  if (formalStep && uploadStep && formalStep.index >= uploadStep.index) {
     fail('formal release verification must run before upload');
   }
+
+  verifySecretBindings(workflow, protectedStepSpecs, protectedSteps);
 }
 
 function verifyReleaseIssueTemplates() {
@@ -198,20 +218,77 @@ function workflowRuns(job) {
     .filter((run) => run !== null);
 }
 
-function commandStartIndexes(runs, command) {
-  const indexes = [];
-  for (const [index, run] of runs.entries()) {
-    const firstLine = run.trimStart().split(/\r?\n/, 1)[0].trimEnd();
-    if (firstLine === command || firstLine.startsWith(`${command} `)) indexes.push(index);
+function verifyCriticalUploadStep(label, step, command) {
+  if (step.run !== command) {
+    fail(`${label} step must use the exact command: ${command}`);
   }
-  return indexes;
+  for (const property of ['if', 'continue-on-error', 'timeout-minutes']) {
+    if (Object.hasOwn(step, property)) fail(`${label} step must not define ${property}`);
+  }
+  if (Object.hasOwn(step, 'shell')) {
+    fail(`${label} step must use the default shell failure propagation`);
+  }
+}
+
+function hasRunShell(defaults) {
+  return isRecord(defaults)
+    && isRecord(defaults.run)
+    && Object.hasOwn(defaults.run, 'shell');
+}
+
+function verifySecretBindings(workflow, specs, protectedSteps) {
+  const allowedReferences = new Map();
+  for (const spec of specs) {
+    const resolved = protectedSteps.get(spec.name);
+    if (!resolved) continue;
+    const env = isRecord(resolved.step.env) ? resolved.step.env : {};
+    for (const [envKey, secretName] of spec.bindings) {
+      const expected = `\${{ secrets.${secretName} }}`;
+      if (!Object.hasOwn(env, envKey)) {
+        fail(`upload job is missing required upload secret ${secretName}`);
+      }
+      if (env[envKey] !== expected) {
+        fail(`secret binding ${envKey} must be exactly ${expected}`);
+      }
+      allowedReferences.set(
+        ['jobs', 'upload', 'steps', resolved.index, 'env', envKey].join('.'),
+        secretName,
+      );
+    }
+  }
+
+  for (const reference of collectSecretReferences(workflow)) {
+    if (reference.dynamic) {
+      fail(`dynamic secret indexes are not allowed at ${reference.path.join('.')}`);
+      continue;
+    }
+    const path = reference.path.join('.');
+    const allowedName = allowedReferences.get(path);
+    if (!allowedName || allowedName !== reference.name) {
+      fail(`secret references are only allowed in the corresponding protected upload step env: ${reference.name} at ${path}`);
+    }
+  }
 }
 
 function collectSecretReferences(value, path = [], references = []) {
   if (typeof value === 'string') {
     for (const expression of value.matchAll(/\$\{\{([\s\S]*?)}}/g)) {
-      for (const match of expression[1].matchAll(/\bsecrets\.([a-z_][a-z0-9_]*)\b/gi)) {
-        references.push({ name: match[1].toUpperCase(), path });
+      const body = expression[1];
+      let matchedReferences = 0;
+      for (const match of body.matchAll(
+        /\bsecrets\s*(?:\.\s*([a-z_][a-z0-9_]*)|\[\s*(?:(['"])([a-z_][a-z0-9_]*)\2|([^\]]+))\s*\])/gi,
+      )) {
+        matchedReferences += 1;
+        const staticName = match[1] ?? match[3];
+        references.push({
+          name: staticName ? staticName.toUpperCase() : '<dynamic>',
+          path,
+          dynamic: !staticName,
+        });
+      }
+      const secretTokens = [...body.matchAll(/\bsecrets\b/gi)].length;
+      for (let index = matchedReferences; index < secretTokens; index += 1) {
+        references.push({ name: '<unparsed>', path, dynamic: true });
       }
     }
     return references;
@@ -226,15 +303,6 @@ function collectSecretReferences(value, path = [], references = []) {
     }
   }
   return references;
-}
-
-function isUploadEnvironmentPath(path) {
-  if (path[0] !== 'jobs' || path[1] !== 'upload') return false;
-  if (path[2] === 'env' && path.length === 4) return true;
-  return path[2] === 'steps'
-    && Number.isInteger(path[3])
-    && path[4] === 'env'
-    && path.length === 6;
 }
 
 function isExactEnvironment(environment, expectedName) {

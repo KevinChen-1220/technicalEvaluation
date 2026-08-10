@@ -173,6 +173,90 @@ describe('WeChat release verification assets', () => {
       }),
     },
     {
+      name: 'a formal verifier step guarded by if false',
+      expected: /formal release verification.*must not define if/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        findStep(workflow.jobs.upload.steps, 'Run formal release verification').if = false;
+      }),
+    },
+    {
+      name: 'an upload step guarded by if false',
+      expected: /WeChat upload.*must not define if/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        findStep(workflow.jobs.upload.steps, 'Upload to WeChat draft').if = false;
+      }),
+    },
+    {
+      name: 'a formal verifier step that continues on error',
+      expected: /formal release verification.*continue-on-error/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        findStep(workflow.jobs.upload.steps, 'Run formal release verification')['continue-on-error'] = true;
+      }),
+    },
+    {
+      name: 'an upload step with a shortened timeout',
+      expected: /WeChat upload.*timeout-minutes/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        findStep(workflow.jobs.upload.steps, 'Upload to WeChat draft')['timeout-minutes'] = 1;
+      }),
+    },
+    {
+      name: 'a formal verifier step with a custom shell',
+      expected: /formal release verification.*default shell/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        findStep(workflow.jobs.upload.steps, 'Run formal release verification').shell = 'bash {0}';
+      }),
+    },
+    {
+      name: 'an upload job that inherits a custom run shell',
+      expected: /upload job.*default shell/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        workflow.jobs.upload.defaults = { run: { shell: 'bash {0}' } };
+      }),
+    },
+    {
+      name: 'an upload job with a shortened timeout',
+      expected: /upload job.*timeout-minutes/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        workflow.jobs.upload['timeout-minutes'] = 1;
+      }),
+    },
+    {
+      name: 'a formal verifier command that swallows failure with or true',
+      expected: /formal release verification.*exact command/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        findStep(workflow.jobs.upload.steps, 'Run formal release verification').run += ' || true';
+      }),
+    },
+    {
+      name: 'a formal verifier command with an and true suffix',
+      expected: /formal release verification.*exact command/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        findStep(workflow.jobs.upload.steps, 'Run formal release verification').run += ' && true';
+      }),
+    },
+    {
+      name: 'an upload command with a semicolon exit zero suffix',
+      expected: /WeChat upload.*exact command/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        findStep(workflow.jobs.upload.steps, 'Upload to WeChat draft').run += '; exit 0';
+      }),
+    },
+    {
+      name: 'a formal verifier command piped through another process',
+      expected: /formal release verification.*exact command/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        findStep(workflow.jobs.upload.steps, 'Run formal release verification').run += ' | tee verification.log';
+      }),
+    },
+    {
+      name: 'an upload command with a successful multiline suffix',
+      expected: /WeChat upload.*exact command/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        findStep(workflow.jobs.upload.steps, 'Upload to WeChat draft').run += '\nexit 0';
+      }),
+    },
+    {
       name: 'workflow-level write permissions',
       expected: /workflow permissions.*contents: read/i,
       mutate: (source: string) => mutateWorkflow(source, (workflow) => {
@@ -200,6 +284,59 @@ describe('WeChat release verification assets', () => {
       mutate: (source: string) => mutateWorkflow(source, (workflow) => {
         findStep(workflow.jobs.upload.steps, 'Install dependencies').run =
           'echo "${{ secrets.optional_release_key != \'\' }}" && npm ci';
+      }),
+    },
+    {
+      name: 'a bracket secret expression at workflow scope',
+      expected: /secret references.*protected upload step env/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        workflow.env = { RELEASE_KEY: "${{ secrets['WECHAT_APP_ID'] }}" };
+      }),
+    },
+    {
+      name: 'a dynamic bracket secret expression in release-checks',
+      expected: /dynamic secret indexes.*not allowed/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        workflow.jobs['release-checks'].env = {
+          RELEASE_KEY: '${{ secrets[inputs.secret_name] }}',
+        };
+      }),
+    },
+    {
+      name: 'required upload secrets mapped to the wrong env keys',
+      expected: /secret binding.*WECHAT_APP_ID.*secrets\.WECHAT_APP_ID/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        const keyStep = findStep(workflow.jobs.upload.steps, 'Write WeChat upload key');
+        const uploadStep = findStep(workflow.jobs.upload.steps, 'Upload to WeChat draft');
+        keyStep.env!.WECHAT_PRIVATE_KEY_PEM = '${{ secrets.WECHAT_APP_ID }}';
+        uploadStep.env!.WECHAT_APP_ID = '${{ secrets.WECHAT_PRIVATE_KEY_PEM }}';
+      }),
+    },
+    {
+      name: 'a required secret moved to an alias env key',
+      expected: /secret binding.*WECHAT_APP_ID.*secrets\.WECHAT_APP_ID/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        const uploadStep = findStep(workflow.jobs.upload.steps, 'Upload to WeChat draft');
+        delete uploadStep.env!.WECHAT_APP_ID;
+        uploadStep.env!.APP_ID_ALIAS = '${{ secrets.WECHAT_APP_ID }}';
+      }),
+    },
+    {
+      name: 'a required secret exposed at upload job scope',
+      expected: /secret references.*protected upload step env/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        const uploadStep = findStep(workflow.jobs.upload.steps, 'Upload to WeChat draft');
+        delete uploadStep.env!.WECHAT_APP_ID;
+        workflow.jobs.upload.env = { WECHAT_APP_ID: '${{ secrets.WECHAT_APP_ID }}' };
+      }),
+    },
+    {
+      name: 'a bracket secret binding hidden behind a duplicate dot reference',
+      expected: /secret binding.*WECHAT_APP_ID.*secrets\.WECHAT_APP_ID/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        const uploadStep = findStep(workflow.jobs.upload.steps, 'Upload to WeChat draft');
+        uploadStep.env!.WECHAT_APP_ID = "${{ secrets['WECHAT_APP_ID'] }}";
+        uploadStep.env!.APP_ID_ALIAS = '${{ secrets.WECHAT_APP_ID }}';
       }),
     },
     {
@@ -628,6 +765,10 @@ type WorkflowStep = {
   name?: string;
   run?: string;
   env?: Record<string, string>;
+  if?: string | boolean;
+  shell?: string;
+  'continue-on-error'?: boolean | string;
+  'timeout-minutes'?: number | string;
 };
 
 function mutateWorkflow(source: string, mutate: (workflow: any) => void): string {

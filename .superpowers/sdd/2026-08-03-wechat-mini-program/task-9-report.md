@@ -26,14 +26,17 @@ The remaining actions require real WeChat subject/AppID, legal filing and disclo
 - RED/GREEN doc clarity fix: added failing coverage for filing/smoke issue cross-links, `CONTENT_SAFETY_PROVIDER`, and PowerShell/Bash upload examples, then updated the templates/docs.
 - RED/GREEN P2 review fix: 9 workflow mutations were first accepted by the old raw-text verifier (comment spoof, echo spoof, missing `needs`, reversed upload order, workflow/job permission escalation, secret outside upload `env`, missing secret hidden in a comment, and altered environment). The structured verifier then rejected every mutation.
 - RED/GREEN secret-expression hardening: a tenth mutation using a conditional lowercase secret expression outside upload `env` was first accepted, then rejected after secret collection was changed to inspect every parsed GitHub expression and normalize secret names.
+- RED/GREEN final workflow P2 fix: 13 new mutations were first accepted for guarded/continue-on-error/timed/custom-shell critical steps, failure-swallowing or multiline commands, bracket/dynamic secret expressions, wrong env-to-secret mappings, aliases, and job-scoped secret exposure. Two inherited job semantics mutations were then first accepted and fixed for custom `defaults.run.shell` and job-level `timeout-minutes`.
+- Exact-command coverage also includes explicit `&& true`, `; exit 0`, and pipeline mutations. These share the already-red/green exact-command gate with `|| true` and multiline suffixes. The workflow verifier now has 28 cumulative mutation cases.
 
 ## P2 Structured Workflow Review Fix
 
 - `scripts/verify-github-workflows.mjs` now validates release workflow semantics from parsed YAML JSON only. Comments and arbitrary raw YAML substrings do not satisfy release gates.
 - `upload.needs` must resolve to exactly `release-checks`; workflow and every job must declare exactly `contents: read` permissions.
 - Required `release-checks` commands are matched against complete parsed `step.run` values, so comments and `echo` commands cannot impersonate them.
-- The formal verifier and WeChat upload are identified by exact npm command starts, must each occur once, and formal verification must precede upload.
-- Secret references are collected from parsed expression values, may exist only under `jobs.upload.env` or `jobs.upload.steps[*].env`, and all six required production secrets must be present.
+- The formal verifier and WeChat upload are identified by their unique step names; each `run` value must equal one allowed command in full. Step-level `if`, `continue-on-error`, `timeout-minutes`, and `shell` are forbidden, as are inherited custom run shells and upload job timeouts. Formal verification must precede upload and `upload.needs` remains exactly `release-checks`.
+- Secret references are collected from parsed expression values using dot, quoted bracket, and dynamic bracket forms. Dynamic indexes are forbidden. Workflow/job/release-checks and non-whitelisted upload locations cannot reference secrets.
+- Six required env keys are bound one-to-one to exact `${{ secrets.NAME }}` values on the three protected upload steps. Aliases, swapped names, bracket substitutions, missing keys, and job-level secret exposure are rejected.
 - The upload environment must be exactly `wechat-production`, without extra dynamic fields.
 - The verifier accepts `--release-workflow <path>` only to pressure-test real validation behavior against temporary mutation fixtures.
 
@@ -43,17 +46,17 @@ The remaining actions require real WeChat subject/AppID, legal filing and disclo
 - First review Important item fixed: official GitHub Actions are pinned to full commit SHAs in `ci.yml`, `pages.yml`, and `wechat-release.yml`.
 - Second review Important item fixed: `workflow_dispatch` `disclosure_file` is no longer interpolated directly in shell `run` scripts.
 - Task 9 P2 follow-up fixed: release workflow checks no longer depend on raw-text `includes` or section slicing.
-- Two read-only Claude CLI review attempts for the P2 follow-up timed out without output. No reviewer result was treated as approval; mutation tests, full release verification, and a manual diff audit were used as the submission gates.
+- Three read-only Claude CLI review attempts across the P2 follow-ups timed out without output, including a final stdin-only diff review. No reviewer result was treated as approval; mutation tests, full release verification, and a manual diff audit were used as the submission gates.
 - Audit finding remains informational and documented in `docs/wechat/release-audit.md`: `npm audit --omit=optional --json` reports 125 advisories in upstream/dependency paths. This does not block local handoff, but production owners should track it before formal release.
 
 ## Verification
 
 - `npm run verify:github-workflows`: passed.
-- Focused GREEN after P2 mutations: `npm run test:cloudbase -- --runInBand releaseVerification.test.ts`: 17 suites / 153 tests passed.
+- Focused GREEN after final workflow P2 mutations: `npm run test:cloudbase -- --runInBand releaseVerification.test.ts`: 17 suites / 171 tests passed.
 - Full local release verifier: `npm run verify:wechat-release`: passed for development profile.
-- Root tests: 34 suites / 245 tests passed.
+- Root tests: 34 suites / 263 tests passed.
 - WeChat tests: 15 suites / 77 tests passed.
-- CloudBase tests: 17 suites / 153 tests passed.
+- CloudBase tests: 17 suites / 171 tests passed.
 - Typechecks: root, WeChat, and CloudBase passed inside `verify:wechat-release`.
 - Builds: CloudBase, Expo web export, and WeChat `build:weapp` passed inside `verify:wechat-release`.
 - Secret scans: source and WeChat dist passed inside `verify:wechat-release`, then source/dist were run again after evidence refresh.
