@@ -1,5 +1,5 @@
 import { GenerationServiceError } from '../generation/errors';
-import type { TextModerationPort } from '../moderation/ports';
+import { allowAllTextModeration, denyAllTextModeration, type TextModerationPort } from '../moderation/ports';
 
 type WeChatOpenApi = {
   security?: {
@@ -22,10 +22,14 @@ export function createWeChatMsgSecCheckModeration(options: {
   if (checker === undefined && production) {
     throw new GenerationServiceError('CONFIGURATION_ERROR', false);
   }
+  if (checker === undefined) {
+    return options.environment.SKILLSCOPE_ALLOW_UNSAFE_MODERATION === 'true'
+      ? allowAllTextModeration
+      : denyAllTextModeration;
+  }
 
   return {
     async checkText(input) {
-      if (checker === undefined) return { allowed: true };
       try {
         const result = await checker({
           openid: input.ownerOpenId,

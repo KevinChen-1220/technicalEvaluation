@@ -64,9 +64,9 @@
     {
       "name": "user_reports",
       "documentSchemaVersion": 1,
-      "required": ["_id", "_openid", "schemaVersion", "assessmentId", "reason", "policyVersion", "status", "createdAt", "updatedAt"],
+      "required": ["_id", "_openid", "schemaVersion", "reason", "policyVersion", "status", "createdAt", "updatedAt"],
       "properties": {
-        "assessmentId": "string",
+        "assessmentId": "string?",
         "reason": ["question_error", "content_safety", "privacy", "other"],
         "detail": "string?",
         "policyVersion": "string",

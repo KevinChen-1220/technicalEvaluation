@@ -183,6 +183,61 @@ describe('generation worker output safety', () => {
 });
 
 describe('reports and retention', () => {
+  test.each(['privacy', 'other'] as const)('allows %s reports without an assessment', async (reason) => {
+    const reports = new MemoryReportRepository();
+    const findOwnedAssessment = jest.fn();
+    wxServerSdk.getWXContext.mockReturnValue({ OPENID: 'owner-1' });
+
+    await expect(createReport({
+      reason,
+      detail: '一般反馈',
+      policyVersion: CURRENT_PRIVACY_POLICY_VERSION,
+    }, getTrustedWeChatContext(), {
+      repository: reports,
+      assessments: { findOwnedAssessment },
+      clock: { now: () => now },
+      ids: { reportId: () => 'report-general' },
+    })).resolves.toEqual({ type: 'created', reportId: 'report-general' });
+
+    expect(findOwnedAssessment).not.toHaveBeenCalled();
+    expect(reports.records[0]).not.toHaveProperty('assessmentId');
+  });
+
+  test.each(['question_error', 'content_safety'] as const)('requires an owned assessment for %s reports', async (reason) => {
+    const reports = new MemoryReportRepository();
+    wxServerSdk.getWXContext.mockReturnValue({ OPENID: 'owner-1' });
+
+    await expect(createReport({
+      reason,
+      policyVersion: CURRENT_PRIVACY_POLICY_VERSION,
+    }, getTrustedWeChatContext(), {
+      repository: reports,
+      assessments: { findOwnedAssessment: jest.fn() },
+      clock: { now: () => now },
+      ids: { reportId: () => 'report-1' },
+    })).resolves.toEqual({ type: 'invalid', errorCode: 'INVALID_REQUEST' });
+    expect(reports.records).toHaveLength(0);
+  });
+
+  test('rejects an optional assessment id that is not owned by the privacy reporter', async () => {
+    const reports = new MemoryReportRepository();
+    const findOwnedAssessment = jest.fn(async () => null);
+    wxServerSdk.getWXContext.mockReturnValue({ OPENID: 'owner-1' });
+
+    await expect(createReport({
+      assessmentId: 'foreign-assessment',
+      reason: 'privacy',
+      policyVersion: CURRENT_PRIVACY_POLICY_VERSION,
+    }, getTrustedWeChatContext(), {
+      repository: reports,
+      assessments: { findOwnedAssessment },
+      clock: { now: () => now },
+      ids: { reportId: () => 'report-1' },
+    })).resolves.toEqual({ type: 'invalid', errorCode: 'INVALID_REQUEST' });
+    expect(findOwnedAssessment).toHaveBeenCalledWith('foreign-assessment', 'owner-1');
+    expect(reports.records).toHaveLength(0);
+  });
+
   test('creates an owner-isolated report with bounded client fields and trusted metadata', async () => {
     const reports = new MemoryReportRepository();
     const assessments = [makeAssessment('assessment-1', 'owner-1')];

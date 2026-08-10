@@ -84,15 +84,33 @@ describe('content safety adapters', () => {
     })).resolves.toEqual({ allowed: false });
   });
 
-  test('requires HTTPS output moderation configuration in formal production', () => {
+  test('fails closed without moderation capabilities unless unsafe bypass is explicit and non-production', async () => {
     expect(() => createHttpsContentSafetyModeration({
       environment: { SKILLSCOPE_ENV: 'production' },
       fetch: jest.fn() as unknown as ContentSafetyFetchTransport,
     })).toThrow(expect.objectContaining({ code: 'CONFIGURATION_ERROR', retryable: false }));
-    expect(createHttpsContentSafetyModeration({
+
+    const defaultOutput = createHttpsContentSafetyModeration({
       environment: { SKILLSCOPE_ENV: 'development' },
       fetch: jest.fn() as unknown as ContentSafetyFetchTransport,
-    })).toBeDefined();
+    });
+    const defaultInput = createWeChatMsgSecCheckModeration({
+      openapi: {},
+      environment: { SKILLSCOPE_ENV: 'development' },
+    });
+    const request = { ownerOpenId: 'owner-1', content: 'x', scene: 'generation_output' as const, title: 'x' };
+    await expect(defaultOutput.checkText(request)).resolves.toEqual({ allowed: false });
+    await expect(defaultInput.checkText({ ...request, scene: 'generation_input' })).resolves.toEqual({ allowed: false });
+
+    const unsafeOutput = createHttpsContentSafetyModeration({
+      environment: { SKILLSCOPE_ENV: 'development', SKILLSCOPE_ALLOW_UNSAFE_MODERATION: 'true' },
+      fetch: jest.fn() as unknown as ContentSafetyFetchTransport,
+    });
+    await expect(unsafeOutput.checkText(request)).resolves.toEqual({ allowed: true });
+    expect(() => createHttpsContentSafetyModeration({
+      environment: { SKILLSCOPE_ENV: 'production', SKILLSCOPE_ALLOW_UNSAFE_MODERATION: 'true' },
+      fetch: jest.fn() as unknown as ContentSafetyFetchTransport,
+    })).toThrow(expect.objectContaining({ code: 'CONFIGURATION_ERROR' }));
   });
 
   test('aborts a hung output moderation request on its own timeout and fails closed', async () => {

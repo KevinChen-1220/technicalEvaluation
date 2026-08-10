@@ -18,3 +18,9 @@ export const allowAllTextModeration: TextModerationPort = {
     return { allowed: true };
   },
 };
+
+export const denyAllTextModeration: TextModerationPort = {
+  async checkText() {
+    return { allowed: false };
+  },
+};

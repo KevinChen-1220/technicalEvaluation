@@ -36,15 +36,18 @@ export async function createReport(
   const parsed = parseReportInput(input);
   if (ownerOpenId === null || parsed === null) return invalid;
 
-  const assessment = await dependencies.assessments.findOwnedAssessment(parsed.assessmentId, ownerOpenId);
-  if (assessment === null) return invalid;
+  if (requiresAssessment(parsed.reason) && parsed.assessmentId === undefined) return invalid;
+  if (parsed.assessmentId !== undefined) {
+    const assessment = await dependencies.assessments.findOwnedAssessment(parsed.assessmentId, ownerOpenId);
+    if (assessment === null) return invalid;
+  }
 
   const now = dependencies.clock.now().toISOString();
   const report: UserReport = {
     _id: dependencies.ids.reportId(),
     _openid: ownerOpenId,
     schemaVersion: COLLECTION_SCHEMA_VERSION,
-    assessmentId: parsed.assessmentId,
+    ...(parsed.assessmentId === undefined ? {} : { assessmentId: parsed.assessmentId }),
     reason: parsed.reason,
     ...(parsed.detail === undefined ? {} : { detail: parsed.detail }),
     policyVersion: parsed.policyVersion,
@@ -57,20 +60,19 @@ export async function createReport(
 }
 
 function parseReportInput(input: unknown): {
-  assessmentId: string;
+  assessmentId?: string;
   reason: ReportReason;
   detail?: string;
   policyVersion: string;
 } | null {
   if (!isRecord(input)) return null;
-  if (typeof input.assessmentId !== 'string' || typeof input.reason !== 'string' || typeof input.policyVersion !== 'string') {
+  if ((input.assessmentId !== undefined && typeof input.assessmentId !== 'string') || typeof input.reason !== 'string' || typeof input.policyVersion !== 'string') {
     return null;
   }
-  const assessmentId = input.assessmentId.trim();
+  const assessmentId = typeof input.assessmentId === 'string' ? input.assessmentId.trim() : undefined;
   const policyVersion = input.policyVersion.trim();
   if (
-    assessmentId.length === 0
-    || assessmentId.length > 128
+    (assessmentId !== undefined && (assessmentId.length === 0 || assessmentId.length > 128))
     || policyVersion !== CURRENT_PRIVACY_POLICY_VERSION
     || !isReportReason(input.reason)
   ) return null;
@@ -80,11 +82,15 @@ function parseReportInput(input: unknown): {
   const trimmedDetail = detail?.trim();
   if (trimmedDetail !== undefined && trimmedDetail.length > 500) return null;
   return {
-    assessmentId,
+    ...(assessmentId === undefined ? {} : { assessmentId }),
     reason: input.reason,
     policyVersion,
     ...(trimmedDetail === undefined || trimmedDetail.length === 0 ? {} : { detail: trimmedDetail }),
   };
+}
+
+function requiresAssessment(reason: ReportReason): boolean {
+  return reason === 'question_error' || reason === 'content_safety';
 }
 
 function isReportReason(value: string): value is ReportReason {

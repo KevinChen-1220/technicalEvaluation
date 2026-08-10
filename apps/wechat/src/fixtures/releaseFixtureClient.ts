@@ -28,10 +28,15 @@ const fixtureMarker = 'SKILLSCOPE_RELEASE_FIXTURE_MODE';
 export function createReleaseFixtureCloudClient(options: FixtureOptions = {}) {
   const now = options.now ?? (() => new Date().toISOString());
   const records = new Map<string, StoredFixture>();
+  const requests = new Map<string, StoredFixture>();
   let sequence = 0;
 
   return {
     async createGenerationJob(input: CreateGenerationInput): Promise<{ jobId: string; status: GenerationJobStatus['status'] }> {
+      if (input.clientRequestId !== undefined) {
+        const existing = requests.get(input.clientRequestId);
+        if (existing !== undefined) return { jobId: existing.job.jobId, status: existing.job.status };
+      }
       sequence += 1;
       const createdAt = now();
       const assessmentId = `fixture-assessment-${sequence}-${input.questionCount}`;
@@ -61,7 +66,9 @@ export function createReleaseFixtureCloudClient(options: FixtureOptions = {}) {
         retryable: false,
         assessmentId,
       };
-      records.set(assessmentId, { job, fullPaper, assessment });
+      const stored = { job, fullPaper, assessment };
+      records.set(assessmentId, stored);
+      if (input.clientRequestId !== undefined) requests.set(input.clientRequestId, stored);
       return { jobId, status: 'completed' };
     },
     async getGenerationJob(input: { jobId: string }): Promise<GenerationJobStatus> {

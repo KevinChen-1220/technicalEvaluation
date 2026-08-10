@@ -3,6 +3,7 @@ import { AssessmentSyncQueue } from '../answer/syncQueue';
 import { cloudClient } from '../services/cloud';
 import { createAssessmentCache, type StoragePort } from './assessmentCache';
 import { createPrivacyConsentStore } from './privacyConsent';
+import { createGenerationIntentStore } from './generationIntent';
 
 const taroStorage: StoragePort = {
   get<T>(key: string): T | undefined {
@@ -16,6 +17,7 @@ const taroStorage: StoragePort = {
 
 export const assessmentCache = createAssessmentCache(taroStorage);
 export const privacyConsentStore = createPrivacyConsentStore(taroStorage);
+export const generationIntentStore = createGenerationIntentStore(taroStorage);
 export const assessmentSyncQueue = new AssessmentSyncQueue({
   cache: assessmentCache,
   updateAssessment: cloudClient.updateAssessment,

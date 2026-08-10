@@ -92,13 +92,12 @@ describe('GenerationController', () => {
     expect(events).toEqual(['fetch', 'cache', 'navigate:assessment-1']);
   });
 
-  test('retry creates a new job and exposes a safe localized error', async () => {
-    const createJob = jest.fn()
-      .mockResolvedValueOnce({ jobId: 'job-1', status: 'queued' })
-      .mockResolvedValueOnce({ jobId: 'job-2', status: 'queued' });
+  test('retry after a known job poll failure continues polling the same job', async () => {
+    const createJob = jest.fn().mockResolvedValue({ jobId: 'job-1', status: 'queued' });
     const getJob = jest.fn()
-      .mockResolvedValueOnce({ jobId: 'job-1', status: 'failed', progress: 10, retryable: true, errorCode: 'PROVIDER_ERROR' })
-      .mockResolvedValueOnce({ jobId: 'job-2', status: 'completed', progress: 100, retryable: false, assessmentId: 'assessment-1' });
+      .mockRejectedValueOnce(Object.assign(new Error('network'), { errorCode: 'REQUEST_TIMEOUT' }))
+      .mockResolvedValueOnce({ jobId: 'job-1', status: 'completed', progress: 100, retryable: false, assessmentId: 'assessment-1' });
+    const intentStore = memoryIntentStore();
     const controller = new GenerationController({
       createJob,
       getJob,
@@ -106,13 +105,76 @@ describe('GenerationController', () => {
       cacheAssessment: () => undefined,
       navigate: async () => undefined,
       sleep: async () => undefined,
-    });
+    }, { intentStore, createRequestId: () => 'request-1' } as never);
 
     await controller.start(request);
-    expect(controller.getState()).toMatchObject({ status: 'failed', error: '生成服务暂时不可用，请稍后重试。' });
+    expect(controller.getState()).toMatchObject({ status: 'failed', error: '生成等待超时，请重新生成。', jobId: 'job-1' });
+    await controller.retry(request);
+
+    expect(createJob).toHaveBeenCalledTimes(1);
+    expect(getJob).toHaveBeenNthCalledWith(2, 'job-1');
+    expect(controller.getState().status).toBe('completed');
+  });
+
+  test('persists a request id before create and reuses it after create timeout', async () => {
+    const createJob = jest.fn()
+      .mockRejectedValueOnce(Object.assign(new Error('timeout'), { errorCode: 'REQUEST_TIMEOUT' }))
+      .mockResolvedValueOnce({ jobId: 'job-1', status: 'queued' });
+    const intentStore = memoryIntentStore();
+    const controller = new GenerationController({
+      createJob,
+      getJob: async () => ({ jobId: 'job-1', status: 'completed', progress: 100, retryable: false, assessmentId: 'assessment-1' }),
+      getAssessment: async () => assessment,
+      cacheAssessment: () => undefined,
+      navigate: async () => undefined,
+      sleep: async () => undefined,
+    }, { intentStore, createRequestId: () => 'stable-request-1' } as never);
+
+    await controller.start(request);
+    expect(intentStore.load()).toMatchObject({ clientRequestId: 'stable-request-1' });
     await controller.retry(request);
 
     expect(createJob).toHaveBeenCalledTimes(2);
+    expect(createJob.mock.calls[0]?.[0]).toMatchObject({ clientRequestId: 'stable-request-1' });
+    expect(createJob.mock.calls[1]?.[0]).toMatchObject({ clientRequestId: 'stable-request-1' });
+  });
+
+  test('an explicit new generation creates and persists a new request id', async () => {
+    const ids = ['request-1', 'request-2'];
+    const createJob = jest.fn()
+      .mockResolvedValueOnce({ jobId: 'job-1', status: 'queued' })
+      .mockResolvedValueOnce({ jobId: 'job-2', status: 'queued' });
+    const intentStore = memoryIntentStore();
+    const getJob = jest.fn()
+      .mockResolvedValueOnce({ jobId: 'job-1', status: 'failed', progress: 100, retryable: false, errorCode: 'PROVIDER_ERROR' })
+      .mockResolvedValueOnce({ jobId: 'job-2', status: 'completed', progress: 100, retryable: false, assessmentId: 'assessment-1' });
+    const controller = new GenerationController({
+      createJob, getJob, getAssessment: async () => assessment,
+      cacheAssessment: () => undefined, navigate: async () => undefined, sleep: async () => undefined,
+    }, { intentStore, createRequestId: () => ids.shift()! } as never);
+
+    await controller.start(request);
+    await controller.start({ ...request, topic: 'Rust' });
+
+    expect(createJob.mock.calls.map((call) => call[0].clientRequestId)).toEqual(['request-1', 'request-2']);
+  });
+
+  test('restores a persisted pending intent after controller recreation', async () => {
+    const intentStore = memoryIntentStore();
+    intentStore.save({ clientRequestId: 'request-1', input: request, jobId: 'job-1' });
+    const createJob = jest.fn();
+    const getJob = jest.fn(async () => ({
+      jobId: 'job-1', status: 'completed' as const, progress: 100, retryable: false, assessmentId: 'assessment-1',
+    }));
+    const controller = new GenerationController({
+      createJob, getJob, getAssessment: async () => assessment,
+      cacheAssessment: () => undefined, navigate: async () => undefined, sleep: async () => undefined,
+    }, { intentStore, createRequestId: () => 'must-not-be-used' } as never);
+
+    await expect((controller as unknown as { resumePending(): Promise<boolean> }).resumePending()).resolves.toBe(true);
+
+    expect(createJob).not.toHaveBeenCalled();
+    expect(getJob).toHaveBeenCalledWith('job-1');
     expect(controller.getState().status).toBe('completed');
   });
 
@@ -185,3 +247,12 @@ const assessment: CachedAssessment = {
     questions: [],
   },
 };
+
+function memoryIntentStore() {
+  let value: unknown;
+  return {
+    load: () => value,
+    save: (next: unknown) => { value = next; },
+    clear: () => { value = undefined; },
+  };
+}

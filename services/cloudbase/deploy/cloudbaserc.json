@@ -79,7 +79,14 @@
       "handler": "index.main",
       "runtime": "Nodejs20.19",
       "timeout": 600,
-      "installDependency": true
+      "installDependency": true,
+      "triggers": [
+        {
+          "name": "generation-worker-every-minute",
+          "type": "timer",
+          "config": "0 */1 * * * * *"
+        }
+      ]
     },
     {
       "name": "retention-cleanup",

@@ -2,5 +2,8 @@
   "name": "create-report",
   "version": "1.0.0",
   "main": "index.js",
-  "private": true
+  "private": true,
+  "dependencies": {
+    "wx-server-sdk": "4.0.2"
+  }
 }

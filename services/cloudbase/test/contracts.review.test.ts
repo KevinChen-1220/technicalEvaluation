@@ -75,6 +75,8 @@ describe('CloudBase deployable configuration', () => {
         required: expect.arrayContaining(['_id', '_openid', 'utcDay', 'count']),
       }),
     ]));
+    const reports = collections.collections?.find((collection) => collection.name === 'user_reports');
+    expect(reports?.required).not.toContain('assessmentId');
     expect(indexes.indexes).toEqual(expect.arrayContaining([
       expect.objectContaining({
         collection: 'daily_generation_quotas',
@@ -167,7 +169,8 @@ describe('CloudBase deployable configuration', () => {
       }),
       expect.objectContaining({
         name: 'user_reports',
-        required: expect.arrayContaining(['_id', '_openid', 'assessmentId', 'reason', 'policyVersion', 'status', 'createdAt']),
+        required: expect.arrayContaining(['_id', '_openid', 'reason', 'policyVersion', 'status', 'createdAt']),
+        properties: expect.objectContaining({ assessmentId: 'string?' }),
       }),
     ]));
     expect(indexes.indexes).toEqual(expect.arrayContaining([

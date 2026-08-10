@@ -10,7 +10,7 @@ import {
   type PrivacyConsentRecord,
 } from '../../privacy/consent';
 import { createMiniProgramShellState, normalizeQuestionCount } from '../../shell/viewModel';
-import { assessmentCache, privacyConsentStore } from '../../storage/runtime';
+import { assessmentCache, generationIntentStore, privacyConsentStore } from '../../storage/runtime';
 
 export default function GeneratePage() {
   const shell = createMiniProgramShellState();
@@ -37,10 +37,13 @@ export default function GeneratePage() {
       },
       sleep: (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
       onChange: setGeneration,
-    });
+    }, { intentStore: generationIntentStore });
   }
 
-  useEffect(() => () => controllerRef.current?.cancel(), []);
+  useEffect(() => {
+    void controllerRef.current?.resumePending();
+    return () => controllerRef.current?.cancel();
+  }, []);
   useEffect(() => {
     let mounted = true;
     async function refreshConsent(): Promise<void> {
@@ -94,11 +97,14 @@ export default function GeneratePage() {
       void Taro.showToast({ title: '请输入测评主题', icon: 'none' });
       return;
     }
-    void controllerRef.current?.start({
+    const input = {
       topic,
       ...(notes.trim().length === 0 ? {} : { notes }),
       questionCount,
-    });
+    };
+    void (generation.status === 'failed' && generation.retryable !== false
+      ? controllerRef.current?.retry(input)
+      : controllerRef.current?.start(input));
   }
 
   return (
@@ -171,7 +177,7 @@ export default function GeneratePage() {
             <Text>生成中 {generation.progress}%</Text>
             <View className='button-loading__dots'><Text /><Text /><Text /></View>
           </View>
-        ) : generation.status === 'failed' ? '重新生成' : shell.generate.submitLabel}
+        ) : generation.status === 'failed' && generation.retryable !== false ? '重试生成' : shell.generate.submitLabel}
       </Button>
       {active ? <Button className='cancel-action' onClick={() => controllerRef.current?.cancel()}>取消</Button> : null}
       {generation.status === 'failed' ? <Text className='generation-error'>{generation.error}</Text> : null}

@@ -13,19 +13,19 @@ const reasons: Array<{ value: CreateReportInput['reason']; label: string }> = [
 
 export default function ReportPage() {
   const assessmentId = useRouter().params.assessmentId ?? '';
-  const [reason, setReason] = useState<CreateReportInput['reason']>('question_error');
+  const [reason, setReason] = useState<CreateReportInput['reason']>(assessmentId ? 'question_error' : 'privacy');
   const [detail, setDetail] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   async function submit(): Promise<void> {
-    if (!assessmentId) {
+    if (requiresAssessment(reason) && !assessmentId) {
       await Taro.showToast({ title: '请从测评结果页提交', icon: 'none' });
       return;
     }
     setSubmitting(true);
     try {
       await cloudClient.createReport({
-        assessmentId,
+        ...(assessmentId ? { assessmentId } : {}),
         reason,
         ...(detail.trim().length === 0 ? {} : { detail }),
         policyVersion: CURRENT_PRIVACY_POLICY_VERSION,
@@ -43,7 +43,7 @@ export default function ReportPage() {
     <View className='app-page'>
       <View className='page-header'>
         <Text className='page-title'>投诉与反馈</Text>
-        <Text className='page-subtitle'>{assessmentId ? '提交这份测评的反馈。' : '请从测评结果页进入，以便定位具体记录。'}</Text>
+        <Text className='page-subtitle'>{assessmentId ? '提交这份测评的反馈。' : '可提交隐私问题或一般反馈。'}</Text>
       </View>
       <View className='reason-control'>
         {reasons.map((item) => (
@@ -68,9 +68,13 @@ export default function ReportPage() {
           onInput={(event) => setDetail(event.detail.value)}
         />
       </View>
-      <Button className='primary-action' disabled={submitting || !assessmentId} onClick={() => { void submit(); }}>
+      <Button className='primary-action' disabled={submitting || (requiresAssessment(reason) && !assessmentId)} onClick={() => { void submit(); }}>
         {submitting ? '提交中...' : '提交反馈'}
       </Button>
     </View>
   );
+}
+
+function requiresAssessment(reason: CreateReportInput['reason']): boolean {
+  return reason === 'question_error' || reason === 'content_safety';
 }

@@ -105,7 +105,7 @@ export type UserReport = {
   _id: string;
   _openid: string;
   schemaVersion: typeof COLLECTION_SCHEMA_VERSION;
-  assessmentId: string;
+  assessmentId?: string;
   reason: ReportReason;
   detail?: string;
   policyVersion: string;

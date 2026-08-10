@@ -1,5 +1,6 @@
 import type { CachedAssessment } from '../storage/assessmentCache';
 import type { CreateGenerationInput, GenerationJobStatus } from '../services/cloud';
+import type { GenerationIntent, GenerationIntentStore } from '../storage/generationIntent';
 
 export type GenerationState = {
   status: 'idle' | 'creating' | 'polling' | 'completed' | 'failed' | 'cancelled';
@@ -26,6 +27,8 @@ const defaultMaxPollingDurationMs = 5 * 60 * 1000;
 type GenerationControllerOptions = {
   maxPollingDurationMs?: number;
   now?: () => number;
+  intentStore?: GenerationIntentStore;
+  createRequestId?: () => string;
 };
 
 export class GenerationController {
@@ -35,6 +38,8 @@ export class GenerationController {
 
   private readonly maxPollingDurationMs: number;
   private readonly now: () => number;
+  private readonly intentStore: GenerationIntentStore;
+  private readonly createRequestId: () => string;
 
   constructor(
     private readonly dependencies: GenerationDependencies,
@@ -42,6 +47,8 @@ export class GenerationController {
   ) {
     this.maxPollingDurationMs = options.maxPollingDurationMs ?? defaultMaxPollingDurationMs;
     this.now = options.now ?? Date.now;
+    this.intentStore = options.intentStore ?? memoryIntentStore();
+    this.createRequestId = options.createRequestId ?? defaultRequestId;
   }
 
   getState(): GenerationState {
@@ -50,27 +57,53 @@ export class GenerationController {
 
   async start(input: CreateGenerationInput): Promise<boolean> {
     if (this.active) return false;
+    const intent = newIntent(input, this.createRequestId());
+    this.intentStore.save(intent);
+    return this.createAndPoll(intent);
+  }
+
+  async retry(input: CreateGenerationInput): Promise<boolean> {
+    if (this.active) return false;
+    const persisted = this.intentStore.load();
+    if (persisted === undefined || !sameInput(persisted.input, input)) return this.start(input);
+    if (persisted.jobId === undefined) return this.createAndPoll(persisted);
+
     this.active = true;
     const currentRun = this.runId += 1;
-    this.setState({ status: 'creating', progress: 0 });
-
+    this.setState({ status: 'polling', progress: this.state.progress, jobId: persisted.jobId });
     try {
-      const job = await this.dependencies.createJob(input);
-      if (!this.isCurrent(currentRun)) return true;
-      this.setState({ status: 'polling', progress: 0, jobId: job.jobId });
-      await this.poll(job.jobId, currentRun);
+      await this.poll(persisted.jobId, currentRun);
     } catch (error) {
-      if (this.isCurrent(currentRun)) {
-        this.setState({ status: 'failed', progress: this.state.progress, error: localizeError(error), retryable: true });
-      }
+      if (this.isCurrent(currentRun)) this.fail(error);
     } finally {
       if (this.runId === currentRun) this.active = false;
     }
     return true;
   }
 
-  retry(input: CreateGenerationInput): Promise<boolean> {
-    return this.start(input);
+  async resumePending(): Promise<boolean> {
+    const persisted = this.intentStore.load();
+    if (persisted === undefined) return false;
+    return this.retry(persisted.input);
+  }
+
+  private async createAndPoll(intent: GenerationIntent): Promise<boolean> {
+    this.active = true;
+    const currentRun = this.runId += 1;
+    this.setState({ status: 'creating', progress: 0 });
+
+    try {
+      const job = await this.dependencies.createJob({ ...intent.input, clientRequestId: intent.clientRequestId });
+      if (!this.isCurrent(currentRun)) return true;
+      this.intentStore.save({ ...intent, jobId: job.jobId });
+      this.setState({ status: 'polling', progress: 0, jobId: job.jobId });
+      await this.poll(job.jobId, currentRun);
+    } catch (error) {
+      if (this.isCurrent(currentRun)) this.fail(error);
+    } finally {
+      if (this.runId === currentRun) this.active = false;
+    }
+    return true;
   }
 
   cancel(): void {
@@ -112,6 +145,7 @@ export class GenerationController {
         await this.dependencies.navigate(assessmentId);
         if (this.isCurrent(runId)) {
           this.setState({ status: 'completed', jobId, assessmentId, progress: 100 });
+          this.intentStore.clear();
         }
         return;
       }
@@ -135,6 +169,46 @@ export class GenerationController {
     this.state = state;
     this.dependencies.onChange?.(state);
   }
+
+  private fail(error: unknown): void {
+    this.setState({
+      status: 'failed',
+      progress: this.state.progress,
+      ...(this.state.jobId === undefined ? {} : { jobId: this.state.jobId }),
+      error: localizeError(error),
+      retryable: true,
+    });
+  }
+}
+
+function newIntent(input: CreateGenerationInput, clientRequestId: string): GenerationIntent {
+  return {
+    clientRequestId,
+    input: {
+      topic: input.topic,
+      ...(input.notes === undefined ? {} : { notes: input.notes }),
+      questionCount: input.questionCount,
+    },
+  };
+}
+
+function sameInput(left: GenerationIntent['input'], right: CreateGenerationInput): boolean {
+  return left.topic === right.topic
+    && left.notes === right.notes
+    && left.questionCount === right.questionCount;
+}
+
+function defaultRequestId(): string {
+  return `request-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+function memoryIntentStore(): GenerationIntentStore {
+  let value: GenerationIntent | undefined;
+  return {
+    load: () => value,
+    save: (intent) => { value = intent; },
+    clear: () => { value = undefined; },
+  };
 }
 
 function localizeError(error: unknown): string {

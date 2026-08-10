@@ -1,5 +1,5 @@
 import { GenerationServiceError } from '../generation/errors';
-import { allowAllTextModeration, type TextModerationPort } from '../moderation/ports';
+import { allowAllTextModeration, denyAllTextModeration, type TextModerationPort } from '../moderation/ports';
 
 export type ContentSafetyFetchTransport = (
   url: string,
@@ -30,7 +30,9 @@ export function createHttpsContentSafetyModeration(options: {
   const provider = options.environment.CONTENT_SAFETY_PROVIDER?.trim() || 'configured-provider';
   if (!url || !apiKey) {
     if (production) throw new GenerationServiceError('CONFIGURATION_ERROR', false);
-    return allowAllTextModeration;
+    return options.environment.SKILLSCOPE_ALLOW_UNSAFE_MODERATION === 'true'
+      ? allowAllTextModeration
+      : denyAllTextModeration;
   }
   const endpoint = normalizeHttpsUrl(url);
   const timeoutMs = positiveInteger(options.timeoutMs, defaultTimeoutMs);

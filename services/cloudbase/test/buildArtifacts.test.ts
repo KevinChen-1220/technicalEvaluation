@@ -21,6 +21,7 @@ describe('CloudBase deployment artifacts', () => {
         dir?: string;
         handler?: string;
         timeout?: number;
+        triggers?: Array<{ name: string; type: string; config: string }>;
       }>;
     };
 
@@ -49,6 +50,11 @@ describe('CloudBase deployment artifacts', () => {
         dir: './generation-worker',
         handler: 'index.main',
         timeout: 600,
+        triggers: [{
+          name: 'generation-worker-every-minute',
+          type: 'timer',
+          config: '0 */1 * * * * *',
+        }],
       }),
       expect.objectContaining({
         name: 'retention-cleanup',
@@ -73,6 +79,7 @@ describe('CloudBase deployment artifacts', () => {
     expect((worker?.timeout ?? 0) * 1000).toBeGreaterThanOrEqual(requiredWorkerBudgetMs);
     expect(generationWorkerBudget.providerCallTimeoutMs)
       .toBeLessThan(generationWorkerBudget.leaseDurationMs);
+    expect(generationWorkerBudget.leaseDurationMs).toBeGreaterThan(60_000);
     expect(worker?.timeout).toBeLessThanOrEqual(900);
   });
 

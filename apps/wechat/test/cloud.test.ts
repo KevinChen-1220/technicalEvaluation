@@ -26,7 +26,7 @@ describe('Mini Program cloud adapter', () => {
     });
     const unsafe = { OPENID: 'spoofed', owner: 'spoofed', provider: 'x', model: 'x', endpoint: 'http://x', apiKey: 'secret' };
 
-    await client.createGenerationJob({ topic: 'TS', notes: 'types', questionCount: 50, ...unsafe });
+    await client.createGenerationJob({ topic: 'TS', notes: 'types', questionCount: 50, clientRequestId: 'request-1', ...unsafe });
     await client.getGenerationJob({ jobId: 'job-1', ...unsafe });
     await client.getAssessment({ assessmentId: 'assessment-1', ...unsafe });
     await client.updateAssessment({ assessmentId: 'assessment-1', answers: { q1: ['a'] }, expectedRevision: 1, ...unsafe });
@@ -60,9 +60,12 @@ describe('Mini Program cloud adapter', () => {
       operatorNotes: 'spoofed',
       owner: 'spoofed',
     } as Parameters<typeof client.createReport>[0] & { status: string; operatorNotes: string; owner: string });
+    await client.createReport({
+      reason: 'privacy', detail: '隐私反馈', policyVersion: '2026-08-10', assessmentId: undefined,
+    } as unknown as Parameters<typeof client.createReport>[0]);
 
     expect(calls).toEqual([
-      { name: 'create-generation-job', data: { topic: 'TS', notes: 'types', questionCount: 50 } },
+      { name: 'create-generation-job', data: { topic: 'TS', notes: 'types', questionCount: 50, clientRequestId: 'request-1' } },
       { name: 'get-generation-job', data: { jobId: 'job-1' } },
       { name: 'get-assessment', data: { assessmentId: 'assessment-1' } },
       { name: 'update-assessment', data: { assessmentId: 'assessment-1', answers: { q1: ['a'] }, expectedRevision: 1 } },
@@ -76,6 +79,7 @@ describe('Mini Program cloud adapter', () => {
         detail: '题目内容不合适',
         policyVersion: '2026-08-10',
       } },
+      { name: 'create-report', data: { reason: 'privacy', detail: '隐私反馈', policyVersion: '2026-08-10' } },
     ]);
   });
 

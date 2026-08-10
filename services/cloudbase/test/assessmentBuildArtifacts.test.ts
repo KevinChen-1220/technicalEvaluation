@@ -11,13 +11,21 @@ describe('assessment deployment artifacts', () => {
     });
   });
 
-  test.each(['get-assessment', 'update-assessment', 'list-assessments', 'complete-assessment'])('builds the %s function with pinned runtime dependency', (name) => {
+  test('every bundled function that requires wx-server-sdk declares the pinned runtime dependency', () => {
+    const config = JSON.parse(readFileSync(join(serviceRoot, 'dist', 'cloudbaserc.json'), 'utf8')) as {
+      functions: Array<{ name: string }>;
+    };
+    for (const { name } of config.functions) {
     const directory = join(serviceRoot, 'dist', name);
     expect(existsSync(join(directory, 'index.js'))).toBe(true);
-    expect(JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8'))).toMatchObject({
-      name,
-      dependencies: { 'wx-server-sdk': '4.0.2' },
-    });
+      const bundle = readFileSync(join(directory, 'index.js'), 'utf8');
+      const packageJson = JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8')) as {
+        dependencies?: Record<string, string>;
+      };
+      if (bundle.includes('require("wx-server-sdk")')) {
+        expect(packageJson.dependencies?.['wx-server-sdk']).toBe('4.0.2');
+      }
+    }
   });
 
   test('includes both assessment functions in deploy configuration', () => {

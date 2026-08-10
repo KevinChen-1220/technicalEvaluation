@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -18,28 +18,37 @@ if (args.file) {
   verifyReleaseCandidate({
     profile: args.profile ?? 'development',
     checkOnly: args['check-only'] === true,
+    disclosureFile: args['disclosure-file'],
   });
 }
 
-function verifyReleaseCandidate({ profile, checkOnly }) {
+function verifyReleaseCandidate({ profile, checkOnly, disclosureFile: selectedDisclosureFile }) {
   if (!['development', 'trial', 'formal'].includes(profile)) {
     fail([`Unsupported release profile: ${profile}`]);
   }
 
-  const disclosureFile = profile === 'formal'
+  const disclosureFile = selectedDisclosureFile ?? (profile === 'formal'
     ? 'docs/wechat/release-disclosure.production.template.json'
-    : 'docs/wechat/release-disclosure.development.json';
+    : 'docs/wechat/release-disclosure.development.json');
   const mode = profile === 'formal' ? 'production' : 'development';
   const evidence = [];
 
-  verifyStaticReleaseContracts(profile);
+  verifyStaticReleaseContracts(profile, { inspectDist: false });
   evidence.push(`static contracts: passed for ${profile}`);
+
+  if (profile === 'formal') {
+    verifyFormalPreflight(disclosureFile);
+    evidence.push('formal preflight: passed');
+  }
 
   if (checkOnly) {
     process.stdout.write('release candidate static verification passed\n');
     process.stdout.write('external blockers recorded\n');
     return;
   }
+
+  cleanReleaseArtifacts();
+  evidence.push('clean release artifacts: apps/wechat/dist and services/cloudbase/dist removed');
 
   const buildEnv = {
     ...process.env,
@@ -100,7 +109,7 @@ function verifyReleaseCandidate({ profile, checkOnly }) {
   const devtoolsResult = run(process.execPath, ['scripts/wechat-devtools-smoke.mjs'], { timeout: 30_000 });
   evidence.push(formatCommandEvidence(process.execPath, ['scripts/wechat-devtools-smoke.mjs'], devtoolsResult, true));
 
-  verifyStaticReleaseContracts(profile);
+  verifyStaticReleaseContracts(profile, { inspectDist: true });
   const hashes = hashArtifacts([
     'apps/wechat/dist/app.json',
     'apps/wechat/dist/app.js',
@@ -112,7 +121,7 @@ function verifyReleaseCandidate({ profile, checkOnly }) {
   process.stdout.write('external blockers recorded\n');
 }
 
-function verifyDisclosure({ file, mode, dist }) {
+function verifyDisclosure({ file, mode, dist, requireDist = true }) {
   if (mode !== 'development' && mode !== 'production') {
     fail([`Unsupported mode: ${mode}`]);
   }
@@ -142,8 +151,8 @@ function verifyDisclosure({ file, mode, dist }) {
     if (missing.length > 0 || placeholders.length > 0) {
       fail([...missing, ...placeholders].map((field) => `${field} is required for production`));
     }
-    if (!dist) fail(['--dist is required for production']);
-    verifyBuiltDisclosure(dist, disclosure, required);
+    if (requireDist && !dist) fail(['--dist is required for production']);
+    if (dist) verifyBuiltDisclosure(dist, disclosure, required);
   }
 
   if (mode === 'development' && missing.length > 0) {
@@ -151,7 +160,7 @@ function verifyDisclosure({ file, mode, dist }) {
   }
 }
 
-function verifyStaticReleaseContracts(profile) {
+function verifyStaticReleaseContracts(profile, options = { inspectDist: true }) {
   const requiredFiles = [
     'docs/wechat/privacy-policy.zh-CN.md',
     'docs/wechat/privacy-data-map.md',
@@ -224,6 +233,32 @@ function verifyStaticReleaseContracts(profile) {
   if (!Array.isArray(retention?.triggers) || retention.triggers.every((trigger) => trigger.type !== 'timer')) {
     fail(['retention-cleanup must include a timer trigger']);
   }
+  const worker = cloudbaserc.functions.find((entry) => entry.name === 'generation-worker');
+  const workerTimer = worker?.triggers?.find((trigger) => trigger.type === 'timer');
+  if (workerTimer?.config !== '0 */1 * * * * *') {
+    fail(['generation-worker must include the controlled one-minute timer trigger']);
+  }
+  const inputModerationConfig = JSON.parse(readFileSync(join(repoRoot, 'services/cloudbase/functions/create-generation-job/config.json'), 'utf8'));
+  if (!inputModerationConfig.permissions?.openapi?.includes('security.msgSecCheck')) {
+    fail(['create-generation-job must declare the WeChat security.msgSecCheck capability']);
+  }
+  const invokeRules = JSON.parse(readFileSync(join(repoRoot, 'services/cloudbase/database/function-invoke-rules.json'), 'utf8'));
+  if (invokeRules['generation-worker']?.invoke !== false && invokeRules['*']?.invoke !== false) {
+    fail(['generation-worker must remain denied to client invocation']);
+  }
+
+  if (options.inspectDist) {
+    for (const entry of cloudbaserc.functions) {
+      const bundlePath = join(repoRoot, 'services/cloudbase/dist', entry.name, 'index.js');
+      const packagePath = join(repoRoot, 'services/cloudbase/functions', entry.name, 'package.json');
+      if (!existsSync(bundlePath) || !existsSync(packagePath)) continue;
+      const bundle = readFileSync(bundlePath, 'utf8');
+      const functionPackage = JSON.parse(readFileSync(packagePath, 'utf8'));
+      if (bundle.includes('require("wx-server-sdk")') && functionPackage.dependencies?.['wx-server-sdk'] !== '4.0.2') {
+        fail([`${entry.name} must declare pinned wx-server-sdk@4.0.2`]);
+      }
+    }
+  }
 
   if (profile === 'formal') {
     const envId = process.env.TARO_APP_CLOUDBASE_ENV_ID?.trim() ?? '';
@@ -232,7 +267,37 @@ function verifyStaticReleaseContracts(profile) {
     }
   }
 
-  verifyNoFixtureInDistIfPresent();
+  if (options.inspectDist) verifyNoFixtureInDistIfPresent();
+}
+
+function verifyFormalPreflight(disclosureFile) {
+  verifyDisclosure({
+    file: resolve(repoRoot, disclosureFile),
+    mode: 'production',
+    requireDist: false,
+  });
+  const missing = [];
+  if (process.env.SKILLSCOPE_ENV !== 'production') missing.push('SKILLSCOPE_ENV must be production');
+  if (!isNonEmpty(process.env.CONTENT_SAFETY_URL)) missing.push('CONTENT_SAFETY_URL is required');
+  if (!isNonEmpty(process.env.CONTENT_SAFETY_API_KEY)) missing.push('CONTENT_SAFETY_API_KEY is required');
+  if (process.env.SKILLSCOPE_ALLOW_UNSAFE_MODERATION === 'true') {
+    missing.push('SKILLSCOPE_ALLOW_UNSAFE_MODERATION cannot be true for formal release');
+  }
+  if (isNonEmpty(process.env.CONTENT_SAFETY_URL)) {
+    try {
+      const url = new URL(process.env.CONTENT_SAFETY_URL);
+      if (url.protocol !== 'https:' || url.username || url.password) missing.push('CONTENT_SAFETY_URL must be a credential-free HTTPS URL');
+    } catch {
+      missing.push('CONTENT_SAFETY_URL must be a valid HTTPS URL');
+    }
+  }
+  if (missing.length > 0) fail(missing);
+}
+
+function cleanReleaseArtifacts() {
+  for (const path of ['apps/wechat/dist', 'services/cloudbase/dist']) {
+    rmSync(join(repoRoot, path), { recursive: true, force: true });
+  }
 }
 
 function verifyBuiltDisclosure(directory, disclosure, fields) {
@@ -331,7 +396,12 @@ function formatCommandEvidence(command, commandArgs, result, informational = fal
       ? `signal ${result.signal}`
       : `exit ${result.status}`;
   const output = `${result.stdout ?? ''}${result.stderr ?? ''}`.trim();
-  const tail = output.split(/\r?\n/).slice(-20).join('\n');
+  const tail = output
+    .replace(/\u001b\[[0-9;?]*[ -/]*[@-~]/g, '')
+    .split(/\r?\n/)
+    .slice(-20)
+    .map((line) => line.trimEnd())
+    .join('\n');
   return [
     `### ${command} ${commandArgs.join(' ')}`,
     '',
@@ -348,7 +418,7 @@ function parseArgs(values) {
   const parsed = {};
   for (let index = 0; index < values.length; index += 1) {
     const key = values[index];
-    if (key === '--file' || key === '--mode' || key === '--dist' || key === '--profile') {
+    if (key === '--file' || key === '--mode' || key === '--dist' || key === '--profile' || key === '--disclosure-file') {
       parsed[key.slice(2)] = values[index + 1];
       index += 1;
     } else if (key === '--check-only') {

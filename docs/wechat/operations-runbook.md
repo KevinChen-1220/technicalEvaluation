@@ -6,6 +6,10 @@
 
 `create-generation-job` 使用微信 `security.msgSecCheck` 处理用户输入，因为它由小程序用户触发，可以带受信 OpenID。`generation-worker` 是定时/后台异步 worker，不能假设存在小程序云调用凭证或 `wxCloudApiToken`，所以输出审核必须走服务端 HTTPS `CONTENT_SAFETY_*`。
 
+审核默认 fail-closed。只有非 production 本地调试可以显式设置 `SKILLSCOPE_ALLOW_UNSAFE_MODERATION=true`；formal verifier 会拒绝该值，并要求 `SKILLSCOPE_ENV=production`、`security.msgSecCheck` capability、`CONTENT_SAFETY_URL` 和 `CONTENT_SAFETY_API_KEY`。这些变量只配置在 CloudBase 服务端，不得使用 `TARO_APP_*` 前缀。
+
+`generation-worker` 由每分钟 timer 触发，2 分钟 lease 防止并发重复消费，600 秒函数 timeout 覆盖最多 10 次 provider call。函数 invoke rule 保持 deny client。
+
 输出审核使用独立的 5 秒 `AbortController` 超时，并将响应体限制为 16 KiB；超时、响应过大、非 JSON、非 2xx 或审核服务异常均 fail closed，不保存模型输出。
 
 ## 发布披露

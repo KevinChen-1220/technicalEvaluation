@@ -1,5 +1,6 @@
+import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 const args = parseArgs(process.argv.slice(2));
 const target = args.target ?? 'source';
@@ -24,7 +25,9 @@ const secretPatterns = [
   { label: 'secret-like token', pattern: /\bAKIA[0-9A-Z]{16}\b/ },
   { label: 'secret-like token', pattern: /\bAIza[0-9A-Za-z\-_]{20,}\b/ },
   { label: 'secret-like token', pattern: /\bxox[baprs]-[0-9A-Za-z-]{20,}\b/i },
+  { label: 'private key header', pattern: /-----BEGIN (?:OPENSSH |ENCRYPTED |RSA |EC |DSA )?PRIVATE KEY-----/ },
 ];
+const secretFilenamePattern = /(?:^|[._-])(?:private|secret|credential|signing)(?:[._-]|$)|\.(?:key|pem|p8|p12)$/i;
 const configuredSecrets = Object.entries(process.env)
   .filter(([name, value]) => (
     /(?:API_KEY|SECRET|TOKEN|PASSWORD|CONTENT_SAFETY|LLM_)/i.test(name)
@@ -36,6 +39,7 @@ const configuredSecrets = Object.entries(process.env)
 
 const findings = [];
 for (const file of roots.flatMap((root) => collectFiles(root))) {
+  if (isSecretFilename(file)) findings.push(`${file}: secret filename`);
   const content = readFileSync(file, 'utf8');
   for (const check of secretPatterns) {
     if (check.pattern.test(content)) findings.push(`${file}: ${check.label}`);
@@ -50,6 +54,19 @@ for (const file of roots.flatMap((root) => collectFiles(root))) {
   }
 }
 
+if (target === 'source') {
+  const trackedFiles = args.trackedFiles.length > 0 ? args.trackedFiles : listTrackedFiles();
+  for (const file of trackedFiles) {
+    if (isSecretFilename(file)) findings.push(`${file}: tracked secret filename`);
+  }
+}
+
+function isSecretFilename(file) {
+  const name = basename(file);
+  if (name === 'project.private.config.example.json') return false;
+  return secretFilenamePattern.test(name);
+}
+
 if (findings.length > 0) {
   process.stderr.write(`${findings.join('\n')}\n`);
   process.exit(1);
@@ -57,17 +74,29 @@ if (findings.length > 0) {
 process.stdout.write(`secret scan passed for ${target}\n`);
 
 function parseArgs(values) {
-  const parsed = { paths: [] };
+  const parsed = { paths: [], trackedFiles: [] };
   for (let index = 0; index < values.length; index += 1) {
     const value = values[index];
     if (value === '--target') {
       parsed.target = values[index + 1];
+      index += 1;
+    } else if (value === '--tracked-file') {
+      parsed.trackedFiles.push(values[index + 1]);
       index += 1;
     } else {
       parsed.paths.push(value);
     }
   }
   return parsed;
+}
+
+function listTrackedFiles() {
+  const result = spawnSync('git', ['ls-files', '-z'], { encoding: 'utf8' });
+  if (result.status !== 0) {
+    findings.push('git ls-files: unable to inspect tracked secret filenames');
+    return [];
+  }
+  return result.stdout.split('\0').filter(Boolean);
 }
 
 function collectFiles(root) {
@@ -79,10 +108,10 @@ function collectFiles(root) {
     if (ignored.has(entry.name)) return [];
     const fullPath = join(root, entry.name);
     if (entry.isDirectory()) return collectFiles(fullPath);
-    return entry.isFile() && isTextFile(entry.name) ? [fullPath] : [];
+    return entry.isFile() && (isTextFile(entry.name) || secretFilenamePattern.test(entry.name)) ? [fullPath] : [];
   });
 }
 
 function isTextFile(name) {
-  return /\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|css|html|xml|yml|yaml|env|txt)$/i.test(name);
+  return /\.(?:ts|tsx|js|jsx|mjs|cjs|json|md|css|html|xml|yml|yaml|env|txt|key|pem|p8|p12)$/i.test(name);
 }

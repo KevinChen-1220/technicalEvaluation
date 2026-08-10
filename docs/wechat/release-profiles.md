@@ -19,6 +19,7 @@
 - 用途：提交微信审核和正式发布。
 - CloudBase：必须使用生产 env id，不能包含 `dev`、`test`、`example`、`placeholder` 或 `待配置`。
 - Fixture：禁止开启。Taro config 和 `verify:wechat-release:formal` 都会拒绝 fixture。
+- 验证：`verify:wechat-release:formal` 先做 production disclosure 与 moderation preflight，再删除旧的 WeChat/CloudBase dist，同轮执行 formal build、scans 和 artifact disclosure 比对；旧 dist 不能作为正式证据。
 - Disclosure：必须使用真实服务运营主体、模型披露、生成式 AI 备案/登记信息、小程序备案号和隐私政策版本。production JSON 不在仓库模板里伪造真实值。
 
 ## 回滚

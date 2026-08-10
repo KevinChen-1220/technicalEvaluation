@@ -23,7 +23,7 @@
 | Web/asset checks | `npm run build:web`, `npm run verify:web`, `npm run verify:assets` | 通过 |
 | Release candidate | `npm run verify:wechat-release` | 通过，详见 `2026-08-10-command-output.md` |
 | miniprogram-ci | `npm run wechat:ci:dry-run -- --version 0.0.0-task8 --description "Task 8 dry run"` | 通过；无 AppID/私钥要求，私钥路径不输出 |
-| Formal disclosure gate | `npm run verify:wechat-release:formal` | 按预期失败：production template 仍缺真实主体/模型/备案字段 |
+| Formal disclosure gate | `npm run verify:wechat-release:formal` | 仓库 production template 按预期在构建前失败；临时有效 disclosure 完成 clean same-run formal 验证后已删除 |
 | DevTools/real device | `npm run wechat:devtools:smoke` and manual checklist | 外部 blocker：DevTools User Data `.cli` 未初始化，需要登录/AppID/真机 |
 
 ## Artifact Hashes

@@ -12,6 +12,7 @@ export type CreateGenerationInput = {
   topic: string;
   notes?: string;
   questionCount: 50 | 100;
+  clientRequestId?: string;
 };
 
 export type GenerationJobStatus = {
@@ -75,7 +76,7 @@ export type AcceptPrivacyPolicyInput = {
 };
 
 export type CreateReportInput = {
-  assessmentId: string;
+  assessmentId?: string;
   reason: 'question_error' | 'content_safety' | 'privacy' | 'other';
   detail?: string;
   policyVersion: string;
@@ -105,6 +106,7 @@ export function createCloudClient(
         topic: input.topic,
         ...(input.notes === undefined ? {} : { notes: input.notes }),
         questionCount: input.questionCount,
+        ...(input.clientRequestId === undefined ? {} : { clientRequestId: input.clientRequestId }),
       };
       const result = await call<unknown>('create-generation-job', data);
       if (!isRecord(result) || !isNonEmptyString(result.jobId) || !isGenerationStatus(result.status)) {
@@ -218,7 +220,7 @@ export function createCloudClient(
     },
     async createReport(input: CreateReportInput): Promise<{ type: 'created'; reportId: string }> {
       const result = await call<unknown>('create-report', {
-        assessmentId: input.assessmentId,
+        ...(input.assessmentId === undefined ? {} : { assessmentId: input.assessmentId }),
         reason: input.reason,
         ...(input.detail === undefined ? {} : { detail: input.detail }),
         policyVersion: input.policyVersion,

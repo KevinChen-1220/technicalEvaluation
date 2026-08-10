@@ -6,7 +6,7 @@ Project: E:\Project\technicalEvaluation\.worktrees\wechat-mini-program\apps\wech
 Status: 微信开发者工具已安装，但 CLI 用户态未初始化。
 
 ```text
-C:\Users\Administrator\AppData\Local\微信开发者工具\User Data does not exist; DevTools has not completed first-run initialization for this user.
+C:\Users\Administrator\AppData\Local\微信开发者工具\User Data exists, but no Default/.cli marker was found; earlier direct CLI islogin failed at initialization with missing .cli.
 ```
 
 ## Skipped Commands

@@ -2,6 +2,16 @@ import { buildResultViewModel } from '../src/services/result-view-model';
 import { createReleaseFixtureCloudClient } from '../src/fixtures/releaseFixtureClient';
 
 describe('release fixture cloud client', () => {
+  test('returns the same fixture job for the same client request id', async () => {
+    const client = createReleaseFixtureCloudClient({ now: () => '2026-08-10T08:00:00.000Z' });
+    const input = { topic: '幂等', questionCount: 50 as const, clientRequestId: 'request-1' };
+
+    const first = await client.createGenerationJob(input);
+    const second = await client.createGenerationJob({ ...input, topic: '重复提交不应创建新试卷' });
+
+    expect(second).toEqual(first);
+    await expect(client.listAssessments()).resolves.toMatchObject({ assessments: [expect.any(Object)] });
+  });
   test('generates a deterministic 50 question draft with rich Mini Program edge cases', async () => {
     const client = createReleaseFixtureCloudClient({ now: () => '2026-08-10T08:00:00.000Z' });
 
