@@ -24,22 +24,36 @@ The remaining actions require real WeChat subject/AppID, legal filing and disclo
 - RED/GREEN review fix: added failing coverage for GitHub Actions immutable SHA pins, then pinned official `actions/*` usages to full commit SHAs and updated `verify:github-workflows`.
 - RED/GREEN review fix: added failing coverage for `workflow_dispatch` input interpolation in `run` scripts, then moved `disclosure_file` through `DISCLOSURE_FILE` environment variables and added a non-empty file guard.
 - RED/GREEN doc clarity fix: added failing coverage for filing/smoke issue cross-links, `CONTENT_SAFETY_PROVIDER`, and PowerShell/Bash upload examples, then updated the templates/docs.
+- RED/GREEN P2 review fix: 9 workflow mutations were first accepted by the old raw-text verifier (comment spoof, echo spoof, missing `needs`, reversed upload order, workflow/job permission escalation, secret outside upload `env`, missing secret hidden in a comment, and altered environment). The structured verifier then rejected every mutation.
+- RED/GREEN secret-expression hardening: a tenth mutation using a conditional lowercase secret expression outside upload `env` was first accepted, then rejected after secret collection was changed to inspect every parsed GitHub expression and normalize secret names.
+
+## P2 Structured Workflow Review Fix
+
+- `scripts/verify-github-workflows.mjs` now validates release workflow semantics from parsed YAML JSON only. Comments and arbitrary raw YAML substrings do not satisfy release gates.
+- `upload.needs` must resolve to exactly `release-checks`; workflow and every job must declare exactly `contents: read` permissions.
+- Required `release-checks` commands are matched against complete parsed `step.run` values, so comments and `echo` commands cannot impersonate them.
+- The formal verifier and WeChat upload are identified by exact npm command starts, must each occur once, and formal verification must precede upload.
+- Secret references are collected from parsed expression values, may exist only under `jobs.upload.env` or `jobs.upload.steps[*].env`, and all six required production secrets must be present.
+- The upload environment must be exactly `wechat-production`, without extra dynamic fields.
+- The verifier accepts `--release-workflow <path>` only to pressure-test real validation behavior against temporary mutation fixtures.
 
 ## Review
 
 - Independent read-only Claude CLI review found no Critical issues.
 - First review Important item fixed: official GitHub Actions are pinned to full commit SHAs in `ci.yml`, `pages.yml`, and `wechat-release.yml`.
 - Second review Important item fixed: `workflow_dispatch` `disclosure_file` is no longer interpolated directly in shell `run` scripts.
+- Task 9 P2 follow-up fixed: release workflow checks no longer depend on raw-text `includes` or section slicing.
+- Two read-only Claude CLI review attempts for the P2 follow-up timed out without output. No reviewer result was treated as approval; mutation tests, full release verification, and a manual diff audit were used as the submission gates.
 - Audit finding remains informational and documented in `docs/wechat/release-audit.md`: `npm audit --omit=optional --json` reports 125 advisories in upstream/dependency paths. This does not block local handoff, but production owners should track it before formal release.
 
 ## Verification
 
 - `npm run verify:github-workflows`: passed.
-- Focused GREEN: `npm run test:cloudbase -- --runInBand releaseVerification.test.ts`: 17 suites / 143 tests passed.
+- Focused GREEN after P2 mutations: `npm run test:cloudbase -- --runInBand releaseVerification.test.ts`: 17 suites / 153 tests passed.
 - Full local release verifier: `npm run verify:wechat-release`: passed for development profile.
-- Root tests: 34 suites / 235 tests passed.
+- Root tests: 34 suites / 245 tests passed.
 - WeChat tests: 15 suites / 77 tests passed.
-- CloudBase tests: 17 suites / 143 tests passed.
+- CloudBase tests: 17 suites / 153 tests passed.
 - Typechecks: root, WeChat, and CloudBase passed inside `verify:wechat-release`.
 - Builds: CloudBase, Expo web export, and WeChat `build:weapp` passed inside `verify:wechat-release`.
 - Secret scans: source and WeChat dist passed inside `verify:wechat-release`, then source/dist were run again after evidence refresh.

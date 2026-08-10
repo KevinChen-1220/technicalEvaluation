@@ -2,6 +2,7 @@ import { execFileSync, spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import yaml from 'yaml';
 
 const repoRoot = join(__dirname, '..', '..', '..');
 
@@ -130,6 +131,101 @@ describe('WeChat release verification assets', () => {
     expect(filingIssue).toContain('wechat_production_smoke');
     expect(smokeIssue).toMatch(/真机.*CloudBase.*截图.*回滚/s);
     expect(smokeIssue).toContain('wechat_filing');
+  });
+
+  test.each([
+    {
+      name: 'a comment that names a required release-check command',
+      expected: /release-checks.*verify:github-workflows/i,
+      mutate: (source: string) => source.replace(
+        '      - name: Verify GitHub workflow YAML\n        run: npm run verify:github-workflows',
+        '      # npm run verify:github-workflows\n      - name: Verify GitHub workflow YAML',
+      ),
+    },
+    {
+      name: 'an echo that names a required release-check command',
+      expected: /release-checks.*verify:github-workflows/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        findStep(workflow.jobs['release-checks'].steps, 'Verify GitHub workflow YAML').run =
+          'echo "npm run verify:github-workflows"';
+      }),
+    },
+    {
+      name: 'an upload job without the release-checks dependency',
+      expected: /upload\.needs.*release-checks/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        delete workflow.jobs.upload.needs;
+      }),
+    },
+    {
+      name: 'an upload job that runs before formal verification',
+      expected: /formal.*before.*upload/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        const steps = workflow.jobs.upload.steps as WorkflowStep[];
+        const formalIndex = steps.findIndex((step) => step.name === 'Run formal release verification');
+        const uploadIndex = steps.findIndex((step) => step.name === 'Upload to WeChat draft');
+        if (formalIndex < 0 || uploadIndex < 0) throw new Error('Workflow fixture is missing release steps');
+        const formalStep = steps[formalIndex];
+        const uploadStep = steps[uploadIndex];
+        if (!formalStep || !uploadStep) throw new Error('Workflow fixture has invalid release step indexes');
+        steps[formalIndex] = uploadStep;
+        steps[uploadIndex] = formalStep;
+      }),
+    },
+    {
+      name: 'workflow-level write permissions',
+      expected: /workflow permissions.*contents: read/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        workflow.permissions = { contents: 'write' };
+      }),
+    },
+    {
+      name: 'job-level id-token permissions',
+      expected: /release-checks permissions.*contents: read/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        workflow.jobs['release-checks'].permissions = { contents: 'read', 'id-token': 'write' };
+      }),
+    },
+    {
+      name: 'a secret reference outside upload env',
+      expected: /secret references.*upload.*env/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        findStep(workflow.jobs.upload.steps, 'Upload to WeChat draft').run =
+          'npm run wechat:ci:upload ${{ secrets.WECHAT_APP_ID }}';
+      }),
+    },
+    {
+      name: 'a conditional secret expression outside upload env',
+      expected: /secret references.*upload.*env/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        findStep(workflow.jobs.upload.steps, 'Install dependencies').run =
+          'echo "${{ secrets.optional_release_key != \'\' }}" && npm ci';
+      }),
+    },
+    {
+      name: 'a missing required upload secret hidden in a comment',
+      expected: /missing required upload secret.*CONTENT_SAFETY_PROVIDER/i,
+      mutate: (source: string) => source.replace(
+        '          CONTENT_SAFETY_PROVIDER: ${{ secrets.CONTENT_SAFETY_PROVIDER }}',
+        '          # secrets.CONTENT_SAFETY_PROVIDER',
+      ),
+    },
+    {
+      name: 'an environment with additional dynamic configuration',
+      expected: /upload environment.*wechat-production/i,
+      mutate: (source: string) => mutateWorkflow(source, (workflow) => {
+        workflow.jobs.upload.environment.url = '${{ steps.deploy.outputs.url }}';
+      }),
+    },
+  ])('rejects $name', ({ mutate, expected }) => {
+    const source = readFileSync(join(repoRoot, '.github/workflows/wechat-release.yml'), 'utf8');
+    const mutated = mutate(source);
+    expect(mutated).not.toBe(source);
+
+    const result = runWorkflowVerifier(mutated);
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toMatch(expected);
   });
 
   test('pins GitHub Actions used by release workflows to immutable commits', () => {
@@ -526,4 +622,37 @@ function spawnNpm(
     return spawnSync('cmd.exe', ['/d', '/c', 'npm', ...args], { ...options, encoding: 'utf8' });
   }
   return spawnSync('npm', args, { ...options, encoding: 'utf8' });
+}
+
+type WorkflowStep = {
+  name?: string;
+  run?: string;
+  env?: Record<string, string>;
+};
+
+function mutateWorkflow(source: string, mutate: (workflow: any) => void): string {
+  const workflow = yaml.parse(source);
+  mutate(workflow);
+  return yaml.stringify(workflow);
+}
+
+function findStep(steps: WorkflowStep[], name: string): WorkflowStep {
+  const step = steps.find((candidate) => candidate.name === name);
+  if (!step) throw new Error(`Workflow fixture is missing step: ${name}`);
+  return step;
+}
+
+function runWorkflowVerifier(workflowSource: string): ReturnType<typeof spawnSync> {
+  const directory = mkdtempSync(join(tmpdir(), 'skill-scope-workflow-'));
+  try {
+    const workflowPath = join(directory, 'wechat-release.yml');
+    writeFileSync(workflowPath, workflowSource);
+    return spawnSync(process.execPath, [
+      join(repoRoot, 'scripts', 'verify-github-workflows.mjs'),
+      '--release-workflow',
+      workflowPath,
+    ], { cwd: repoRoot, encoding: 'utf8' });
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 }
