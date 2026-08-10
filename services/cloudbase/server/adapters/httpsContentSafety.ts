@@ -30,7 +30,7 @@ export function createHttpsContentSafetyModeration(options: {
   const provider = options.environment.CONTENT_SAFETY_PROVIDER?.trim() || 'configured-provider';
   if (!url || !apiKey) {
     if (production) throw new GenerationServiceError('CONFIGURATION_ERROR', false);
-    return options.environment.SKILLSCOPE_ALLOW_UNSAFE_MODERATION === 'true'
+    return allowsUnsafeModeration(options.environment)
       ? allowAllTextModeration
       : denyAllTextModeration;
   }
@@ -73,6 +73,11 @@ export function createHttpsContentSafetyModeration(options: {
       }
     },
   };
+}
+
+function allowsUnsafeModeration(environment: Record<string, string | undefined>): boolean {
+  return environment.SKILLSCOPE_ENV === 'development'
+    && environment.SKILLSCOPE_ALLOW_UNSAFE_MODERATION === 'true';
 }
 
 async function readBoundedBody(

@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 
 const args = parseArgs(process.argv.slice(2));
 const target = args.target ?? 'source';
@@ -27,7 +27,7 @@ const secretPatterns = [
   { label: 'secret-like token', pattern: /\bxox[baprs]-[0-9A-Za-z-]{20,}\b/i },
   { label: 'private key header', pattern: /-----BEGIN (?:OPENSSH |ENCRYPTED |RSA |EC |DSA )?PRIVATE KEY-----/ },
 ];
-const secretFilenamePattern = /(?:^|[._-])(?:private|secret|credential|signing)(?:[._-]|$)|\.(?:key|pem|p8|p12)$/i;
+const secretFilenamePattern = /^(?:id_(?:rsa|dsa|ecdsa|ed25519)|(?:wechat|weixin)[._-](?:mini[._-]program[._-])?(?:upload[._-])?(?:private[._-])?key)$|(?:^|[._-])(?:private|secret|credential|signing)(?:[._-]|$)|\.(?:key|pem|p8|p12)$/i;
 const configuredSecrets = Object.entries(process.env)
   .filter(([name, value]) => (
     /(?:API_KEY|SECRET|TOKEN|PASSWORD|CONTENT_SAFETY|LLM_)/i.test(name)
@@ -38,26 +38,33 @@ const configuredSecrets = Object.entries(process.env)
   .map(([name, value]) => ({ name, value }));
 
 const findings = [];
+const files = new Map();
 for (const file of roots.flatMap((root) => collectFiles(root))) {
-  if (isSecretFilename(file)) findings.push(`${file}: secret filename`);
-  const content = readFileSync(file, 'utf8');
-  for (const check of secretPatterns) {
-    if (check.pattern.test(content)) findings.push(`${file}: ${check.label}`);
-  }
-  for (const secret of configuredSecrets) {
-    if (content.includes(secret.value)) findings.push(`${file}: configured secret value ${secret.name}`);
-  }
-  if (target === 'dist') {
-    for (const name of serverOnlyNames) {
-      if (content.includes(name)) findings.push(`${file}: server-only name ${name}`);
-    }
-  }
+  files.set(resolve(file), file);
 }
 
 if (target === 'source') {
-  const trackedFiles = args.trackedFiles.length > 0 ? args.trackedFiles : listTrackedFiles();
+  const trackedFiles = [...listTrackedFiles(), ...args.trackedFiles];
   for (const file of trackedFiles) {
     if (isSecretFilename(file)) findings.push(`${file}: tracked secret filename`);
+    if (isRegularFile(file)) files.set(resolve(file), file);
+  }
+}
+
+for (const [absolutePath, displayPath] of files) {
+  if (isSecretFilename(displayPath)) findings.push(`${displayPath}: secret filename`);
+  const content = readTextFileSafely(absolutePath);
+  if (content === null) continue;
+  for (const check of secretPatterns) {
+    if (check.pattern.test(content)) findings.push(`${displayPath}: ${check.label}`);
+  }
+  for (const secret of configuredSecrets) {
+    if (content.includes(secret.value)) findings.push(`${displayPath}: configured secret value ${secret.name}`);
+  }
+  if (target === 'dist') {
+    for (const name of serverOnlyNames) {
+      if (content.includes(name)) findings.push(`${displayPath}: server-only name ${name}`);
+    }
   }
 }
 
@@ -97,6 +104,24 @@ function listTrackedFiles() {
     return [];
   }
   return result.stdout.split('\0').filter(Boolean);
+}
+
+function isRegularFile(file) {
+  try {
+    return statSync(file).isFile();
+  } catch {
+    return false;
+  }
+}
+
+function readTextFileSafely(file) {
+  const content = readFileSync(file);
+  if (content.includes(0)) return null;
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(content);
+  } catch {
+    return null;
+  }
 }
 
 function collectFiles(root) {

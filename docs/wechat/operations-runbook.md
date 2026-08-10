@@ -6,7 +6,9 @@
 
 `create-generation-job` 使用微信 `security.msgSecCheck` 处理用户输入，因为它由小程序用户触发，可以带受信 OpenID。`generation-worker` 是定时/后台异步 worker，不能假设存在小程序云调用凭证或 `wxCloudApiToken`，所以输出审核必须走服务端 HTTPS `CONTENT_SAFETY_*`。
 
-审核默认 fail-closed。只有非 production 本地调试可以显式设置 `SKILLSCOPE_ALLOW_UNSAFE_MODERATION=true`；formal verifier 会拒绝该值，并要求 `SKILLSCOPE_ENV=production`、`security.msgSecCheck` capability、`CONTENT_SAFETY_URL` 和 `CONTENT_SAFETY_API_KEY`。这些变量只配置在 CloudBase 服务端，不得使用 `TARO_APP_*` 前缀。
+审核默认 fail-closed。只有 `SKILLSCOPE_ENV=development` 且 `SKILLSCOPE_ALLOW_UNSAFE_MODERATION=true` 同时精确匹配时才允许本地不安全绕过；环境未设置、拼写错误、`test`、`staging`、`production` 或其他未知值全部 fail closed。formal verifier 会拒绝绕过，并要求 `SKILLSCOPE_ENV=production`、`security.msgSecCheck` capability，以及服务端 `CONTENT_SAFETY_URL`、`CONTENT_SAFETY_API_KEY`、`CONTENT_SAFETY_PROVIDER` 均为真实非占位值。`待配置`、`placeholder`、`changeme`、`example`、`TBD` 等值会被拒绝，URL 还必须是无凭证的 HTTPS 地址。这些变量只配置在 CloudBase 服务端，不得使用 `TARO_APP_*` 前缀。
+
+formal preflight 只验证配置形状和部署能力声明，不会向审核 provider 发请求，因此不证明内容安全服务的真实可用性。正式发布前必须在已部署的生产 CloudBase 环境完成外部 hosted smoke，验证输入 `security.msgSecCheck` 和输出 HTTPS moderation 的允许、阻断、超时及故障关闭路径；没有该外部 smoke 证据时必须继续记录为 blocker。
 
 `generation-worker` 由每分钟 timer 触发，2 分钟 lease 防止并发重复消费，600 秒函数 timeout 覆盖最多 10 次 provider call。函数 invoke rule 保持 deny client。
 
@@ -23,6 +25,8 @@ Taro 构建通过 `TARO_APP_RELEASE_DISCLOSURE_FILE` 选择仓库根相对或绝
 本地发布候选统一执行 `npm run verify:wechat-release`。该命令会跑 Expo/WeChat/CloudBase/core 测试、typecheck、web build、asset check、CloudBase build、production `build:weapp`、source/dist secret scan、release disclosure 验证、npm audit 记录和微信开发者工具 CLI 证据采集。
 
 Profile 说明见 `docs/wechat/release-profiles.md`。development/trial 可以显式开启 `TARO_APP_RELEASE_FIXTURE_MODE=enabled` 做无模型密钥的 DevTools fixture 烟测；formal profile 禁止 fixture，且要求真实生产 CloudBase env id 和生产 disclosure。
+
+`npm run verify:wechat-release:formal-preflight -- --disclosure-file <真实披露.json>` 只做 formal 配置预检，不能作为发布候选验证成功。正式候选必须执行完整的 `npm run verify:wechat-release:formal -- --disclosure-file <真实披露.json>`。
 
 微信 CI 上传脚本：
 

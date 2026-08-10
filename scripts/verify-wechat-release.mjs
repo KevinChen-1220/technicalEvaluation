@@ -18,13 +18,20 @@ if (args.file) {
   verifyReleaseCandidate({
     profile: args.profile ?? 'development',
     checkOnly: args['check-only'] === true,
+    preflightOnly: args['preflight-only'] === true,
     disclosureFile: args['disclosure-file'],
   });
 }
 
-function verifyReleaseCandidate({ profile, checkOnly, disclosureFile: selectedDisclosureFile }) {
+function verifyReleaseCandidate({ profile, checkOnly, preflightOnly, disclosureFile: selectedDisclosureFile }) {
   if (!['development', 'trial', 'formal'].includes(profile)) {
     fail([`Unsupported release profile: ${profile}`]);
+  }
+  if (profile === 'formal' && checkOnly) {
+    fail(['formal profile check-only is not allowed; run the full formal verifier or formal preflight command']);
+  }
+  if (preflightOnly && profile !== 'formal') {
+    fail(['preflight-only is only supported by the formal profile']);
   }
 
   const disclosureFile = selectedDisclosureFile ?? (profile === 'formal'
@@ -39,6 +46,12 @@ function verifyReleaseCandidate({ profile, checkOnly, disclosureFile: selectedDi
   if (profile === 'formal') {
     verifyFormalPreflight(disclosureFile);
     evidence.push('formal preflight: passed');
+  }
+
+  if (preflightOnly) {
+    process.stdout.write('formal release preflight passed; full release verification was not run\n');
+    process.stdout.write('external blockers recorded\n');
+    return;
   }
 
   if (checkOnly) {
@@ -278,8 +291,9 @@ function verifyFormalPreflight(disclosureFile) {
   });
   const missing = [];
   if (process.env.SKILLSCOPE_ENV !== 'production') missing.push('SKILLSCOPE_ENV must be production');
-  if (!isNonEmpty(process.env.CONTENT_SAFETY_URL)) missing.push('CONTENT_SAFETY_URL is required');
-  if (!isNonEmpty(process.env.CONTENT_SAFETY_API_KEY)) missing.push('CONTENT_SAFETY_API_KEY is required');
+  verifyFormalConfigurationValue('CONTENT_SAFETY_URL', process.env.CONTENT_SAFETY_URL, missing);
+  verifyFormalConfigurationValue('CONTENT_SAFETY_API_KEY', process.env.CONTENT_SAFETY_API_KEY, missing);
+  verifyFormalConfigurationValue('CONTENT_SAFETY_PROVIDER', process.env.CONTENT_SAFETY_PROVIDER, missing);
   if (process.env.SKILLSCOPE_ALLOW_UNSAFE_MODERATION === 'true') {
     missing.push('SKILLSCOPE_ALLOW_UNSAFE_MODERATION cannot be true for formal release');
   }
@@ -292,6 +306,14 @@ function verifyFormalPreflight(disclosureFile) {
     }
   }
   if (missing.length > 0) fail(missing);
+}
+
+function verifyFormalConfigurationValue(name, value, findings) {
+  if (!isNonEmpty(value)) {
+    findings.push(`${name} is required`);
+  } else if (isPlaceholder(value)) {
+    findings.push(`${name} cannot be a placeholder`);
+  }
 }
 
 function cleanReleaseArtifacts() {
@@ -421,8 +443,8 @@ function parseArgs(values) {
     if (key === '--file' || key === '--mode' || key === '--dist' || key === '--profile' || key === '--disclosure-file') {
       parsed[key.slice(2)] = values[index + 1];
       index += 1;
-    } else if (key === '--check-only') {
-      parsed['check-only'] = true;
+    } else if (key === '--check-only' || key === '--preflight-only') {
+      parsed[key.slice(2)] = true;
     }
   }
   return parsed;

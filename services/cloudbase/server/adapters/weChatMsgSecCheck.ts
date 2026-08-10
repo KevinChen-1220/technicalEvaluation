@@ -23,7 +23,7 @@ export function createWeChatMsgSecCheckModeration(options: {
     throw new GenerationServiceError('CONFIGURATION_ERROR', false);
   }
   if (checker === undefined) {
-    return options.environment.SKILLSCOPE_ALLOW_UNSAFE_MODERATION === 'true'
+    return allowsUnsafeModeration(options.environment)
       ? allowAllTextModeration
       : denyAllTextModeration;
   }
@@ -44,6 +44,11 @@ export function createWeChatMsgSecCheckModeration(options: {
       }
     },
   };
+}
+
+function allowsUnsafeModeration(environment: Record<string, string | undefined>): boolean {
+  return environment.SKILLSCOPE_ENV === 'development'
+    && environment.SKILLSCOPE_ALLOW_UNSAFE_MODERATION === 'true';
 }
 
 function isFormalProduction(environment: Record<string, string | undefined>): boolean {

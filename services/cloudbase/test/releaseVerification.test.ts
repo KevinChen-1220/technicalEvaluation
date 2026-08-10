@@ -44,6 +44,18 @@ describe('WeChat release verification assets', () => {
     expect(audit).not.toMatch(/Taro.*不会被打入正式小程序业务包/);
   });
 
+  test('documents strict moderation preflight boundaries and external availability smoke', () => {
+    const operations = readFileSync(join(repoRoot, 'docs/wechat/operations-runbook.md'), 'utf8');
+    const profiles = readFileSync(join(repoRoot, 'docs/wechat/release-profiles.md'), 'utf8');
+
+    expect(operations).toContain('SKILLSCOPE_ENV=development');
+    expect(operations).toMatch(/CONTENT_SAFETY_URL.*CONTENT_SAFETY_API_KEY.*CONTENT_SAFETY_PROVIDER/);
+    expect(operations).toMatch(/placeholder|changeme|example|TBD/);
+    expect(operations).toMatch(/真实可用性.*外部.*smoke/i);
+    expect(profiles).toMatch(/formal.*拒绝.*--check-only/is);
+    expect(profiles).toMatch(/formal-preflight.*不代表.*发布验证成功/is);
+  });
+
   test('exposes one release verification command and keeps private WeChat config out of git', () => {
     const rootPackage = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
     const gitignore = readFileSync(join(repoRoot, '.gitignore'), 'utf8');
@@ -52,6 +64,7 @@ describe('WeChat release verification assets', () => {
 
     expect(rootPackage.scripts['verify:wechat-release']).toBe('node scripts/verify-wechat-release.mjs --profile development');
     expect(rootPackage.scripts['verify:wechat-release:formal']).toBe('node scripts/verify-wechat-release.mjs --profile formal');
+    expect(rootPackage.scripts['verify:wechat-release:formal-preflight']).toBe('node scripts/verify-wechat-release.mjs --profile formal --preflight-only');
     expect(rootPackage.scripts['wechat:ci:dry-run']).toContain('scripts/wechat-miniprogram-ci.mjs --mode dry-run');
     expect(rootPackage.scripts['wechat:ci:preview']).toContain('scripts/wechat-miniprogram-ci.mjs --mode preview');
     expect(rootPackage.scripts['wechat:ci:upload']).toContain('scripts/wechat-miniprogram-ci.mjs --mode upload');
@@ -190,7 +203,7 @@ describe('WeChat release verification assets', () => {
     }
   });
 
-  test('formal candidate preflight requires production moderation capabilities and accepts a valid disclosure fixture', () => {
+  test('formal candidate rejects check-only and keeps preflight as a separate non-release mode', () => {
     const directory = mkdtempSync(join(tmpdir(), 'skill-scope-formal-preflight-'));
     try {
       const file = join(directory, 'production.json');
@@ -202,9 +215,23 @@ describe('WeChat release verification assets', () => {
       }));
       const baseArgs = [
         join(repoRoot, 'scripts', 'verify-wechat-release.mjs'), '--profile', 'formal',
-        '--disclosure-file', file, '--check-only',
+        '--disclosure-file', file,
       ];
-      const missingSafety = spawnSync(process.execPath, baseArgs, {
+      const formalCheckOnly = spawnSync(process.execPath, [...baseArgs, '--check-only'], {
+        cwd: repoRoot, encoding: 'utf8',
+        env: {
+          ...process.env,
+          TARO_APP_CLOUDBASE_ENV_ID: 'prod-cloudbase-1',
+          SKILLSCOPE_ENV: 'production',
+          CONTENT_SAFETY_URL: 'https://moderation.skillscope.invalid/v1/check',
+          CONTENT_SAFETY_API_KEY: 'formal-test-secret',
+          CONTENT_SAFETY_PROVIDER: 'skillscope-moderation',
+        },
+      });
+      expect(formalCheckOnly.status).not.toBe(0);
+      expect(`${formalCheckOnly.stdout}${formalCheckOnly.stderr}`).toMatch(/formal.*check-only.*not allowed/i);
+
+      const missingSafety = spawnSync(process.execPath, [...baseArgs, '--preflight-only'], {
         cwd: repoRoot, encoding: 'utf8',
         env: {
           ...process.env,
@@ -212,24 +239,33 @@ describe('WeChat release verification assets', () => {
           SKILLSCOPE_ENV: 'production',
           CONTENT_SAFETY_URL: '',
           CONTENT_SAFETY_API_KEY: '',
+          CONTENT_SAFETY_PROVIDER: '',
           SKILLSCOPE_ALLOW_UNSAFE_MODERATION: 'false',
         },
       });
       expect(missingSafety.status).not.toBe(0);
       expect(`${missingSafety.stdout}${missingSafety.stderr}`).toMatch(/CONTENT_SAFETY_URL|CONTENT_SAFETY_API_KEY/);
 
-      const valid = spawnSync(process.execPath, baseArgs, {
-        cwd: repoRoot, encoding: 'utf8',
-        env: {
-          ...process.env,
-          TARO_APP_CLOUDBASE_ENV_ID: 'prod-cloudbase-1',
-          SKILLSCOPE_ENV: 'production',
-          CONTENT_SAFETY_URL: 'https://safety.example/check',
-          CONTENT_SAFETY_API_KEY: 'formal-test-secret',
-        },
-      });
-      expect(valid.status).toBe(0);
-      expect(valid.stdout).toContain('release candidate static verification passed');
+      for (const [name, value, expected] of [
+        ['CONTENT_SAFETY_URL', 'https://example.com/check', /CONTENT_SAFETY_URL.*placeholder/i],
+        ['CONTENT_SAFETY_API_KEY', 'changeme', /CONTENT_SAFETY_API_KEY.*placeholder/i],
+        ['CONTENT_SAFETY_PROVIDER', 'TBD', /CONTENT_SAFETY_PROVIDER.*placeholder/i],
+      ] as const) {
+        const placeholder = spawnSync(process.execPath, [...baseArgs, '--preflight-only'], {
+          cwd: repoRoot, encoding: 'utf8',
+          env: {
+            ...process.env,
+            TARO_APP_CLOUDBASE_ENV_ID: 'prod-cloudbase-1',
+            SKILLSCOPE_ENV: 'production',
+            CONTENT_SAFETY_URL: 'https://moderation.skillscope.invalid/v1/check',
+            CONTENT_SAFETY_API_KEY: 'formal-test-secret',
+            CONTENT_SAFETY_PROVIDER: 'skillscope-moderation',
+            [name]: value,
+          },
+        });
+        expect(placeholder.status).not.toBe(0);
+        expect(`${placeholder.stdout}${placeholder.stderr}`).toMatch(expected);
+      }
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }
@@ -291,6 +327,47 @@ describe('WeChat release verification assets', () => {
       ], { cwd: repoRoot, encoding: 'utf8' });
       expect(tracked.status).not.toBe(0);
       expect(`${tracked.stdout}${tracked.stderr}`).toMatch(/tracked secret filename/i);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test('secret scanner reads every tracked regular file and rejects extensionless private keys and key names', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'skill-scope-tracked-key-scan-'));
+    try {
+      execFileSync('git', ['init', '--quiet'], { cwd: directory });
+      const extensionlessPem = join(directory, 'NOTICE');
+      writeFileSync(extensionlessPem, ['-----BEGIN OPENSSH', 'PRIVATE KEY-----\nplaceholder\n-----END OPENSSH PRIVATE KEY-----'].join(' '));
+      execFileSync('git', ['add', 'NOTICE'], { cwd: directory });
+
+      const contentResult = spawnSync(process.execPath, [
+        join(repoRoot, 'scripts', 'scan-secrets.mjs'), '--target', 'source', '.',
+      ], { cwd: directory, encoding: 'utf8' });
+      expect(contentResult.status).not.toBe(0);
+      expect(`${contentResult.stdout}${contentResult.stderr}`).toMatch(/NOTICE.*private key header/i);
+
+      const injectedTrackedFile = spawnSync(process.execPath, [
+        join(repoRoot, 'scripts', 'scan-secrets.mjs'), '--target', 'source',
+        '--tracked-file', 'harmless-test-entry', '.',
+      ], { cwd: directory, encoding: 'utf8' });
+      expect(injectedTrackedFile.status).not.toBe(0);
+      expect(`${injectedTrackedFile.stdout}${injectedTrackedFile.stderr}`).toMatch(/NOTICE.*private key header/i);
+
+      rmSync(extensionlessPem);
+      execFileSync('git', ['rm', '--cached', '--quiet', 'NOTICE'], { cwd: directory });
+      for (const name of ['id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'private.wx1234567890abcdef.key', 'wechat-upload-key']) {
+        writeFileSync(join(directory, name), 'not-a-secret-value');
+      }
+      execFileSync('git', ['add', 'id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'private.wx1234567890abcdef.key', 'wechat-upload-key'], { cwd: directory });
+
+      const filenameResult = spawnSync(process.execPath, [
+        join(repoRoot, 'scripts', 'scan-secrets.mjs'), '--target', 'source', '.',
+      ], { cwd: directory, encoding: 'utf8' });
+      expect(filenameResult.status).not.toBe(0);
+      const output = `${filenameResult.stdout}${filenameResult.stderr}`;
+      for (const name of ['id_rsa', 'id_dsa', 'id_ecdsa', 'id_ed25519', 'private.wx1234567890abcdef.key', 'wechat-upload-key']) {
+        expect(output).toMatch(new RegExp(`${name.replace('.', '\\.')}: tracked secret filename`, 'i'));
+      }
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

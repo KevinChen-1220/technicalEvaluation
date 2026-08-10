@@ -84,7 +84,7 @@ describe('content safety adapters', () => {
     })).resolves.toEqual({ allowed: false });
   });
 
-  test('fails closed without moderation capabilities unless unsafe bypass is explicit and non-production', async () => {
+  test('fails closed without moderation capabilities unless unsafe bypass is explicitly development-only', async () => {
     expect(() => createHttpsContentSafetyModeration({
       environment: { SKILLSCOPE_ENV: 'production' },
       fetch: jest.fn() as unknown as ContentSafetyFetchTransport,
@@ -107,10 +107,25 @@ describe('content safety adapters', () => {
       fetch: jest.fn() as unknown as ContentSafetyFetchTransport,
     });
     await expect(unsafeOutput.checkText(request)).resolves.toEqual({ allowed: true });
-    expect(() => createHttpsContentSafetyModeration({
-      environment: { SKILLSCOPE_ENV: 'production', SKILLSCOPE_ALLOW_UNSAFE_MODERATION: 'true' },
-      fetch: jest.fn() as unknown as ContentSafetyFetchTransport,
-    })).toThrow(expect.objectContaining({ code: 'CONFIGURATION_ERROR' }));
+
+    for (const environmentName of [undefined, '', 'dev', 'Development', 'staging', 'test', 'production', 'unknown']) {
+      const environment = {
+        SKILLSCOPE_ENV: environmentName,
+        SKILLSCOPE_ALLOW_UNSAFE_MODERATION: 'true',
+      };
+      const output = () => createHttpsContentSafetyModeration({
+        environment,
+        fetch: jest.fn() as unknown as ContentSafetyFetchTransport,
+      });
+      const input = () => createWeChatMsgSecCheckModeration({ openapi: {}, environment });
+      if (environmentName === 'production') {
+        expect(output).toThrow(expect.objectContaining({ code: 'CONFIGURATION_ERROR' }));
+        expect(input).toThrow(expect.objectContaining({ code: 'CONFIGURATION_ERROR' }));
+      } else {
+        await expect(output().checkText(request)).resolves.toEqual({ allowed: false });
+        await expect(input().checkText({ ...request, scene: 'generation_input' })).resolves.toEqual({ allowed: false });
+      }
+    }
   });
 
   test('aborts a hung output moderation request on its own timeout and fails closed', async () => {

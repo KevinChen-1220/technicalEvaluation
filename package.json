@@ -30,6 +30,7 @@
     "verify:wechat-release": "node scripts/verify-wechat-release.mjs --profile development",
     "verify:wechat-release:dev": "node scripts/verify-wechat-release.mjs --file docs/wechat/release-disclosure.development.json --mode development",
     "verify:wechat-release:formal": "node scripts/verify-wechat-release.mjs --profile formal",
+    "verify:wechat-release:formal-preflight": "node scripts/verify-wechat-release.mjs --profile formal --preflight-only",
     "wechat:ci:dry-run": "node scripts/wechat-miniprogram-ci.mjs --mode dry-run",
     "wechat:ci:preview": "node scripts/wechat-miniprogram-ci.mjs --mode preview",
     "wechat:ci:upload": "node scripts/wechat-miniprogram-ci.mjs --mode upload",

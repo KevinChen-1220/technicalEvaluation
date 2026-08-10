@@ -22,18 +22,26 @@ DONE locally, with external WeChat account/AppID/login/device blockers recorded.
 - RED (double review): generation controller tests showed retry created a second job, create timeout lost the request id, cloud payload omitted `clientRequestId`, and fixture mode duplicated the assessment.
 - RED (double review): privacy/other reports without `assessmentId` returned `INVALID_REQUEST`, collection schema required the field, formal preflight accepted missing content-safety configuration, and audit classification treated Taro runtime as build-only.
 - GREEN (double review): CloudBase 17 suites / 135 tests and WeChat focused 3 suites / 26 tests passed before the full same-run formal verification.
+- RED (security follow-up): formal `--check-only` exited successfully, the preflight script was absent, tracked extensionless PEM content and `id_*` names passed scanning, staging/unknown moderation bypass returned allow, and operations docs did not state the external availability boundary.
+- GREEN (security follow-up): formal check-only rejection, isolated preflight mode, all-tracked-file binary-safe scanning, exact development-only bypass, placeholder/provider gates, and documentation contracts pass in the focused CloudBase suite.
+- RED/GREEN (security self-review): `--tracked-file` initially replaced the real Git file list; a failing bypass test was added, then the scanner changed to merge injected entries with `git ls-files`. The final formal same-run was repeated after this fix.
 
 ## Verification
 
-- `npm run verify:wechat-release:formal -- --disclosure-file <temporary-valid-fixture>`: passed from clean artifacts; the fixture was deleted immediately afterward.
-- Root tests: 34 suites / 228 tests.
+- `npm run verify:wechat-release:formal -- --check-only`: failed immediately as required; formal cannot report release success through a static-only path.
+- `npm run verify:wechat-release:formal-preflight -- --disclosure-file <temporary-valid-fixture>`: passed and explicitly reported that full release verification was not run.
+- First formal same-run attempt was correctly stopped by the source scanner because the process URL/provider values duplicated tracked test literals; no scanner exception was added. Subsequent runs used process-only verification values and passed from clean artifacts, including a final rerun after scanner self-review; the fixture was deleted immediately afterward.
+- Root tests: 34 suites / 230 tests.
 - WeChat tests: 15 suites / 77 tests.
-- CloudBase tests: 17 suites / 136 tests.
+- CloudBase tests: 17 suites / 138 tests.
 - Typechecks: root, WeChat, and CloudBase passed.
 - Builds: CloudBase build, Expo web export, and production `build:weapp` passed.
 - Web/native checks: `verify:web` and `verify:assets` passed.
 - Secret scans: source and compiled WeChat dist passed.
+- Secret scanner: reads every Git-tracked regular file, rejects extensionless PEM/OpenSSH blocks plus `id_rsa`, `id_dsa`, `id_ecdsa`, `id_ed25519`, WeChat upload-key names, and key extensions; binary files are skipped without UTF-8 coercion.
 - Release disclosure: repository production template failed in 1.3 seconds before builds as expected; a temporary valid production disclosure passed clean formal build plus same-run artifact comparison, then was deleted.
+- Moderation: unsafe bypass is allowed only when `SKILLSCOPE_ENV=development` and `SKILLSCOPE_ALLOW_UNSAFE_MODERATION=true` match exactly; unset, typo, staging, test, production, and unknown environments fail closed.
+- Formal moderation preflight: requires production environment plus non-placeholder `CONTENT_SAFETY_URL`, `CONTENT_SAFETY_API_KEY`, and `CONTENT_SAFETY_PROVIDER`; URL must remain credential-free HTTPS. Provider availability still requires external hosted smoke.
 - miniprogram-ci: dry-run passed without credentials and redacted private key paths.
 - npm audit: `npm audit --omit=optional --json` returned 125 advisories (low 1, moderate 44, high 36, critical 44); disposition is documented in `docs/wechat/release-audit.md`. `npm audit fix --package-lock-only --dry-run` exceeded 180 seconds and was terminated without applying changes.
 
