@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "release": {
+    "product": "SkillScope",
+    "channel": "wechat-mini-program",
+    "version": "待配置",
+    "commitSha": "待配置",
+    "tag": "待配置",
+    "releaseTime": "待配置",
+    "rolloutPercentage": 0,
+    "rollbackVersion": "待配置"
+  },
+  "wechat": {
+    "appId": "待配置",
+    "appVersion": "待配置",
+    "robot": "待配置",
+    "uploadRecordUrl": "待配置",
+    "reviewRecordUrl": "待配置"
+  },
+  "cloudbase": {
+    "productionEnvId": "待配置",
+    "deploymentRecordUrl": "待配置",
+    "collectionsVersion": "待配置",
+    "functionRulesVersion": "待配置"
+  },
+  "compliance": {
+    "serviceOperator": "待配置",
+    "privacyPolicyVersion": "2026-08-10",
+    "miniProgramFiling": "待配置",
+    "serviceCategory": "待配置",
+    "modelDisclosure": "待配置",
+    "generativeAiRegistration": "待配置",
+    "contentLabelingDecision": "待配置"
+  },
+  "artifacts": {
+    "wechatDistSha256": "待配置",
+    "cloudbaseDistSha256": "待配置",
+    "releaseEvidence": "docs/wechat/release-evidence/2026-08-10-command-output.md"
+  },
+  "approvals": [
+    {
+      "role": "release-owner",
+      "name": "待配置",
+      "approvedAt": "待配置"
+    },
+    {
+      "role": "compliance-owner",
+      "name": "待配置",
+      "approvedAt": "待配置"
+    }
+  ],
+  "externalEvidence": {
+    "filingIssue": "待配置",
+    "realDeviceSmokeIssue": "待配置",
+    "productionSmokeIssue": "待配置",
+    "reviewSubmissionRecord": "待配置"
+  }
+}

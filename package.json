@@ -16,6 +16,7 @@
     "build:web": "expo export --platform web",
     "verify:web": "node scripts/verify-web-metadata.mjs",
     "verify:assets": "node scripts/verify-native-assets.mjs",
+    "verify:github-workflows": "node scripts/verify-github-workflows.mjs",
     "test": "jest --runInBand",
     "typecheck": "tsc --noEmit",
     "dev:weapp": "npm --workspace apps/wechat run dev:weapp",
@@ -57,6 +58,7 @@
     "miniprogram-ci": "^2.1.31",
     "pngjs": "^7.0.0",
     "ts-jest": "^29.4.0",
-    "typescript": "~5.8.3"
+    "typescript": "~5.8.3",
+    "yaml": "^1.10.3"
   }
 }

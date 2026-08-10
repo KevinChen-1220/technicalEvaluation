@@ -1,0 +1,74 @@
+name: WeChat filing and compliance
+description: Track external WeChat AppID, filing, privacy, and AI disclosure prerequisites.
+title: "[WeChat Filing]: "
+labels:
+  - release
+  - wechat
+  - compliance
+body:
+  - type: markdown
+    attributes:
+      value: |
+        用这个 issue 记录发布负责人完成的外部事项。AppID、备案、隐私、生成式人工智能披露必须来自真实主体和官方后台，不能在仓库里伪造。
+        生产上传还需要 `CONTENT_SAFETY_URL`、`CONTENT_SAFETY_API_KEY`、`CONTENT_SAFETY_PROVIDER` 配置在 `wechat-production` environment；完成本 issue 后继续创建 `wechat_production_smoke` issue 记录真机和 CloudBase 证据。
+  - type: input
+    id: operator
+    attributes:
+      label: 服务运营主体
+      description: 填写微信小程序账号认证主体或运营主体；不要填写联系人身份证号。
+      placeholder: 待配置
+    validations:
+      required: true
+  - type: input
+    id: appid
+    attributes:
+      label: WeChat AppID
+      description: 填写真实小程序 AppID；不得填写示例值。
+      placeholder: 待配置
+    validations:
+      required: true
+  - type: textarea
+    id: categories
+    attributes:
+      label: 服务类目和资质
+      description: 记录微信公众平台选择的服务类目、资质文件和审核责任人。
+      placeholder: 待配置
+    validations:
+      required: true
+  - type: input
+    id: mini-program-filing
+    attributes:
+      label: 小程序 ICP 备案号
+      placeholder: 待配置
+    validations:
+      required: true
+  - type: input
+    id: privacy-version
+    attributes:
+      label: 隐私保护指引版本
+      placeholder: 2026-08-10
+    validations:
+      required: true
+  - type: textarea
+    id: ai-disclosure
+    attributes:
+      label: 生成式人工智能备案或登记披露
+      description: 记录模型名称、备案号或上线编号，以及是否由地方网信部门登记。
+      placeholder: 待配置
+    validations:
+      required: true
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 发布前确认
+      options:
+        - label: 微信主体认证已完成，AppID 已写入本机 private config，未提交到仓库。
+          required: true
+        - label: 小程序备案、隐私声明、投诉入口和服务类目均已在微信后台完成。
+          required: true
+        - label: 生成式人工智能模型披露、备案或登记信息已核对，页面展示与后台材料一致。
+          required: true
+        - label: 生产内容安全 provider、URL 和审核凭据已配置在 `wechat-production` environment，且未写入仓库。
+          required: true
+        - label: 本 issue 不包含上传私钥、模型密钥、OpenID、手机号或后台 token。
+          required: true

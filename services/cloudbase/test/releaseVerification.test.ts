@@ -11,6 +11,10 @@ describe('WeChat release verification assets', () => {
       'docs/wechat/privacy-policy.zh-CN.md',
       'docs/wechat/privacy-data-map.md',
       'docs/wechat/operations-runbook.md',
+      'docs/wechat/release-checklist.md',
+      'docs/wechat/deployment-runbook.md',
+      'docs/wechat/review-submission.md',
+      'docs/wechat/release-completion-matrix.md',
       'docs/wechat/release-profiles.md',
       'docs/wechat/release-audit.md',
       'docs/wechat/release-evidence/2026-08-10-local-release-candidate.md',
@@ -18,6 +22,7 @@ describe('WeChat release verification assets', () => {
       'docs/wechat/release-evidence/screenshot-naming.md',
       'docs/wechat/release-disclosure.development.json',
       'docs/wechat/release-disclosure.production.template.json',
+      'docs/wechat/release-manifest.template.json',
       'apps/wechat/cloudbase.env.development.example',
       'apps/wechat/cloudbase.env.production.example',
       'apps/wechat/project.private.config.example.json',
@@ -29,6 +34,117 @@ describe('WeChat release verification assets', () => {
       const fullPath = join(repoRoot, file);
       expect(existsSync(fullPath)).toBe(true);
       expect(readFileSync(fullPath, 'utf8')).toMatch(/SkillScope|技能测评|隐私|CloudBase|待配置/);
+    }
+  });
+
+  test('keeps Task 9 handoff docs honest about external WeChat prerequisites', () => {
+    const checklist = readFileSync(join(repoRoot, 'docs/wechat/release-checklist.md'), 'utf8');
+    const deployment = readFileSync(join(repoRoot, 'docs/wechat/deployment-runbook.md'), 'utf8');
+    const submission = readFileSync(join(repoRoot, 'docs/wechat/review-submission.md'), 'utf8');
+    const matrix = readFileSync(join(repoRoot, 'docs/wechat/release-completion-matrix.md'), 'utf8');
+    const readme = readFileSync(join(repoRoot, 'README.md'), 'utf8');
+
+    for (const value of [checklist, deployment, submission, matrix]) {
+      expect(value).toContain('真实');
+      expect(value).toContain('待配置');
+      expect(value).toMatch(/AppID|备案|隐私|生产|真机|审核/);
+      expect(value).toMatch(/不能|不得|不可/);
+    }
+
+    expect(checklist).toMatch(/主体认证.*AppID.*类目.*ICP备案.*隐私声明.*生成式人工智能/s);
+    expect(deployment).toMatch(/集合.*索引.*安全规则.*函数调用规则.*定时触发器.*环境变量.*回滚/s);
+    expect(submission).toMatch(/版本号.*上传命令.*审核备注.*截图.*AI.*驳回.*重新提交/s);
+    expect(submission).toMatch(/PowerShell.*Bash/s);
+    expect(matrix).toMatch(/本地已验证.*外部就绪.*外部阻塞/s);
+    expect(readme).toContain('微信小程序');
+    expect(readme).toContain('docs/wechat/release-checklist.md');
+    expect(readme).not.toContain('Use Sample Paper');
+  });
+
+  test('keeps a machine-readable release manifest template without secrets or invented identifiers', () => {
+    const manifestText = readFileSync(join(repoRoot, 'docs/wechat/release-manifest.template.json'), 'utf8');
+    const manifest = JSON.parse(manifestText) as {
+      schemaVersion?: number;
+      release?: Record<string, unknown>;
+      wechat?: Record<string, unknown>;
+      cloudbase?: Record<string, unknown>;
+      compliance?: Record<string, unknown>;
+      artifacts?: Record<string, unknown>;
+      approvals?: unknown[];
+      externalEvidence?: Record<string, unknown>;
+    };
+
+    expect(manifest.schemaVersion).toBe(1);
+    expect(manifest.release).toMatchObject({
+      product: 'SkillScope',
+      commitSha: '待配置',
+      tag: '待配置',
+      rolloutPercentage: 0,
+    });
+    expect(manifest.wechat).toMatchObject({
+      appId: '待配置',
+      appVersion: '待配置',
+    });
+    expect(manifest.cloudbase).toMatchObject({
+      productionEnvId: '待配置',
+    });
+    expect(manifest.compliance).toMatchObject({
+      serviceOperator: '待配置',
+      miniProgramFiling: '待配置',
+      modelDisclosure: '待配置',
+      generativeAiRegistration: '待配置',
+    });
+    expect(manifest.artifacts).toHaveProperty('wechatDistSha256');
+    expect(manifest.artifacts).toHaveProperty('cloudbaseDistSha256');
+    expect(manifest.externalEvidence).toHaveProperty('realDeviceSmokeIssue');
+    expect(manifestText).not.toMatch(/secret|api[_-]?key|private[_-]?key|token/i);
+    expect(manifestText).not.toMatch(/wx[0-9a-f]{16,}/i);
+  });
+
+  test('validates GitHub workflows and release issue templates without reading secrets on PRs', () => {
+    const rootPackage = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
+    const releaseWorkflow = readFileSync(join(repoRoot, '.github/workflows/wechat-release.yml'), 'utf8');
+    const filingIssue = readFileSync(join(repoRoot, '.github/ISSUE_TEMPLATE/wechat_filing.yml'), 'utf8');
+    const smokeIssue = readFileSync(join(repoRoot, '.github/ISSUE_TEMPLATE/wechat_production_smoke.yml'), 'utf8');
+
+    expect(rootPackage.scripts['verify:github-workflows']).toBe('node scripts/verify-github-workflows.mjs');
+    execFileSync(process.execPath, [join(repoRoot, 'scripts', 'verify-github-workflows.mjs')], { cwd: repoRoot });
+
+    expect(releaseWorkflow).toContain('pull_request');
+    expect(releaseWorkflow).toContain('workflow_dispatch');
+    expect(releaseWorkflow).toContain('wechat-production');
+    expect(releaseWorkflow).toMatch(/inputs\.publish_target == 'upload'/);
+    expect(releaseWorkflow).not.toMatch(/pull_request_target/);
+    expect(releaseWorkflow).not.toContain('test -f "${{ inputs.disclosure_file }}"');
+    expect(releaseWorkflow).not.toContain('--disclosure-file "${{ inputs.disclosure_file }}"');
+    expect(releaseWorkflow).toContain('DISCLOSURE_FILE: ${{ inputs.disclosure_file }}');
+    expect(releaseWorkflow).toContain('test -n "$DISCLOSURE_FILE" && test -f "$DISCLOSURE_FILE"');
+    expect(releaseWorkflow).toContain('--disclosure-file "$DISCLOSURE_FILE"');
+    const checksJob = releaseWorkflow.slice(
+      releaseWorkflow.indexOf('release-checks:'),
+      releaseWorkflow.indexOf('upload:'),
+    );
+    expect(checksJob).not.toContain('secrets.');
+    expect(filingIssue).toMatch(/AppID.*备案.*隐私.*生成式人工智能/s);
+    expect(filingIssue).toContain('CONTENT_SAFETY_PROVIDER');
+    expect(filingIssue).toContain('wechat_production_smoke');
+    expect(smokeIssue).toMatch(/真机.*CloudBase.*截图.*回滚/s);
+    expect(smokeIssue).toContain('wechat_filing');
+  });
+
+  test('pins GitHub Actions used by release workflows to immutable commits', () => {
+    const workflowFiles = [
+      '.github/workflows/ci.yml',
+      '.github/workflows/pages.yml',
+      '.github/workflows/wechat-release.yml',
+    ];
+
+    for (const file of workflowFiles) {
+      const workflow = readFileSync(join(repoRoot, file), 'utf8');
+      expect(workflow).not.toMatch(/uses:\s+actions\/[a-z0-9-]+@v\d+/i);
+      for (const match of workflow.matchAll(/uses:\s+(actions\/[a-z0-9-]+)@([^\s]+)/gi)) {
+        expect(match[2]).toMatch(/^[0-9a-f]{40}$/);
+      }
     }
   });
 

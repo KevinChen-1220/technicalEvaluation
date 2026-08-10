@@ -64,6 +64,7 @@ function verifyReleaseCandidate({ profile, checkOnly, disclosureFile: selectedDi
     ['npm', ['run', 'build:web']],
     ['npm', ['run', 'verify:web']],
     ['npm', ['run', 'verify:assets']],
+    ['npm', ['run', 'verify:github-workflows']],
     ['npm', ['run', 'build:weapp'], { env: buildEnv }],
     ['npm', ['run', 'scan:secrets:source']],
     ['npm', ['run', 'scan:secrets:wechat-dist']],
@@ -120,11 +121,19 @@ function verifyStaticReleaseContracts(profile, options = { inspectDist: true }) 
     'docs/wechat/privacy-policy.zh-CN.md',
     'docs/wechat/privacy-data-map.md',
     'docs/wechat/operations-runbook.md',
+    'docs/wechat/release-checklist.md',
+    'docs/wechat/deployment-runbook.md',
+    'docs/wechat/review-submission.md',
+    'docs/wechat/release-completion-matrix.md',
     'docs/wechat/release-profiles.md',
     'docs/wechat/release-audit.md',
     'docs/wechat/release-evidence/2026-08-10-local-release-candidate.md',
     'docs/wechat/release-evidence/external-smoke-checklist.md',
     'docs/wechat/release-evidence/screenshot-naming.md',
+    'docs/wechat/release-manifest.template.json',
+    '.github/workflows/wechat-release.yml',
+    '.github/ISSUE_TEMPLATE/wechat_filing.yml',
+    '.github/ISSUE_TEMPLATE/wechat_production_smoke.yml',
     'apps/wechat/project.config.json',
     'apps/wechat/project.private.config.example.json',
     'services/cloudbase/deploy/cloudbaserc.json',
@@ -136,6 +145,9 @@ function verifyStaticReleaseContracts(profile, options = { inspectDist: true }) 
   const rootPackage = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
   if (rootPackage.scripts?.['verify:wechat-release'] !== 'node scripts/verify-wechat-release.mjs --profile development') {
     fail(['package.json is missing verify:wechat-release']);
+  }
+  if (rootPackage.scripts?.['verify:github-workflows'] !== 'node scripts/verify-github-workflows.mjs') {
+    fail(['package.json is missing verify:github-workflows']);
   }
 
   const publicConfig = JSON.parse(readFileSync(join(repoRoot, 'apps/wechat/project.config.json'), 'utf8'));
