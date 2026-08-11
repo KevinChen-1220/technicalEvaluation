@@ -4,6 +4,8 @@ import { BlobPreconditionFailedError, type BlobPort } from './ports';
 const MAX_REVISION = 999_999_999_999;
 const MAX_CAS_ATTEMPTS = 8;
 const RATE_RESERVATION_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
+const RATE_REVISION_KEEP_COUNT = 8;
+const RATE_REVISION_CLEANUP_LIMIT = 32;
 
 export type QuotaDecision = 'allowed' | 'rate_limited' | 'quota_exceeded' | 'generation_disabled';
 
@@ -27,6 +29,8 @@ export class BlobQuotaRepository {
       reservedDate = marker.reservedDate;
     }
 
+    const dailyPreflight = await this.preflightDailyReservation(ownerKey, reservedDate, reservationId);
+    if (dailyPreflight !== 'allowed') return dailyPreflight;
     const rateDecision = await this.appendRateReservation(ownerKey, reservationId, requestAt);
     if (rateDecision !== 'allowed') return rateDecision;
     return await this.appendDailyReservation(ownerKey, reservedDate, reservationId);
@@ -83,6 +87,7 @@ export class BlobQuotaRepository {
       };
       try {
         await this.blob.put(this.rateLedgerKey(ownerKey, next.revision), next, { onlyIfNew: true });
+        await this.cleanupRateRevisions(ownerKey, next.revision, requestAt);
         return 'allowed';
       } catch (error) {
         if (isPreconditionFailure(error)) continue;
@@ -90,6 +95,16 @@ export class BlobQuotaRepository {
       }
     }
     return 'rate_limited';
+  }
+
+  private async preflightDailyReservation(
+    ownerKey: string,
+    utcDay: string,
+    reservationId: string | undefined,
+  ): Promise<'allowed' | 'quota_exceeded'> {
+    const latest = await this.readLatestDay(ownerKey, utcDay);
+    if (reservationId !== undefined && normalizedReservationIds(latest).includes(reservationId)) return 'allowed';
+    return (latest?.dailyCount ?? 0) >= 5 ? 'quota_exceeded' : 'allowed';
   }
 
   private async appendDailyReservation(
@@ -128,6 +143,50 @@ export class BlobQuotaRepository {
     return revision === null
       ? null
       : await this.blob.get<RateReservationLedger>(this.rateLedgerKey(ownerKey, revision), { consistency: 'strong' });
+  }
+
+  private async cleanupRateRevisions(ownerKey: string, writtenRevision: number, requestAt: string): Promise<void> {
+    try {
+      const listing = await this.blob.list(this.rateLedgerPrefix(ownerKey), { consistency: 'strong' });
+      const revisions = rateRevisionEntries(listing.blobs);
+      if (revisions.length <= 1) return;
+
+      const latestRevisionNumber = revisions[0]!.revision;
+      const protectedRevisions = new Set(revisions.slice(0, RATE_REVISION_KEEP_COUNT).map((entry) => entry.revision));
+      protectedRevisions.add(latestRevisionNumber);
+      protectedRevisions.add(writtenRevision);
+      const deletionCandidates = new Map<number, string>();
+      for (const entry of revisions) {
+        if (!protectedRevisions.has(entry.revision)) deletionCandidates.set(entry.revision, entry.key);
+      }
+
+      const cutoff = new Date(requestAt).getTime() - RATE_RESERVATION_RETENTION_MS;
+      const ageCandidates = revisions.slice(1, RATE_REVISION_KEEP_COUNT)
+        .filter((entry) => entry.revision !== writtenRevision && entry.revision !== latestRevisionNumber);
+      for (const entry of ageCandidates) {
+        try {
+          const record = await this.blob.get<RateReservationLedger>(entry.key, { consistency: 'strong' });
+          if (record !== null && new Date(record.lastRequestAt).getTime() < cutoff) {
+            deletionCandidates.set(entry.revision, entry.key);
+          }
+        } catch {
+          // Cleanup is best effort; a later successful reservation retries discovery.
+        }
+      }
+
+      const deletions = [...deletionCandidates.entries()]
+        .sort(([left], [right]) => left - right)
+        .slice(0, RATE_REVISION_CLEANUP_LIMIT);
+      for (const [, key] of deletions) {
+        try {
+          await this.blob.delete(key);
+        } catch {
+          // Failed revisions stay discoverable and are retried by the next cleanup pass.
+        }
+      }
+    } catch {
+      // Cleanup cannot change the outcome after the immutable rate revision is committed.
+    }
   }
 
   private async readLatestDay(ownerKey: string, utcDay: string): Promise<QuotaReservation | null> {
@@ -215,11 +274,15 @@ function retainedRateReservations(record: RateReservationLedger | null, requestA
 }
 
 function latestRevision(keys: string[]): number | null {
-  const revisions = keys
-    .map((key) => Number(/\/(\d{12})\.json$/.exec(key)?.[1]))
-    .map((inverse) => MAX_REVISION - inverse)
-    .filter((revision) => Number.isInteger(revision) && revision > 0);
-  return revisions.length === 0 ? null : Math.max(...revisions);
+  return rateRevisionEntries(keys)[0]?.revision ?? null;
+}
+
+function rateRevisionEntries(keys: string[]): Array<{ key: string; revision: number }> {
+  return keys.map((key) => {
+    const inverse = Number(/\/(\d{12})\.json$/.exec(key)?.[1]);
+    return { key, revision: MAX_REVISION - inverse };
+  }).filter((entry) => Number.isInteger(entry.revision) && entry.revision > 0)
+    .sort((left, right) => right.revision - left.revision);
 }
 
 function inverseRevision(revision: number): string {

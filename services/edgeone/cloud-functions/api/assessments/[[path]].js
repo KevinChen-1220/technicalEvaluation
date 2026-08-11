@@ -1096,6 +1096,8 @@ var import_node_crypto2 = require("node:crypto");
 var MAX_REVISION = 999999999999;
 var MAX_CAS_ATTEMPTS = 8;
 var RATE_RESERVATION_RETENTION_MS = 30 * 24 * 60 * 60 * 1e3;
+var RATE_REVISION_KEEP_COUNT = 8;
+var RATE_REVISION_CLEANUP_LIMIT = 32;
 var BlobQuotaRepository = class {
   constructor(blob) {
     this.blob = blob;
@@ -1110,6 +1112,8 @@ var BlobQuotaRepository = class {
       const marker = existing ?? await this.claimMarker(ownerKey, reservationId, utcDay, requestAt);
       reservedDate = marker.reservedDate;
     }
+    const dailyPreflight = await this.preflightDailyReservation(ownerKey, reservedDate, reservationId);
+    if (dailyPreflight !== "allowed") return dailyPreflight;
     const rateDecision = await this.appendRateReservation(ownerKey, reservationId, requestAt);
     if (rateDecision !== "allowed") return rateDecision;
     return await this.appendDailyReservation(ownerKey, reservedDate, reservationId);
@@ -1151,6 +1155,7 @@ var BlobQuotaRepository = class {
       };
       try {
         await this.blob.put(this.rateLedgerKey(ownerKey, next.revision), next, { onlyIfNew: true });
+        await this.cleanupRateRevisions(ownerKey, next.revision, requestAt);
         return "allowed";
       } catch (error) {
         if (isPreconditionFailure2(error)) continue;
@@ -1158,6 +1163,11 @@ var BlobQuotaRepository = class {
       }
     }
     return "rate_limited";
+  }
+  async preflightDailyReservation(ownerKey, utcDay, reservationId) {
+    const latest = await this.readLatestDay(ownerKey, utcDay);
+    if (reservationId !== void 0 && normalizedReservationIds(latest).includes(reservationId)) return "allowed";
+    return (latest?.dailyCount ?? 0) >= 5 ? "quota_exceeded" : "allowed";
   }
   async appendDailyReservation(ownerKey, utcDay, reservationId) {
     for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
@@ -1188,6 +1198,40 @@ var BlobQuotaRepository = class {
     const keys = (await this.blob.list(prefix, { consistency: "strong" })).blobs;
     const revision = latestRevision(keys);
     return revision === null ? null : await this.blob.get(this.rateLedgerKey(ownerKey, revision), { consistency: "strong" });
+  }
+  async cleanupRateRevisions(ownerKey, writtenRevision, requestAt) {
+    try {
+      const listing = await this.blob.list(this.rateLedgerPrefix(ownerKey), { consistency: "strong" });
+      const revisions = rateRevisionEntries(listing.blobs);
+      if (revisions.length <= 1) return;
+      const latestRevisionNumber = revisions[0].revision;
+      const protectedRevisions = new Set(revisions.slice(0, RATE_REVISION_KEEP_COUNT).map((entry) => entry.revision));
+      protectedRevisions.add(latestRevisionNumber);
+      protectedRevisions.add(writtenRevision);
+      const deletionCandidates = /* @__PURE__ */ new Map();
+      for (const entry of revisions) {
+        if (!protectedRevisions.has(entry.revision)) deletionCandidates.set(entry.revision, entry.key);
+      }
+      const cutoff = new Date(requestAt).getTime() - RATE_RESERVATION_RETENTION_MS;
+      const ageCandidates = revisions.slice(1, RATE_REVISION_KEEP_COUNT).filter((entry) => entry.revision !== writtenRevision && entry.revision !== latestRevisionNumber);
+      for (const entry of ageCandidates) {
+        try {
+          const record = await this.blob.get(entry.key, { consistency: "strong" });
+          if (record !== null && new Date(record.lastRequestAt).getTime() < cutoff) {
+            deletionCandidates.set(entry.revision, entry.key);
+          }
+        } catch {
+        }
+      }
+      const deletions = [...deletionCandidates.entries()].sort(([left], [right]) => left - right).slice(0, RATE_REVISION_CLEANUP_LIMIT);
+      for (const [, key] of deletions) {
+        try {
+          await this.blob.delete(key);
+        } catch {
+        }
+      }
+    } catch {
+    }
   }
   async readLatestDay(ownerKey, utcDay) {
     const prefix = this.ledgerPrefix(ownerKey, utcDay);
@@ -1233,8 +1277,13 @@ function retainedRateReservations(record, requestAt) {
   });
 }
 function latestRevision(keys) {
-  const revisions = keys.map((key) => Number(/\/(\d{12})\.json$/.exec(key)?.[1])).map((inverse) => MAX_REVISION - inverse).filter((revision) => Number.isInteger(revision) && revision > 0);
-  return revisions.length === 0 ? null : Math.max(...revisions);
+  return rateRevisionEntries(keys)[0]?.revision ?? null;
+}
+function rateRevisionEntries(keys) {
+  return keys.map((key) => {
+    const inverse = Number(/\/(\d{12})\.json$/.exec(key)?.[1]);
+    return { key, revision: MAX_REVISION - inverse };
+  }).filter((entry) => Number.isInteger(entry.revision) && entry.revision > 0).sort((left, right) => right.revision - left.revision);
 }
 function inverseRevision(revision) {
   return String(MAX_REVISION - revision).padStart(12, "0");

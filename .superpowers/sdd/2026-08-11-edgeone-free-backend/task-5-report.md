@@ -2,7 +2,7 @@
 
 ## Status
 
-Completed, including all six strict review hardening rounds.
+Completed, including all seven strict review hardening rounds.
 
 ## Generation Contract
 
@@ -47,6 +47,8 @@ Completed, including all six strict review hardening rounds.
 - Rolling 60-second enforcement is isolated in one owner-global immutable rate ledger. Every CAS attempt strongly discovers and rereads the latest revision before an `onlyIfNew` append, so reservations targeting different daily dates still serialize through one decision point.
 - Global rate revisions store `lastRequestAt` plus reservation IDs and acceptance timestamps retained for 30 days. A recorded reservation remains idempotently allowed; different reservations inside the rolling window are rate-limited.
 - New reservations and historical marker recovery both pass through the global rate ledger before the marker's immutable first date is repaired in the daily ledger. A marker whose daily write failed can therefore recover without double-counting, while cross-date recoveries cannot bypass rolling limits.
+- Before a new global rate revision is written, the marker's first-date daily ledger is strongly read. A full day returns `quota_exceeded` without adding a rate revision or reservation ID, while the later daily CAS still rereads and enforces the limit against concurrent changes.
+- Successful global rate writes run best-effort bounded cleanup using a strong listing sorted by parsed revision. The current write, the discovered latest revision, and up to eight newest revisions are protected; each pass deletes at most 32 stale records, retries prior delete failures on later reservations, and physically removes snapshots older than 30 days.
 - Failure persistence uses a fresh two-second best-effort deadline, so an exhausted 115-second request deadline cannot leave a permanent running state. If that short write also fails, lease expiry permits recovery.
 - Immediately after any running job result from `begin`, including a newly claimed stale takeover, the route checks the deterministic assessment ID. An existing assessment completes that attempt before quota or LLM work.
 - `BlobPort.list` defaults to recursive flat blobs and exposes an explicit `directories` option. The EdgeOne adapter passes `directories: false` by default so nested job, assessment, quota, and token revisions remain discoverable.
@@ -68,10 +70,11 @@ Completed, including all six strict review hardening rounds.
 - Fourth-round red-green tests cover A@23:58, B@23:59, A@00:00 global idempotency, marker-first ledger repair, SDK lexicographic ordering, and token/lock revision 17 discovery with cleanup permanently failing.
 - Fifth-round red-green tests use real `Promise.all` contention to prove that two different reservations cannot both pass after a CAS conflict, and that an uncounted marker can be repaired after exactly 60 seconds without double-counting concurrent retries.
 - Sixth-round red-green probes reproduce two historical markers from different UTC dates both being allowed concurrently and a new job being allowed one second later. The global rate ledger now yields one `allowed` and one `rate_limited`, keeps the one-second request blocked, preserves first-date daily counts, and retains exactly the last 30 days of reservation IDs.
+- Seventh-round red-green probes run ten one-minute reservations against one day, proving only the first five create rate revisions and IDs. Additional tests accumulate 40 revisions while cleanup deletion fails, verify recovery catches up in bounded 32-delete passes to eight records, and confirm a 31-day-old revision is physically removed without deleting the latest snapshot.
 
 ## Verification
 
-- `npm run test:edgeone -- --runInBand`: 17 suites, 130 tests passed.
+- `npm run test:edgeone -- --runInBand`: 17 suites, 133 tests passed.
 - `npm run typecheck:edgeone`: passed.
 - `npm run build:edgeone`: passed and regenerated all six Node Function bundles.
 - `npm run scan:secrets:source`: passed.

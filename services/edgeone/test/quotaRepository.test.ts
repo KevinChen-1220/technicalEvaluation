@@ -220,6 +220,78 @@ describe('free tier quota', () => {
       ],
     }));
   });
+
+  test('does not append rate revisions for reservations rejected by the first-date daily quota', async () => {
+    const blob = new MemoryBlobPort();
+    const quota = new BlobQuotaRepository(blob);
+    const decisions: string[] = [];
+
+    for (let minute = 0; minute < 10; minute += 1) {
+      decisions.push(await quota.reserve(
+        'owner-a', new Date(Date.UTC(2026, 7, 11, 0, minute)), true, `job-${minute + 1}`,
+      ));
+    }
+
+    expect(decisions).toEqual([
+      'allowed', 'allowed', 'allowed', 'allowed', 'allowed',
+      'quota_exceeded', 'quota_exceeded', 'quota_exceeded', 'quota_exceeded', 'quota_exceeded',
+    ]);
+    const rateRecords = await readRateRecords(blob, 'owner-a');
+    expect(rateRecords).toHaveLength(5);
+    expect(rateRecords.sort((left, right) => right.revision - left.revision)[0]?.reservations).toEqual([
+      { reservationId: 'job-1', acceptedAt: '2026-08-11T00:00:00.000Z' },
+      { reservationId: 'job-2', acceptedAt: '2026-08-11T00:01:00.000Z' },
+      { reservationId: 'job-3', acceptedAt: '2026-08-11T00:02:00.000Z' },
+      { reservationId: 'job-4', acceptedAt: '2026-08-11T00:03:00.000Z' },
+      { reservationId: 'job-5', acceptedAt: '2026-08-11T00:04:00.000Z' },
+    ]);
+  });
+
+  test('catches up bounded rate revision cleanup after delete failures recover', async () => {
+    const blob = new MemoryBlobPort();
+    const quota = new BlobQuotaRepository(blob);
+    const originalDelete = blob.delete.bind(blob);
+    let cleanupUnavailable = true;
+    jest.spyOn(blob, 'delete').mockImplementation(async (key) => {
+      if (cleanupUnavailable && key.includes('/rate-ledger/')) throw new Error('cleanup unavailable');
+      await originalDelete(key);
+    });
+
+    for (let day = 0; day < 40; day += 1) {
+      await expect(quota.reserve(
+        'owner-a', utcDayOffset('2026-06-01T00:00:00.000Z', day), true, `job-${day + 1}`,
+      )).resolves.toBe('allowed');
+    }
+    expect((await blob.list('quotas/owner-a/rate-ledger/', { consistency: 'strong' })).blobs).toHaveLength(40);
+
+    cleanupUnavailable = false;
+    await expect(quota.reserve(
+      'owner-a', utcDayOffset('2026-06-01T00:00:00.000Z', 40), true, 'job-41',
+    )).resolves.toBe('allowed');
+    expect((await blob.list('quotas/owner-a/rate-ledger/', { consistency: 'strong' })).blobs).toHaveLength(9);
+    await expect(quota.reserve(
+      'owner-a', utcDayOffset('2026-06-01T00:00:00.000Z', 41), true, 'job-42',
+    )).resolves.toBe('allowed');
+    expect((await blob.list('quotas/owner-a/rate-ledger/', { consistency: 'strong' })).blobs).toHaveLength(8);
+  });
+
+  test('physically deletes a rate revision older than 30 days while preserving the latest snapshot', async () => {
+    const blob = new MemoryBlobPort();
+    const quota = new BlobQuotaRepository(blob);
+
+    await expect(quota.reserve(
+      'owner-a', new Date('2026-06-01T00:00:00.000Z'), true, 'job-old',
+    )).resolves.toBe('allowed');
+    await expect(quota.reserve(
+      'owner-a', new Date('2026-07-02T00:00:00.000Z'), true, 'job-current',
+    )).resolves.toBe('allowed');
+
+    const rateRecords = await readRateRecords(blob, 'owner-a');
+    expect(rateRecords).toEqual([expect.objectContaining({
+      revision: 2,
+      reservations: [{ reservationId: 'job-current', acceptedAt: '2026-07-02T00:00:00.000Z' }],
+    })]);
+  });
 });
 
 async function seedQuotaMarker(
@@ -235,4 +307,23 @@ async function seedQuotaMarker(
     { reservationIdHash, reservedDate, reservedAt },
     { onlyIfNew: true },
   );
+}
+
+async function readRateRecords(blob: MemoryBlobPort, ownerKey: string): Promise<Array<{
+  revision: number;
+  lastRequestAt: string;
+  reservations: Array<{ reservationId: string; acceptedAt: string }>;
+}>> {
+  const keys = (await blob.list(
+    `quotas/${encodeURIComponent(ownerKey)}/rate-ledger/`, { consistency: 'strong' },
+  )).blobs;
+  return (await Promise.all(keys.map(async (key) => await blob.get<{
+    revision: number;
+    lastRequestAt: string;
+    reservations: Array<{ reservationId: string; acceptedAt: string }>;
+  }>(key, { consistency: 'strong' })))).filter((record): record is NonNullable<typeof record> => record !== null);
+}
+
+function utcDayOffset(start: string, days: number): Date {
+  return new Date(new Date(start).getTime() + days * 86_400_000);
 }
