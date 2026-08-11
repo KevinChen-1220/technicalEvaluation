@@ -3,6 +3,7 @@ import { BlobPreconditionFailedError, type BlobPort } from './ports';
 
 const MAX_REVISION = 999_999_999_999;
 const MAX_CAS_ATTEMPTS = 8;
+const RATE_RESERVATION_RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
 
 export type QuotaDecision = 'allowed' | 'rate_limited' | 'quota_exceeded' | 'generation_disabled';
 
@@ -16,32 +17,19 @@ export class BlobQuotaRepository {
 
   async reserve(ownerKey: string, now: Date, generationEnabled: boolean, reservationId?: string): Promise<QuotaDecision> {
     if (!generationEnabled) return 'generation_disabled';
+    const requestAt = now.toISOString();
     const utcDay = now.toISOString().slice(0, 10);
+    let reservedDate = utcDay;
 
     if (reservationId !== undefined) {
-      const marker = await this.readMarker(ownerKey, reservationId);
-      if (marker !== null) {
-        return await this.ensureDailyReservation(ownerKey, marker.reservedDate, reservationId, now.toISOString());
-      }
+      const existing = await this.readMarker(ownerKey, reservationId);
+      const marker = existing ?? await this.claimMarker(ownerKey, reservationId, utcDay, requestAt);
+      reservedDate = marker.reservedDate;
     }
 
-    const today = await this.readLatestDay(ownerKey, utcDay);
-    if (reservationId !== undefined && normalizedReservationIds(today).includes(reservationId)) {
-      const marker = await this.claimMarker(ownerKey, reservationId, utcDay, now.toISOString());
-      return await this.ensureDailyReservation(ownerKey, marker.reservedDate, reservationId, now.toISOString());
-    }
-    const previous = await this.readLatestDay(ownerKey, previousUtcDay(utcDay));
-    const mostRecent = latestByRequestTime(today, previous);
-    if (mostRecent !== null && now.getTime() - new Date(mostRecent.lastRequestAt).getTime() < 60_000) {
-      return 'rate_limited';
-    }
-    if ((today?.dailyCount ?? 0) >= 5) return 'quota_exceeded';
-
-    if (reservationId === undefined) {
-      return await this.appendDailyReservation(ownerKey, utcDay, undefined, now.toISOString());
-    }
-    const marker = await this.claimMarker(ownerKey, reservationId, utcDay, now.toISOString());
-    return await this.ensureDailyReservation(ownerKey, marker.reservedDate, reservationId, now.toISOString());
+    const rateDecision = await this.appendRateReservation(ownerKey, reservationId, requestAt);
+    if (rateDecision !== 'allowed') return rateDecision;
+    return await this.appendDailyReservation(ownerKey, reservedDate, reservationId);
   }
 
   private async claimMarker(
@@ -73,33 +61,50 @@ export class BlobQuotaRepository {
     return marker;
   }
 
-  private async ensureDailyReservation(
+  private async appendRateReservation(
     ownerKey: string,
-    utcDay: string,
-    reservationId: string,
+    reservationId: string | undefined,
     requestAt: string,
   ): Promise<QuotaDecision> {
-    return await this.appendDailyReservation(ownerKey, utcDay, reservationId, requestAt);
+    for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
+      const latest = await this.readLatestRate(ownerKey);
+      const reservations = retainedRateReservations(latest, requestAt);
+      if (reservationId !== undefined
+        && reservations.some((reservation) => reservation.reservationId === reservationId)) return 'allowed';
+      if (latest !== null && new Date(requestAt).getTime() - new Date(latest.lastRequestAt).getTime() < 60_000) {
+        return 'rate_limited';
+      }
+      const next: RateReservationLedger = {
+        revision: (latest?.revision ?? 0) + 1,
+        lastRequestAt: requestAt,
+        reservations: reservationId === undefined
+          ? reservations
+          : [...reservations, { reservationId, acceptedAt: requestAt }],
+      };
+      try {
+        await this.blob.put(this.rateLedgerKey(ownerKey, next.revision), next, { onlyIfNew: true });
+        return 'allowed';
+      } catch (error) {
+        if (isPreconditionFailure(error)) continue;
+        throw error;
+      }
+    }
+    return 'rate_limited';
   }
 
   private async appendDailyReservation(
     ownerKey: string,
     utcDay: string,
     reservationId: string | undefined,
-    requestAt: string,
   ): Promise<QuotaDecision> {
     for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
       const latest = await this.readLatestDay(ownerKey, utcDay);
       const reservationIds = normalizedReservationIds(latest);
       if (reservationId !== undefined && reservationIds.includes(reservationId)) return 'allowed';
-      if (latest !== null && new Date(requestAt).getTime() - new Date(latest.lastRequestAt).getTime() < 60_000) {
-        return 'rate_limited';
-      }
       const dailyCount = latest?.dailyCount ?? 0;
       if (dailyCount >= 5) return 'quota_exceeded';
       const next: QuotaReservation = {
         revision: (latest?.revision ?? 0) + 1,
-        lastRequestAt: latestRequestTime(latest?.lastRequestAt, requestAt),
         utcDay,
         dailyCount: dailyCount + 1,
         reservationIds: reservationId === undefined ? reservationIds : [...reservationIds, reservationId],
@@ -116,14 +121,19 @@ export class BlobQuotaRepository {
     return 'rate_limited';
   }
 
+  private async readLatestRate(ownerKey: string): Promise<RateReservationLedger | null> {
+    const prefix = this.rateLedgerPrefix(ownerKey);
+    const keys = (await this.blob.list(prefix, { consistency: 'strong' })).blobs;
+    const revision = latestRevision(keys);
+    return revision === null
+      ? null
+      : await this.blob.get<RateReservationLedger>(this.rateLedgerKey(ownerKey, revision), { consistency: 'strong' });
+  }
+
   private async readLatestDay(ownerKey: string, utcDay: string): Promise<QuotaReservation | null> {
     const prefix = this.ledgerPrefix(ownerKey, utcDay);
     const keys = (await this.blob.list(prefix, { consistency: 'strong' })).blobs;
-    const revisions = keys
-      .map((key) => Number(/\/(\d{12})\.json$/.exec(key)?.[1]))
-      .map((inverse) => MAX_REVISION - inverse)
-      .filter((revision) => Number.isInteger(revision) && revision > 0);
-    const revision = revisions.length === 0 ? null : Math.max(...revisions);
+    const revision = latestRevision(keys);
     return revision === null
       ? null
       : await this.blob.get<QuotaReservation>(this.ledgerKey(ownerKey, utcDay, revision), { consistency: 'strong' });
@@ -134,8 +144,15 @@ export class BlobQuotaRepository {
   }
 
   private ledgerKey(ownerKey: string, utcDay: string, revision: number): string {
-    const inverseRevision = MAX_REVISION - revision;
-    return `${this.ledgerPrefix(ownerKey, utcDay)}${String(inverseRevision).padStart(12, '0')}.json`;
+    return `${this.ledgerPrefix(ownerKey, utcDay)}${inverseRevision(revision)}.json`;
+  }
+
+  private rateLedgerPrefix(ownerKey: string): string {
+    return `quotas/${encodeURIComponent(ownerKey)}/rate-ledger/`;
+  }
+
+  private rateLedgerKey(ownerKey: string, revision: number): string {
+    return `${this.rateLedgerPrefix(ownerKey)}${inverseRevision(revision)}.json`;
   }
 
   private markerKey(ownerKey: string, reservationId: string): string {
@@ -145,11 +162,21 @@ export class BlobQuotaRepository {
 
 type QuotaReservation = {
   revision: number;
-  lastRequestAt: string;
   utcDay: string;
   dailyCount: number;
   reservationIds?: string[];
   reservationId?: string;
+};
+
+type RateReservationLedger = {
+  revision: number;
+  lastRequestAt: string;
+  reservations: RateReservation[];
+};
+
+type RateReservation = {
+  reservationId: string;
+  acceptedAt: string;
 };
 
 type QuotaReservationMarker = {
@@ -173,19 +200,30 @@ function hashReservationId(reservationId: string): string {
   return createHash('sha256').update(reservationId, 'utf8').digest('hex');
 }
 
-function previousUtcDay(utcDay: string): string {
-  return new Date(new Date(`${utcDay}T00:00:00.000Z`).getTime() - 86_400_000).toISOString().slice(0, 10);
+function retainedRateReservations(record: RateReservationLedger | null, requestAt: string): RateReservation[] {
+  if (record === null || !Array.isArray(record.reservations)) return [];
+  const cutoff = new Date(requestAt).getTime() - RATE_RESERVATION_RETENTION_MS;
+  const seen = new Set<string>();
+  return record.reservations.filter((reservation): reservation is RateReservation => {
+    if (typeof reservation?.reservationId !== 'string' || reservation.reservationId.length === 0
+      || typeof reservation.acceptedAt !== 'string'
+      || new Date(reservation.acceptedAt).getTime() < cutoff
+      || seen.has(reservation.reservationId)) return false;
+    seen.add(reservation.reservationId);
+    return true;
+  });
 }
 
-function latestByRequestTime(left: QuotaReservation | null, right: QuotaReservation | null): QuotaReservation | null {
-  if (left === null) return right;
-  if (right === null) return left;
-  return new Date(left.lastRequestAt).getTime() >= new Date(right.lastRequestAt).getTime() ? left : right;
+function latestRevision(keys: string[]): number | null {
+  const revisions = keys
+    .map((key) => Number(/\/(\d{12})\.json$/.exec(key)?.[1]))
+    .map((inverse) => MAX_REVISION - inverse)
+    .filter((revision) => Number.isInteger(revision) && revision > 0);
+  return revisions.length === 0 ? null : Math.max(...revisions);
 }
 
-function latestRequestTime(existing: string | undefined, candidate: string): string {
-  if (existing === undefined) return candidate;
-  return new Date(existing).getTime() >= new Date(candidate).getTime() ? existing : candidate;
+function inverseRevision(revision: number): string {
+  return String(MAX_REVISION - revision).padStart(12, '0');
 }
 
 function isPreconditionFailure(error: unknown): boolean {

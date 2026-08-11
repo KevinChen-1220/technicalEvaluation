@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createMemoryStores, MemoryBlobPort } from '../src/storage/memoryStores';
 import { BlobQuotaRepository } from '../src/storage/quotaRepository';
 
@@ -146,4 +147,92 @@ describe('free tier quota', () => {
     }));
     expect(records.filter((record) => record.utcDay === '2026-08-12')).toHaveLength(0);
   });
+
+  test('serializes historical markers from different UTC dates through one owner rate ledger', async () => {
+    const blob = new MemoryBlobPort();
+    const quota = new BlobQuotaRepository(blob);
+    await seedQuotaMarker(blob, 'owner-a', 'job-a', '2026-06-01', '2026-06-01T00:00:00.000Z');
+    await seedQuotaMarker(blob, 'owner-a', 'job-b', '2026-07-01', '2026-07-01T00:00:00.000Z');
+
+    const decisions = await Promise.all([
+      quota.reserve('owner-a', new Date('2026-08-11T00:00:00.000Z'), true, 'job-a'),
+      quota.reserve('owner-a', new Date('2026-08-11T00:00:00.000Z'), true, 'job-b'),
+    ]);
+    const allowedId = decisions[0] === 'allowed' ? 'job-a' : 'job-b';
+    const blockedId = allowedId === 'job-a' ? 'job-b' : 'job-a';
+
+    expect([...decisions].sort()).toEqual(['allowed', 'rate_limited']);
+    await expect(quota.reserve(
+      'owner-a', new Date('2026-08-11T00:00:01.000Z'), true, 'job-c',
+    )).resolves.toBe('rate_limited');
+    await expect(quota.reserve(
+      'owner-a', new Date('2026-08-11T00:01:00.000Z'), true, blockedId,
+    )).resolves.toBe('allowed');
+    await expect(quota.reserve(
+      'owner-a', new Date('2026-08-11T00:01:01.000Z'), true, allowedId,
+    )).resolves.toBe('allowed');
+
+    const dailyRecords = (await Promise.all((await blob.list(
+      'quotas/owner-a/ledger/', { consistency: 'strong' },
+    )).blobs.map(async (key) => await blob.get<{
+      revision: number; utcDay: string; dailyCount: number; reservationIds?: string[];
+    }>(key, { consistency: 'strong' })))).filter((record): record is NonNullable<typeof record> => record !== null);
+    const latestByDay = new Map<string, typeof dailyRecords[number]>();
+    for (const record of dailyRecords) {
+      const current = latestByDay.get(record.utcDay);
+      if (current === undefined || current.revision < record.revision) latestByDay.set(record.utcDay, record);
+    }
+    expect(latestByDay.get('2026-06-01')).toEqual(expect.objectContaining({
+      dailyCount: 1, reservationIds: ['job-a'],
+    }));
+    expect(latestByDay.get('2026-07-01')).toEqual(expect.objectContaining({
+      dailyCount: 1, reservationIds: ['job-b'],
+    }));
+    expect(latestByDay.has('2026-08-11')).toBe(false);
+  });
+
+  test('keeps only the last 30 days of reservation ids in the global rate ledger', async () => {
+    const blob = new MemoryBlobPort();
+    const quota = new BlobQuotaRepository(blob);
+
+    await expect(quota.reserve(
+      'owner-a', new Date('2026-07-11T23:58:59.000Z'), true, 'job-expired',
+    )).resolves.toBe('allowed');
+    await expect(quota.reserve(
+      'owner-a', new Date('2026-07-12T00:00:00.000Z'), true, 'job-boundary',
+    )).resolves.toBe('allowed');
+    await expect(quota.reserve(
+      'owner-a', new Date('2026-08-11T00:00:00.000Z'), true, 'job-current',
+    )).resolves.toBe('allowed');
+
+    const rateRecords = (await Promise.all((await blob.list(
+      'quotas/owner-a/rate-ledger/', { consistency: 'strong' },
+    )).blobs.map(async (key) => await blob.get<{
+      revision: number; lastRequestAt: string;
+      reservations: Array<{ reservationId: string; acceptedAt: string }>;
+    }>(key, { consistency: 'strong' })))).filter((record): record is NonNullable<typeof record> => record !== null);
+    const latest = rateRecords.sort((left, right) => right.revision - left.revision)[0];
+    expect(latest).toEqual(expect.objectContaining({
+      lastRequestAt: '2026-08-11T00:00:00.000Z',
+      reservations: [
+        { reservationId: 'job-boundary', acceptedAt: '2026-07-12T00:00:00.000Z' },
+        { reservationId: 'job-current', acceptedAt: '2026-08-11T00:00:00.000Z' },
+      ],
+    }));
+  });
 });
+
+async function seedQuotaMarker(
+  blob: MemoryBlobPort,
+  ownerKey: string,
+  reservationId: string,
+  reservedDate: string,
+  reservedAt: string,
+): Promise<void> {
+  const reservationIdHash = createHash('sha256').update(reservationId, 'utf8').digest('hex');
+  await blob.put(
+    `quotas/${encodeURIComponent(ownerKey)}/reservations/${reservationIdHash}.json`,
+    { reservationIdHash, reservedDate, reservedAt },
+    { onlyIfNew: true },
+  );
+}
