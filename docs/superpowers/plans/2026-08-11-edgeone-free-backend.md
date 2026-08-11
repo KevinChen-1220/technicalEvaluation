@@ -4,9 +4,9 @@
 
 **Goal:** Replace the WeChat Mini Program CloudBase runtime with an EdgeOne Makers free backend and make every new assessment exactly 50 questions.
 
-**Architecture:** Keep the existing local-first Mini Program cache and shared assessment contracts. Add a Node Functions workspace for EdgeOne with WeChat session exchange, HMAC owner keys, KV metadata, Blob assessment documents, synchronous idempotent 50-question generation, and REST endpoints; replace `Taro.cloud.callFunction` with an authenticated HTTPS client.
+**Architecture:** Keep the existing local-first Mini Program cache and shared assessment contracts. Add a Node Functions workspace for EdgeOne with WeChat session exchange, HMAC owner keys, Blob-backed metadata and assessment documents, synchronous idempotent 50-question generation, and REST endpoints; replace `Taro.cloud.callFunction` with an authenticated HTTPS client.
 
-**Tech Stack:** TypeScript, Taro 4, React 18, Jest, esbuild, EdgeOne Makers Node Functions, EdgeOne KV/Blob, WeChat REST APIs, OpenAI-compatible LLM APIs.
+**Tech Stack:** TypeScript, Taro 4, React 18, Jest, esbuild, EdgeOne Makers Node Functions, EdgeOne Blob, WeChat REST APIs, OpenAI-compatible LLM APIs.
 
 ## Global Constraints
 
@@ -110,7 +110,7 @@ git commit -m "feat: fix new assessments at fifty questions"
 - Modify: `jest.config.js`
 
 **Interfaces:**
-- Produces: `KvPort.get/put/delete`, `BlobPort.get/put/delete/list`, and `EdgeOneContext = { request: Request; env: Record<string, string | undefined>; kv: KvPort; blob: BlobPort }`.
+- Produces: `BlobPort.get/put/delete/list` with optional strong-consistency reads, and `EdgeOneContext = { request: Request; env: Record<string, string | undefined>; blob: BlobPort }`.
 - Produces: `success(data, status?)` and `failure(code, retryable, status)` JSON response helpers.
 - Produces: `npm run build:edgeone`, `npm run test:edgeone`, and `npm run typecheck:edgeone`.
 
@@ -132,7 +132,7 @@ Expected: FAIL because the workspace does not exist.
 
 - [ ] **Step 3: Scaffold the workspace and platform-neutral context**
 
-Use `esbuild` to bundle each `node-functions/api/*.ts` entry into `services/edgeone/dist/node-functions/api/*.js`. Define the minimal KV/Blob ports here; external platform stores are injected through context rather than imported by domain services.
+Use `esbuild` to bundle each `node-functions/api/*.ts` entry into `services/edgeone/dist/node-functions/api/*.js`. Define the minimal Blob port here; the EdgeOne SDK adapter is injected through context rather than imported by domain services.
 
 `edgeone.json` must contain:
 
@@ -180,7 +180,7 @@ git commit -m "feat: scaffold EdgeOne Makers backend"
 - Produces: `exchangeWeChatCode(code, env, fetch): Promise<{ openId: string }>`.
 - Produces: `issueSession(openId, dependencies): Promise<{ token: string; expiresAt: string }>`.
 - Produces: `requireSession(request, dependencies): Promise<{ ownerKey: string }>`.
-- Consumes: `KvPort` from Task 2.
+- Consumes: `BlobPort` from Task 2.
 
 - [ ] **Step 1: Write failing tests for code exchange, token hashing, expiration, and forged owners**
 
@@ -200,7 +200,7 @@ Require `WECHAT_APP_ID`, `WECHAT_APP_SECRET`, `SESSION_HMAC_KEY`, and `OWNER_HMA
 
 - [ ] **Step 4: Implement opaque 256-bit sessions**
 
-Store only `sha256(token)`, HMAC owner key, and expiry in KV. Use constant-time token checks and seven-day expiration.
+Store only `sha256(token)`, HMAC owner key, and expiry in Blob at `sessions/<tokenHash>.json`. Use strong-consistency reads, constant-time token checks, and seven-day expiration.
 
 - [ ] **Step 5: Add `/api/session` and authorization middleware**
 
@@ -219,7 +219,7 @@ git commit -m "feat: add secure WeChat sessions"
 
 ---
 
-### Task 4: Free-Tier KV and Blob Persistence
+### Task 4: Free-Tier Blob Persistence
 
 **Files:**
 - Create: `services/edgeone/src/storage/edgeOneStores.ts`
@@ -233,7 +233,7 @@ git commit -m "feat: add secure WeChat sessions"
 - Create: `services/edgeone/test/quotaRepository.test.ts`
 
 **Interfaces:**
-- Consumes: `KvPort.get/put/delete` and `BlobPort.get/put/delete/list` from Task 2.
+- Consumes: `BlobPort.get/put/delete/list` from Task 2.
 - Produces: `AssessmentRepository` methods `get`, `list`, `createIfAbsent`, `compareAndSwap`, `complete`.
 - Produces: quota decision `'allowed' | 'rate_limited' | 'quota_exceeded' | 'generation_disabled'`.
 
@@ -318,7 +318,7 @@ The system message contains `Generate exactly 50 assessment questions`. Normaliz
 
 - [ ] **Step 5: Implement WeChat REST moderation**
 
-Cache stable access tokens in KV, call `security.msgSecCheck`, split generated text into bounded chunks, and fail closed for API errors/timeouts.
+Cache stable access tokens in Blob with strong-consistency reads, call `security.msgSecCheck`, split generated text into bounded chunks, and fail closed for API errors/timeouts.
 
 - [ ] **Step 6: Implement authenticated business routes**
 
