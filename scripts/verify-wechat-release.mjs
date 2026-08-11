@@ -3,9 +3,11 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
 import { isProductionEdgeOneApiBaseUrl, verifyFormalPreflight } from './wechat-release-validation.mjs';
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
+const { inspectEdgeOneReleaseDocuments } = createRequire(import.meta.url)('./release-doc-contracts.cjs');
 const args = parseReleaseArgs(process.argv.slice(2));
 verifyReleaseCandidate({
   profile: args.profile ?? 'development',
@@ -141,6 +143,26 @@ function verifyStaticReleaseContracts(profile, options = { inspectDist: true }) 
   ];
   const missing = requiredFiles.filter((file) => !existsSync(join(repoRoot, file)));
   if (missing.length > 0) fail(missing.map((file) => `${file} is required`));
+
+  const documentFindings = inspectEdgeOneReleaseDocuments({
+    checklist: readFileSync(join(repoRoot, 'docs/wechat/release-checklist.md'), 'utf8'),
+    deployment: readFileSync(join(repoRoot, 'docs/wechat/deployment-runbook.md'), 'utf8'),
+    manifest: readFileSync(join(repoRoot, 'docs/wechat/release-manifest.template.json'), 'utf8'),
+    relatedDocuments: [
+      'docs/wechat/go-live-operator-guide.md',
+      'docs/wechat/operations-runbook.md',
+      'docs/wechat/privacy-policy.zh-CN.md',
+      'docs/wechat/privacy-data-map.md',
+      'docs/wechat/review-submission.md',
+      'docs/wechat/release-completion-matrix.md',
+      'docs/wechat/release-profiles.md',
+      'docs/wechat/release-audit.md',
+      'docs/wechat/release-evidence/external-smoke-checklist.md',
+      '.github/ISSUE_TEMPLATE/wechat_filing.yml',
+      '.github/ISSUE_TEMPLATE/wechat_production_smoke.yml',
+    ].map((file) => ({ label: file, source: readFileSync(join(repoRoot, file), 'utf8') })),
+  });
+  if (documentFindings.length > 0) fail(documentFindings);
 
   const rootPackage = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
   if (rootPackage.scripts?.['verify:wechat-release'] !== 'node scripts/verify-wechat-release.mjs --profile development') {

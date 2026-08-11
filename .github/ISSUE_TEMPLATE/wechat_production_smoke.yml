@@ -1,5 +1,5 @@
 name: WeChat production smoke
-description: Capture hosted CloudBase, real-device, screenshot, and rollback evidence.
+description: Capture hosted EdgeOne, real-device, screenshot, and rollback evidence.
 title: "[WeChat Smoke]: "
 labels:
   - release
@@ -9,7 +9,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        只有在真实 AppID、生产 CloudBase、微信开发者工具登录和真机都可用后才能关闭。真机、CloudBase、截图、回滚证据必须逐项附上。
+        只有在真实 AppID、production EdgeOne deployment、微信开发者工具登录和真机都可用后才能关闭。真机、EdgeOne、截图、回滚证据必须逐项附上。
         开始前先确认对应的 `wechat_filing` issue 已关闭或已经标明 AppID、备案、隐私和生成式人工智能披露仍为外部阻塞。
   - type: input
     id: version
@@ -19,9 +19,16 @@ body:
     validations:
       required: true
   - type: input
-    id: cloudbase-env
+    id: edgeone-deployment
     attributes:
-      label: CloudBase 生产环境 ID
+      label: EdgeOne production deployment URL
+      placeholder: 待配置
+    validations:
+      required: true
+  - type: input
+    id: request-legal-domain
+    attributes:
+      label: 微信 request合法域名
       placeholder: 待配置
     validations:
       required: true
@@ -55,7 +62,9 @@ body:
       options:
         - label: 隐私 gate、设置页披露、投诉入口和历史记录在真机通过。
           required: true
-        - label: 50 题和 100 题生成均在生产 CloudBase 完成，解析失败、内容安全失败和超时路径可观察。
+        - label: 固定 50 题生成在 production EdgeOne 完成，HTML/XML 解析失败、内容安全失败和超时路径可观察。
+          required: true
+        - label: preview 和 production HTTPS origin 都已加入微信 request合法域名并完成请求验证。
           required: true
         - label: 离线答题、本地缓存、跨设备冲突和结果复盘已验证。
           required: true

@@ -4,6 +4,8 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import yaml from 'yaml';
 
+const { inspectEdgeOneReleaseDocuments } = require('../../../scripts/release-doc-contracts.cjs');
+
 const repoRoot = join(__dirname, '..', '..', '..');
 
 describe('WeChat release verification assets', () => {
@@ -53,7 +55,7 @@ describe('WeChat release verification assets', () => {
     }
 
     expect(checklist).toMatch(/主体认证.*AppID.*类目.*ICP备案.*隐私声明.*生成式人工智能/s);
-    expect(deployment).toMatch(/集合.*索引.*安全规则.*函数调用规则.*定时触发器.*环境变量.*回滚/s);
+    expect(deployment).toMatch(/EdgeOne.*Node Functions.*Blob.*环境变量.*request合法域名.*preview.*production smoke.*回滚/s);
     expect(submission).toMatch(/版本号.*上传命令.*审核备注.*截图.*AI.*驳回.*重新提交/s);
     expect(submission).toMatch(/PowerShell.*Bash/s);
     expect(matrix).toMatch(/本地已验证.*外部就绪.*外部阻塞/s);
@@ -68,7 +70,7 @@ describe('WeChat release verification assets', () => {
       schemaVersion?: number;
       release?: Record<string, unknown>;
       wechat?: Record<string, unknown>;
-      cloudbase?: Record<string, unknown>;
+      edgeone?: Record<string, unknown>;
       compliance?: Record<string, unknown>;
       artifacts?: Record<string, unknown>;
       approvals?: unknown[];
@@ -86,8 +88,12 @@ describe('WeChat release verification assets', () => {
       appId: '待配置',
       appVersion: '待配置',
     });
-    expect(manifest.cloudbase).toMatchObject({
-      productionEnvId: '待配置',
+    expect(manifest.edgeone).toMatchObject({
+      projectId: '待配置',
+      deploymentUrl: '待配置',
+      productionApiOrigin: '待配置',
+      nodeFunctionsBuildSha256: '待配置',
+      blobNamespace: '待配置',
     });
     expect(manifest.compliance).toMatchObject({
       serviceOperator: '待配置',
@@ -96,10 +102,40 @@ describe('WeChat release verification assets', () => {
       generativeAiRegistration: '待配置',
     });
     expect(manifest.artifacts).toHaveProperty('wechatDistSha256');
-    expect(manifest.artifacts).toHaveProperty('cloudbaseDistSha256');
+    expect(manifest.artifacts).toHaveProperty('edgeoneBuildSha256');
     expect(manifest.externalEvidence).toHaveProperty('realDeviceSmokeIssue');
     expect(manifestText).not.toMatch(/secret|api[_-]?key|private[_-]?key|token/i);
     expect(manifestText).not.toMatch(/wx[0-9a-f]{16,}/i);
+  });
+
+  test('rejects CloudBase release wording and missing EdgeOne delivery fields', () => {
+    const checklist = readFileSync(join(repoRoot, 'docs/wechat/release-checklist.md'), 'utf8');
+    const deployment = readFileSync(join(repoRoot, 'docs/wechat/deployment-runbook.md'), 'utf8');
+    const manifest = readFileSync(join(repoRoot, 'docs/wechat/release-manifest.template.json'), 'utf8');
+    const relatedDocuments = [{
+      label: 'release profiles',
+      source: readFileSync(join(repoRoot, 'docs/wechat/release-profiles.md'), 'utf8'),
+    }];
+
+    expect(inspectEdgeOneReleaseDocuments({ checklist, deployment, manifest, relatedDocuments })).toEqual([]);
+    expect(inspectEdgeOneReleaseDocuments({
+      checklist: checklist.replace('EdgeOne', 'CloudBase'),
+      deployment,
+      manifest,
+      relatedDocuments,
+    })).toEqual(expect.arrayContaining([expect.stringMatching(/CloudBase/i)]));
+    expect(inspectEdgeOneReleaseDocuments({
+      checklist,
+      deployment,
+      manifest: manifest.replace('"edgeone"', '"cloudbase"'),
+      relatedDocuments,
+    })).toEqual(expect.arrayContaining([expect.stringMatching(/edgeone\.projectId/i)]));
+    expect(inspectEdgeOneReleaseDocuments({
+      checklist,
+      deployment,
+      manifest,
+      relatedDocuments: [{ label: 'release profiles', source: 'CloudBase production environment' }],
+    })).toEqual(expect.arrayContaining([expect.stringMatching(/release profiles.*CloudBase/i)]));
   });
 
   test('validates GitHub workflows and release issue templates without reading secrets on PRs', () => {
@@ -127,9 +163,9 @@ describe('WeChat release verification assets', () => {
     );
     expect(checksJob).not.toContain('secrets.');
     expect(filingIssue).toMatch(/AppID.*备案.*隐私.*生成式人工智能/s);
-    expect(filingIssue).toContain('CONTENT_SAFETY_PROVIDER');
+    expect(filingIssue).toContain('EdgeOne');
     expect(filingIssue).toContain('wechat_production_smoke');
-    expect(smokeIssue).toMatch(/真机.*CloudBase.*截图.*回滚/s);
+    expect(smokeIssue).toMatch(/真机.*EdgeOne.*截图.*回滚/s);
     expect(smokeIssue).toContain('wechat_filing');
   });
 
@@ -493,13 +529,12 @@ describe('WeChat release verification assets', () => {
 
   test('classifies audit reachability without treating all Taro packages as build-only', () => {
     const audit = readFileSync(join(repoRoot, 'docs/wechat/release-audit.md'), 'utf8');
-    expect(audit).toContain('125');
     expect(audit).toMatch(/Build-only/i);
     expect(audit).toMatch(/Mini Program runtime/i);
-    expect(audit).toMatch(/CloudBase runtime/i);
+    expect(audit).toMatch(/EdgeOne runtime/i);
     expect(audit).toContain('@tarojs/runtime');
     expect(audit).toContain('apps/wechat/dist/app.js');
-    expect(audit).toContain('services/cloudbase/dist');
+    expect(audit).toContain('services/edgeone');
     expect(audit).not.toMatch(/Taro.*不会被打入正式小程序业务包/);
   });
 
@@ -510,7 +545,7 @@ describe('WeChat release verification assets', () => {
     expect(operations).toContain('SKILLSCOPE_ENV=development');
     expect(operations).toMatch(/CONTENT_SAFETY_URL.*CONTENT_SAFETY_API_KEY.*CONTENT_SAFETY_PROVIDER/);
     expect(operations).toMatch(/placeholder|changeme|example|TBD/);
-    expect(operations).toMatch(/真实可用性.*外部.*smoke/i);
+    expect(operations).toMatch(/不证明服务真实可用.*外部.*smoke/i);
     expect(profiles).toMatch(/formal.*拒绝.*--check-only/is);
     expect(profiles).toMatch(/formal-preflight.*不代表.*发布验证成功/is);
   });

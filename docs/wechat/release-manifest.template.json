@@ -2,57 +2,48 @@
   "schemaVersion": 1,
   "release": {
     "product": "SkillScope",
-    "channel": "wechat-mini-program",
-    "version": "待配置",
     "commitSha": "待配置",
     "tag": "待配置",
-    "releaseTime": "待配置",
-    "rolloutPercentage": 0,
-    "rollbackVersion": "待配置"
+    "releaseAt": "待配置",
+    "rollbackVersion": "待配置",
+    "rolloutPercentage": 0
   },
   "wechat": {
     "appId": "待配置",
     "appVersion": "待配置",
-    "robot": "待配置",
-    "uploadRecordUrl": "待配置",
-    "reviewRecordUrl": "待配置"
+    "reviewTicket": "待配置",
+    "requestLegalDomainVerifiedAt": "待配置"
   },
-  "cloudbase": {
-    "productionEnvId": "待配置",
-    "deploymentRecordUrl": "待配置",
-    "collectionsVersion": "待配置",
-    "functionRulesVersion": "待配置"
+  "edgeone": {
+    "projectId": "待配置",
+    "deploymentUrl": "待配置",
+    "productionApiOrigin": "待配置",
+    "deploymentVersion": "待配置",
+    "nodeFunctionsBuildSha256": "待配置",
+    "blobNamespace": "待配置"
   },
   "compliance": {
     "serviceOperator": "待配置",
-    "privacyPolicyVersion": "2026-08-10",
+    "privacyPolicyVersion": "待配置",
     "miniProgramFiling": "待配置",
-    "serviceCategory": "待配置",
     "modelDisclosure": "待配置",
-    "generativeAiRegistration": "待配置",
-    "contentLabelingDecision": "待配置"
+    "generativeAiRegistration": "待配置"
   },
   "artifacts": {
     "wechatDistSha256": "待配置",
-    "cloudbaseDistSha256": "待配置",
-    "releaseEvidence": "docs/wechat/release-evidence/2026-08-10-command-output.md"
+    "edgeoneBuildSha256": "待配置",
+    "releaseDisclosureSha256": "待配置"
   },
   "approvals": [
     {
-      "role": "release-owner",
-      "name": "待配置",
-      "approvedAt": "待配置"
-    },
-    {
-      "role": "compliance-owner",
-      "name": "待配置",
+      "role": "发布负责人",
       "approvedAt": "待配置"
     }
   ],
   "externalEvidence": {
-    "filingIssue": "待配置",
-    "realDeviceSmokeIssue": "待配置",
+    "previewSmokeIssue": "待配置",
     "productionSmokeIssue": "待配置",
-    "reviewSubmissionRecord": "待配置"
+    "realDeviceSmokeIssue": "待配置",
+    "screenshotArchive": "待配置"
   }
 }

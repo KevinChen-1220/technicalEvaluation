@@ -1,36 +1,36 @@
 # 2026-08-10 本地发布候选验证输出
 
 Profile: development
-Generated at: 2026-08-10T12:40:33.635Z
+Generated at: 2026-08-11T13:25:45.311Z
 
 ## Commands
 
 static contracts: passed for development
-clean release artifacts: apps/wechat/dist and services/cloudbase/dist removed
+clean release artifacts: apps/wechat/dist removed
 ### npm run test -- --runInBand
 
 Status: exit 0
 
 ```text
-PASS packages/assessment-core/test/assessmentCore.contract.test.ts
-PASS src/services/aiClient.test.ts
-PASS src/features/assessment/legacyHistoryMigration.test.ts
-PASS services/cloudbase/test/cloudBaseAssessmentRepository.test.ts
-PASS src/features/assessment/wrongQuestionReview.test.ts
-PASS src/layout/mobileLayout.test.ts
-PASS services/cloudbase/test/cloudBaseRetentionRepository.test.ts
-PASS src/features/assessment/samplePaper.test.ts
-PASS src/features/config/modelConfig.test.ts
-PASS src/features/assessment/scoring.test.ts
-PASS src/features/assessment/questionNavigation.test.ts
-PASS src/components/questionMaterialLayout.test.ts
-PASS src/features/assessment/assessmentBriefDefaults.test.ts
-PASS src/components/loadingAnimation.test.ts
+PASS services/edgeone/test/routes.contract.test.ts
+PASS services/edgeone/test/generation.test.ts
+PASS services/edgeone/test/quotaRepository.test.ts
+PASS services/edgeone/test/wechatSession.test.ts
+PASS services/edgeone/test/ownerIsolation.test.ts
+PASS services/edgeone/test/deadline.test.ts
+PASS services/edgeone/test/sessionToken.test.ts
+PASS services/edgeone/test/settingsAndReports.test.ts
+PASS services/edgeone/test/jobRepository.test.ts
+PASS services/edgeone/test/sessionRoute.test.ts
+PASS services/edgeone/test/blobAdapter.test.ts
+PASS services/edgeone/test/healthEntry.test.ts
+PASS services/edgeone/test/storageContracts.test.ts
+PASS services/edgeone/test/healthRoute.test.ts
 
-Test Suites: 34 passed, 34 total
-Tests:       277 passed, 277 total
+Test Suites: 51 passed, 51 total
+Tests:       413 passed, 413 total
 Snapshots:   0 total
-Time:        8.765 s, estimated 9 s
+Time:        16.015 s, estimated 30 s
 Ran all test suites.
 ```
 
@@ -39,53 +39,53 @@ Ran all test suites.
 Status: exit 0
 
 ```text
-PASS test/assessmentSync.test.ts
-PASS test/resultViewModel.test.ts
-PASS test/privacyFlow.test.ts
-PASS test/viewModel.test.ts
-PASS test/cloudRuntime.test.ts
-PASS test/draftDto.test.ts
-PASS test/appStartup.test.ts
-PASS test/navigation.test.ts
-PASS test/materialLayout.test.ts
 PASS test/cloud.test.ts
-PASS test/generationController.test.ts
+PASS test/sessionClient.test.ts
 PASS test/releaseFixtureClient.test.ts
+PASS test/assessmentSync.test.ts
+PASS test/cloudRuntime.test.ts
 PASS test/draftSync.test.ts
+PASS test/privacyFlow.test.ts
+PASS test/appStartup.test.ts
 PASS test/submitFlow.test.ts
+PASS test/materialLayout.test.ts
+PASS test/viewModel.test.ts
+PASS test/resultViewModel.test.ts
+PASS test/draftDto.test.ts
+PASS test/navigation.test.ts
 
-Test Suites: 15 passed, 15 total
-Tests:       77 passed, 77 total
+Test Suites: 16 passed, 16 total
+Tests:       80 passed, 80 total
 Snapshots:   0 total
-Time:        4.181 s, estimated 16 s
+Time:        6.241 s, estimated 10 s
 Ran all test suites.
 ```
 
-### npm run test:cloudbase -- --runInBand
+### npm run test:edgeone -- --runInBand
 
 Status: exit 0
 
 ```text
-PASS test/buildArtifacts.test.ts
-PASS test/generationWorker.test.ts
-PASS test/privacySafetyOps.test.ts
-PASS test/contentSafetyAdapters.test.ts
-PASS test/contracts.review.test.ts
-PASS test/assessmentService.test.ts
-PASS test/generationJobs.test.ts
-PASS test/assessmentFunctionEntries.test.ts
-PASS test/openAICompletionClient.test.ts
-PASS test/cloudBaseRetentionRepository.test.ts
-PASS test/cloudBaseDailyQuota.test.ts
-PASS test/contracts.test.ts
-PASS test/cloudBaseGenerationRepository.test.ts
-PASS test/cloudBaseAssessmentRepository.test.ts
+PASS test/routes.contract.test.ts
+PASS test/generation.test.ts
+PASS test/quotaRepository.test.ts
+PASS test/deadline.test.ts
+PASS test/wechatSession.test.ts
+PASS test/ownerIsolation.test.ts
+PASS test/healthRoute.test.ts
+PASS test/storageContracts.test.ts
+PASS test/sessionToken.test.ts
+PASS test/blobAdapter.test.ts
+PASS test/settingsAndReports.test.ts
+PASS test/sessionRoute.test.ts
+PASS test/healthEntry.test.ts
+PASS test/jobRepository.test.ts
 
 Test Suites: 17 passed, 17 total
-Tests:       185 passed, 185 total
+Tests:       133 passed, 133 total
 Snapshots:   0 total
-Time:        8.144 s, estimated 9 s
-Ran all test suites matching /services\\cloudbase\\test/i.
+Time:        4.585 s
+Ran all test suites matching /services\\edgeone\\test/i.
 ```
 
 ### npm run typecheck
@@ -110,29 +110,29 @@ Status: exit 0
 > tsc --noEmit
 ```
 
-### npm run typecheck:cloudbase
+### npm run typecheck:edgeone
 
 Status: exit 0
 
 ```text
-> dynamic-assessment-app@1.0.0 typecheck:cloudbase
-> npm --workspace @dynamic-assessment/cloudbase run typecheck
+> dynamic-assessment-app@1.0.0 typecheck:edgeone
+> npm --workspace @dynamic-assessment/edgeone run typecheck
 
 
-> @dynamic-assessment/cloudbase@1.0.0 typecheck
+> @dynamic-assessment/edgeone@1.0.0 typecheck
 > tsc --noEmit -p tsconfig.json
 ```
 
-### npm run build:cloudbase
+### npm run build:edgeone
 
 Status: exit 0
 
 ```text
-> dynamic-assessment-app@1.0.0 build:cloudbase
-> npm --workspace @dynamic-assessment/cloudbase run build
+> dynamic-assessment-app@1.0.0 build:edgeone
+> npm --workspace @dynamic-assessment/edgeone run build
 
 
-> @dynamic-assessment/cloudbase@1.0.0 build
+> @dynamic-assessment/edgeone@1.0.0 build
 > node scripts/build.mjs
 ```
 
@@ -141,19 +141,19 @@ Status: exit 0
 Status: exit 0
 
 ```text
-> expo export --platform web
-
-
 Using (experimental) base path: /technicalEvaluation
 Starting Metro Bundler
-Web Bundled 200ms node_modules\expo\AppEntry.js (187 modules)
+Web node_modules\expo\AppEntry.js ░░░░░░░░░░░░░░░░  4.0% (2/4)
+Web node_modules\expo\AppEntry.js ▓▓▓▓▓▓▓▓▓▓░░░░░░ 67.1% (136/166)
+Web node_modules\expo\AppEntry.js ▓▓▓▓▓▓▓▓▓▓▓▓▓▓░░ 91.3% (323/338)
+Web Bundled 10012ms node_modules\expo\AppEntry.js (338 modules)
 
 › Assets (1):
 node_modules\expo-sqlite\web\wa-sqlite\wa-sqlite.b87fca4d817b5bd329636d467d159c21.wasm (617 kB)
 
 › web bundles (2):
-_expo/static/js/web/AppEntry-8450ed86f78fe7dd283de3f938f5904f.js (608 kB)
-_expo/static/js/web/worker-b82a192ce4e20d535b4fddf4f545a072.js (124 kB)
+_expo/static/js/web/AppEntry-b943399923e99f9dfcd768315062c0bd.js (607 kB)
+_expo/static/js/web/worker-58febc9ca618e05796c721b83fd8d5cc.js (124 kB)
 
 › Files (3):
 favicon.ico (14.5 kB)
@@ -220,7 +220,7 @@ Status: exit 0
 
 
 √ Webpack
-  Compiled successfully in 3.06s
+  Compiled successfully in 5.23s
 ```
 
 ### npm run scan:secrets:source
@@ -269,12 +269,12 @@ Status: exit 1 (informational)
       "total": 125
     },
     "dependencies": {
-      "prod": 988,
+      "prod": 991,
       "dev": 1414,
       "optional": 128,
       "peer": 46,
       "peerOptional": 0,
-      "total": 2477
+      "total": 2480
     }
   }
 }
@@ -285,18 +285,18 @@ Status: exit 1 (informational)
 Status: exit 0 (informational)
 
 ```text
-WeChat DevTools CLI initialization blocker recorded
+WeChat DevTools CLI evidence recorded
 ```
 
 
 ## Artifact Hashes
 
 - apps/wechat/dist/app.json: 839821f2c2685ee8656f7b543dae00d7f4511ebc74bf23ffd30253d1d127c6c6
-- apps/wechat/dist/app.js: dba05d0faf7f47415b297b2318d669351cb320041f2418fe7a7fbb4f6ab35c08
-- services/cloudbase/dist/cloudbaserc.json: b9a9b4581decfcfb5f581f9cbe56ad4034081671a95cd3b0d07ec62b0dc571fb
+- apps/wechat/dist/app.js: 52a2b31b4bd46f02a4340426b5f4621509b3fe9ef624879146376ecb8eb9505b
+- services/edgeone/edgeone.json: 044f75b3ed49c7710c5907d070dbe8b55e359b5a02354141a25b8f236ae81c41
 
 ## External Blockers
 
-- 仍需真实 WeChat AppID、登录态、上传私钥、CloudBase 环境和真机预览结果。
+- 仍需真实 WeChat AppID、登录态、上传私钥、EdgeOne HTTPS 域名和真机预览结果。
 - 当前证据只覆盖本机可执行验证，不声明微信审核或真机通过。
 

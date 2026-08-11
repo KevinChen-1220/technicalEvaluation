@@ -12,19 +12,19 @@
 | --- | --- | --- | --- |
 | 共享技能测评 core | 本地已验证 | `packages/assessment-core`，`npm test -- --runInBand` | 无 |
 | 微信小程序 Taro UI | 本地已验证 | `apps/wechat`，`npm run test:wechat -- --runInBand`，`npm run build:weapp` | 真机截图仍属外部阻塞 |
-| CloudBase 函数与规则 | 本地已验证 | `services/cloudbase`，`npm run test:cloudbase -- --runInBand`，`npm run build:cloudbase` | 生产 CloudBase 部署权限外部阻塞 |
-| 异步生成和解析防护 | 本地已验证 | `services/cloudbase/test/generationWorker.test.ts`，`services/cloudbase/test/openAICompletionClient.test.ts` | 真实模型 hosted smoke 外部阻塞 |
+| EdgeOne Node Functions 与 Blob | 本地已验证 | `services/edgeone`，`npm run test:edgeone -- --runInBand`，`npm run build:edgeone` | 生产 EdgeOne 部署权限外部阻塞 |
+| 异步生成和解析防护 | 本地已验证 | `services/edgeone/test/generation.test.ts` | 真实模型 hosted smoke 外部阻塞 |
 | 隐私、投诉和数据保留 | 本地已验证 | `docs/wechat/privacy-policy.zh-CN.md`，`docs/wechat/privacy-data-map.md`，`docs/wechat/operations-runbook.md` | 微信后台隐私声明外部阻塞 |
 | 发布 profile 和 disclosure gate | 本地已验证 | `scripts/verify-wechat-release.mjs`，`scripts/verify-wechat-disclosure.mjs` | 真实 production disclosure 外部阻塞 |
 | 中文 release checklist | 本地已验证 | `docs/wechat/release-checklist.md` | 发布负责人逐项关闭 |
-| 部署 runbook | 本地已验证 | `docs/wechat/deployment-runbook.md` | CloudBase 控制台/CLI 登录和部署 |
+| 部署 runbook | 本地已验证 | `docs/wechat/deployment-runbook.md` | EdgeOne project、Blob 和 deployment 配置 |
 | 审核提交说明 | 本地已验证 | `docs/wechat/review-submission.md` | 微信公众平台提交审核 |
 | Machine-readable manifest 模板 | 本地已验证 | `docs/wechat/release-manifest.template.json` | 用真实值生成每次发布 manifest |
 | GitHub release checks | 本地已验证 | `.github/workflows/wechat-release.yml`，`npm run verify:github-workflows` | GitHub Actions 在线运行结果外部就绪 |
 | 手动上传 job | 外部就绪 | `.github/workflows/wechat-release.yml` 的 `upload` job | 配置 `wechat-production` environment approval 和 values |
 | Fork/PR 不接触敏感配置 | 本地已验证 | `release-checks` job 无 `secrets.`，不使用 `pull_request_target` | GitHub UI environment 保护外部就绪 |
 | Filing issue template | 本地已验证 | `.github/ISSUE_TEMPLATE/wechat_filing.yml` | 账号负责人填写真实 AppID、备案、隐私、生成式人工智能材料 |
-| Production smoke issue template | 本地已验证 | `.github/ISSUE_TEMPLATE/wechat_production_smoke.yml` | 真机、CloudBase、截图、回滚证据外部阻塞 |
+| Production smoke issue template | 本地已验证 | `.github/ISSUE_TEMPLATE/wechat_production_smoke.yml` | 真机、EdgeOne、截图、回滚证据外部阻塞 |
 | 微信主体认证 | 外部阻塞 | `docs/wechat/release-checklist.md` | 运营主体在微信公众平台完成 |
 | 真实 AppID 和上传私钥 | 外部阻塞 | `apps/wechat/project.private.config.example.json`，`.gitignore` | 管理员下载私钥并配置本机/GitHub environment |
 | 小程序 ICP 备案 | 外部阻塞 | `docs/wechat/release-checklist.md`，filing issue | 运营主体完成工信部/微信流程 |

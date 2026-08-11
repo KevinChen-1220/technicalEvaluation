@@ -10,7 +10,7 @@ body:
     attributes:
       value: |
         用这个 issue 记录发布负责人完成的外部事项。AppID、备案、隐私、生成式人工智能披露必须来自真实主体和官方后台，不能在仓库里伪造。
-        生产上传还需要 `CONTENT_SAFETY_URL`、`CONTENT_SAFETY_API_KEY`、`CONTENT_SAFETY_PROVIDER` 配置在 `wechat-production` environment；完成本 issue 后继续创建 `wechat_production_smoke` issue 记录真机和 CloudBase 证据。
+        生产上传还需要 production EdgeOne HTTPS origin 配置在 `wechat-production` environment；内容安全凭据只配置在 EdgeOne 服务端。完成本 issue 后继续创建 `wechat_production_smoke` issue 记录真机和 EdgeOne 证据。
   - type: input
     id: operator
     attributes:
