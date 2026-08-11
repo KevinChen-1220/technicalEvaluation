@@ -52,7 +52,7 @@
 - `src/moderation`：微信 access token 缓存及文本安全检查。
 - `src/routes`：session、generation、assessments、settings、reports、health 路由。
 - `node-functions/api`：EdgeOne 文件路由入口，仅负责把平台 context 转交给应用服务。
-- `scripts/build.mjs`：使用 esbuild 生成可部署 Node Functions。
+- `scripts/build.mjs`：使用 esbuild 生成项目根 `cloud-functions/api` 下的可部署 Node Functions。
 
 小程序新增 `apps/wechat/src/api`：
 

@@ -138,7 +138,7 @@ Use `esbuild` to bundle each `node-functions/api/*.ts` entry into `services/edge
 
 ```json
 {
-  "cloudFunctions": { "maxDuration": 120 },
+  "cloudFunctions": { "nodejs": { "maxDuration": 120 } },
   "headers": [
     { "source": "/api/*", "headers": [{ "key": "Cache-Control", "value": "no-store" }] }
   ]
@@ -153,7 +153,7 @@ Health output includes service, commit/version, and `generationEnabled`, but nev
 
 Run: `npm run test:edgeone -- --runInBand && npm run typecheck:edgeone && npm run build:edgeone`
 
-Expected: PASS and `services/edgeone/dist/node-functions/api/health.js` exists.
+Expected: PASS and `services/edgeone/cloud-functions/api/health.js` exists. A package dry-run includes the built functions and excludes tests.
 
 - [ ] **Step 6: Commit**
 
