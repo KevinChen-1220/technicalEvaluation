@@ -72,17 +72,22 @@ export class BlobAssessmentRepository implements AssessmentRepository {
     const index = await this.readIndex(ownerKey);
     const retained: AssessmentSummary[] = [];
     let cleanups = 0;
+    const fullyCleaned = new Set<string>();
     for (const summary of index) {
       if (this.isExpiredSummary(summary)) {
         if (cleanups < this.cleanupLimit) {
-          cleanups += 1;
-          await this.deleteAssessment(ownerKey, summary.id);
+          const remainingBudget = this.cleanupLimit - cleanups;
+          const cleanup = await this.deleteAssessment(ownerKey, summary.id, remainingBudget);
+          cleanups += cleanup.deleted;
+          if (cleanup.complete) fullyCleaned.add(summary.id);
         }
         continue;
       }
       retained.push(summary);
     }
-    if (cleanups > 0) await this.mutateIndex(ownerKey, (summaries) => summaries.filter((summary) => !this.isExpiredSummary(summary)));
+    if (fullyCleaned.size > 0) await this.mutateIndex(ownerKey, (summaries) => summaries.filter((summary) => (
+      !fullyCleaned.has(summary.id) || !this.isExpiredSummary(summary)
+    )));
     return retained.slice(0, INDEX_LIMIT);
   }
 
@@ -149,7 +154,8 @@ export class BlobAssessmentRepository implements AssessmentRepository {
   private async readLatest(ownerKey: string, id: string): Promise<AssessmentRecord | null> {
     const prefix = `${this.baseKey(ownerKey, id)}/revisions/`;
     const revisions = (await this.blob.list(prefix, { consistency: 'strong', limit: REVISION_DISCOVERY_LIMIT })).blobs
-      .map((key) => Number(/^.+\/revisions\/(\d+)\.json$/.exec(key)?.[1]))
+      .map((key) => Number(/^.+\/revisions\/(\d{12})\.json$/.exec(key)?.[1]))
+      .map((inverse) => 999_999_999_999 - inverse)
       .filter((value) => Number.isInteger(value) && value > 0);
     const revision = revisions.length === 0 ? null : Math.max(...revisions);
     if (revision === null) return null;
@@ -198,11 +204,14 @@ export class BlobAssessmentRepository implements AssessmentRepository {
     await this.blob.put(`${this.baseKey(ownerKey, id)}.json`, { revision, updatedAt: this.options.now().toISOString() });
   }
 
-  private async deleteAssessment(ownerKey: string, id: string): Promise<void> {
+  private async deleteAssessment(ownerKey: string, id: string, limit = this.cleanupLimit): Promise<{ complete: boolean; deleted: number }> {
     const prefix = `${this.baseKey(ownerKey, id)}/`;
-    const keys = (await this.blob.list(prefix, { consistency: 'strong', limit: this.cleanupLimit })).blobs;
-    await Promise.all(keys.map((key) => this.blob.delete(key)));
-    await this.blob.delete(`${this.baseKey(ownerKey, id)}.json`);
+    const keys = (await this.blob.list(prefix, { consistency: 'strong', limit: limit + 1 })).blobs;
+    const deleteKeys = keys.slice(0, limit);
+    await Promise.all(deleteKeys.map((key) => this.blob.delete(key)));
+    const complete = keys.length <= limit;
+    if (complete) await this.blob.delete(`${this.baseKey(ownerKey, id)}.json`);
+    return { complete, deleted: deleteKeys.length };
   }
 
   private isExpiredDraft(record: AssessmentRecord): boolean {
@@ -220,7 +229,9 @@ export class BlobAssessmentRepository implements AssessmentRepository {
 
   private get cleanupLimit(): number { return this.options.cleanupLimit ?? DEFAULT_CLEANUP_LIMIT; }
   private baseKey(ownerKey: string, id: string): string { return `assessments/${part(ownerKey)}/${part(id)}`; }
-  private revisionKey(ownerKey: string, id: string, revision: number): string { return `${this.baseKey(ownerKey, id)}/revisions/${revision}.json`; }
+  private revisionKey(ownerKey: string, id: string, revision: number): string {
+    return `${this.baseKey(ownerKey, id)}/revisions/${String(999_999_999_999 - revision).padStart(12, '0')}.json`;
+  }
   private indexPrefix(ownerKey: string): string { return `assessments/${part(ownerKey)}/index-revisions`; }
   private indexRevisionKey(ownerKey: string, revision: number): string {
     return `${this.indexPrefix(ownerKey)}/${String(999_999_999_999 - revision).padStart(12, '0')}.json`;

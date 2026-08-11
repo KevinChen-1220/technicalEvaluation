@@ -60,4 +60,35 @@ describe('assessment repository', () => {
     await repository.createIfAbsent(draft('visible'));
     await expect(repository.get('owner-a', 'visible')).resolves.toMatchObject({ id: 'visible' });
   });
+
+  test('finds the latest assessment revision after more than the bounded discovery window', async () => {
+    const repository = new BlobAssessmentRepository(new MemoryBlobPort(), { now: () => new Date(stamp) });
+    await repository.createIfAbsent(draft('many-revisions'));
+    for (let revision = 1; revision <= 600; revision += 1) {
+      await expect(repository.compareAndSwap({
+        ownerKey: 'owner-a', id: 'many-revisions', expectedRevision: revision, answers: {}, updatedAt: stamp,
+      })).resolves.toMatchObject({ type: 'updated', record: { revision: revision + 1 } });
+    }
+    await expect(repository.get('owner-a', 'many-revisions')).resolves.toMatchObject({ revision: 601 });
+  });
+
+  test('keeps the cleanup entry reachable until repeated bounded cleanup deletes every revision', async () => {
+    const blob = new MemoryBlobPort();
+    const repository = new BlobAssessmentRepository(blob, {
+      now: () => new Date('2026-08-11T00:00:00.000Z'), draftRetentionDays: 1, cleanupLimit: 2,
+    });
+    const expired = draft('expired-many', 'owner-a', '2026-08-01T00:00:00.000Z');
+    await repository.createIfAbsent(expired);
+    for (let revision = 2; revision <= 6; revision += 1) {
+      await blob.put(`assessments/owner-a/expired-many/revisions/${String(999_999_999_999 - revision).padStart(12, '0')}.json`, {
+        ...expired, revision,
+      }, { onlyIfNew: true });
+    }
+    await expect(repository.list('owner-a')).resolves.toEqual([]);
+    expect([...blob.records.keys()].filter((key) => key.startsWith('assessments/owner-a/expired-many/'))).not.toHaveLength(0);
+    await repository.list('owner-a');
+    await repository.list('owner-a');
+    await expect(repository.list('owner-a')).resolves.toEqual([]);
+    expect([...blob.records.keys()].filter((key) => key.startsWith('assessments/owner-a/expired-many'))).toHaveLength(0);
+  });
 });
