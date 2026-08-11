@@ -1,5 +1,7 @@
 # SkillScope 微信小程序发布 checklist
 
+完整的逐步上线操作与人工/Codex 交接方式见 `docs/wechat/go-live-operator-guide.md`。本文件只保留发布门禁检查项。
+
 本 checklist 用来确认本地代码已经交付到可发布状态，并把只能由真实主体完成的外部动作留给发布负责人。不得填写虚构 AppID、主体、备案号、模型备案或审核结论；`待配置` 必须保留到真实材料可核验为止。
 
 ## 发布边界
