@@ -12,28 +12,46 @@ export class BlobQuotaRepository {
 
   async reserve(ownerKey: string, now: Date, generationEnabled: boolean): Promise<QuotaDecision> {
     if (!generationEnabled) return 'generation_disabled';
-    const bucket = Math.floor(now.getTime() / 60_000);
-    const rateKey = `quotas/${encodeURIComponent(ownerKey)}/rate/${bucket}.json`;
-    try {
-      await this.blob.put(rateKey, { reservedAt: now.toISOString() }, { onlyIfNew: true });
-    } catch (error) {
-      if (error instanceof BlobPreconditionFailedError) return 'rate_limited';
-      throw error;
-    }
-
-    const utcDay = now.toISOString().slice(0, 10);
-    for (let slot = 1; slot <= 5; slot += 1) {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+      const latest = await this.readLatest(ownerKey);
+      if (latest !== null && now.getTime() - new Date(latest.lastRequestAt).getTime() < 60_000) return 'rate_limited';
+      const utcDay = now.toISOString().slice(0, 10);
+      const dailyCount = latest?.utcDay === utcDay ? latest.dailyCount : 0;
+      if (dailyCount >= 5) return 'quota_exceeded';
+      const next: QuotaReservation = {
+        revision: (latest?.revision ?? 0) + 1,
+        lastRequestAt: now.toISOString(),
+        utcDay,
+        dailyCount: dailyCount + 1,
+      };
       try {
-        await this.blob.put(`quotas/${encodeURIComponent(ownerKey)}/daily/${utcDay}/${slot}.json`, { reservedAt: now.toISOString() }, { onlyIfNew: true });
+        await this.blob.put(this.key(ownerKey, next.revision), next, { onlyIfNew: true });
         return 'allowed';
       } catch (error) {
-        if (!(error instanceof BlobPreconditionFailedError)) {
-          await this.blob.delete(rateKey);
-          throw error;
-        }
+        if (error instanceof BlobPreconditionFailedError) continue;
+        throw error;
       }
     }
-    await this.blob.delete(rateKey);
-    return 'quota_exceeded';
+    return 'rate_limited';
+  }
+
+  private async readLatest(ownerKey: string): Promise<QuotaReservation | null> {
+    const prefix = `quotas/${encodeURIComponent(ownerKey)}/ledger/`;
+    const keys = (await this.blob.list(prefix, { consistency: 'strong', limit: 32 })).blobs;
+    const revisions = keys
+      .map((key) => Number(/\/(\d{12})\.json$/.exec(key)?.[1]))
+      .map((inverse) => 999_999_999_999 - inverse)
+      .filter((revision) => Number.isInteger(revision) && revision > 0);
+    const revision = revisions.length === 0 ? null : Math.max(...revisions);
+    return revision === null
+      ? null
+      : await this.blob.get<QuotaReservation>(this.key(ownerKey, revision), { consistency: 'strong' });
+  }
+
+  private key(ownerKey: string, revision: number): string {
+    const inverseRevision = 999_999_999_999 - revision;
+    return `quotas/${encodeURIComponent(ownerKey)}/ledger/${String(inverseRevision).padStart(12, '0')}.json`;
   }
 }
+
+type QuotaReservation = { revision: number; lastRequestAt: string; utcDay: string; dailyCount: number };

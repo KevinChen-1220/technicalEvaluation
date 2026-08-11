@@ -13,7 +13,7 @@ interface EdgeOneBlobStore {
   get(key: string, options?: { type?: 'json'; consistency?: 'eventual' | 'strong' }): Promise<unknown | null>;
   setJSON(key: string, value: unknown, options?: { onlyIfNew?: boolean }): Promise<void>;
   delete(key: string): Promise<void>;
-  list(options?: { prefix?: string; directories?: boolean }): Promise<{
+  list(options?: { prefix?: string; directories?: boolean; consistency?: 'eventual' | 'strong'; limit?: number }): Promise<{
     blobs?: Array<{ key?: string } | string>;
     directories?: string[];
   }>;
@@ -46,13 +46,15 @@ export function createBlobPort(store: EdgeOneBlobStore): BlobPort {
     async delete(key: string) {
       await store.delete(key);
     },
-    async list(prefix?: string) {
+    async list(prefix?: string, options?: { consistency?: 'eventual' | 'strong'; limit?: number }) {
       const result = await store.list({
         ...(prefix === undefined ? {} : { prefix }),
         directories: true,
+        ...(options?.consistency === undefined ? {} : { consistency: options.consistency }),
+        ...(options?.limit === undefined ? {} : { limit: options.limit }),
       });
       return {
-        blobs: (result.blobs ?? []).map((blob) => typeof blob === 'string' ? blob : blob.key ?? ''),
+        blobs: (result.blobs ?? []).map((blob) => typeof blob === 'string' ? blob : blob.key ?? '').slice(0, options?.limit),
         directories: result.directories ?? [],
       };
     },

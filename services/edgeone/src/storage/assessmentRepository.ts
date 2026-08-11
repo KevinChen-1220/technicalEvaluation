@@ -2,6 +2,9 @@ import type { AssessmentPaper, AssessmentResult } from '@dynamic-assessment/asse
 import { BlobPreconditionFailedError, type BlobPort } from './ports';
 
 const INDEX_LIMIT = 200;
+const INDEX_DISCOVERY_LIMIT = 64;
+const REVISION_DISCOVERY_LIMIT = 256;
+const INDEX_WRITE_RETRIES = 8;
 const DEFAULT_DRAFT_RETENTION_DAYS = 30;
 const DEFAULT_CLEANUP_LIMIT = 20;
 
@@ -70,14 +73,16 @@ export class BlobAssessmentRepository implements AssessmentRepository {
     const retained: AssessmentSummary[] = [];
     let cleanups = 0;
     for (const summary of index) {
-      if (this.isExpiredSummary(summary) && cleanups < this.cleanupLimit) {
-        cleanups += 1;
-        await this.deleteAssessment(ownerKey, summary.id);
+      if (this.isExpiredSummary(summary)) {
+        if (cleanups < this.cleanupLimit) {
+          cleanups += 1;
+          await this.deleteAssessment(ownerKey, summary.id);
+        }
         continue;
       }
       retained.push(summary);
     }
-    if (cleanups > 0) await this.writeIndex(ownerKey, retained);
+    if (cleanups > 0) await this.mutateIndex(ownerKey, (summaries) => summaries.filter((summary) => !this.isExpiredSummary(summary)));
     return retained.slice(0, INDEX_LIMIT);
   }
 
@@ -89,7 +94,10 @@ export class BlobAssessmentRepository implements AssessmentRepository {
     } catch (error) {
       if (!(error instanceof BlobPreconditionFailedError)) throw error;
       const existing = await this.get(normalized.ownerKey, normalized.id);
-      if (existing !== null) return existing;
+      if (existing !== null) {
+        await this.upsertSummary(existing);
+        return existing;
+      }
       throw error;
     }
     await this.writePointer(normalized.ownerKey, normalized.id, 1);
@@ -106,7 +114,7 @@ export class BlobAssessmentRepository implements AssessmentRepository {
       answers: clone(update.answers),
       updatedAt: update.updatedAt,
     };
-    return await this.writeNext(current, next);
+    return await this.writeNext(next);
   }
 
   async complete(update: AssessmentCompletion): Promise<AssessmentWriteResult> {
@@ -122,10 +130,10 @@ export class BlobAssessmentRepository implements AssessmentRepository {
       submittedAt: update.submittedAt,
       updatedAt: update.updatedAt,
     };
-    return await this.writeNext(current, next);
+    return await this.writeNext(next);
   }
 
-  private async writeNext(current: AssessmentRecord, next: AssessmentRecord): Promise<AssessmentWriteResult> {
+  private async writeNext(next: AssessmentRecord): Promise<AssessmentWriteResult> {
     try {
       await this.blob.put(this.revisionKey(next.ownerKey, next.id, next.revision), next, { onlyIfNew: true });
     } catch (error) {
@@ -140,7 +148,7 @@ export class BlobAssessmentRepository implements AssessmentRepository {
 
   private async readLatest(ownerKey: string, id: string): Promise<AssessmentRecord | null> {
     const prefix = `${this.baseKey(ownerKey, id)}/revisions/`;
-    const revisions = (await this.blob.list(prefix)).blobs
+    const revisions = (await this.blob.list(prefix, { consistency: 'strong', limit: REVISION_DISCOVERY_LIMIT })).blobs
       .map((key) => Number(/^.+\/revisions\/(\d+)\.json$/.exec(key)?.[1]))
       .filter((value) => Number.isInteger(value) && value > 0);
     const revision = revisions.length === 0 ? null : Math.max(...revisions);
@@ -149,19 +157,41 @@ export class BlobAssessmentRepository implements AssessmentRepository {
   }
 
   private async readIndex(ownerKey: string): Promise<AssessmentSummary[]> {
-    return (await this.blob.get<AssessmentSummary[]>(this.indexKey(ownerKey), { consistency: 'strong' }) ?? [])
-      .filter(isSummary)
-      .sort(sortSummaries)
-      .slice(0, INDEX_LIMIT);
+    return (await this.readLatestIndex(ownerKey)).summaries;
   }
 
   private async upsertSummary(record: AssessmentRecord): Promise<void> {
-    const index = await this.readIndex(record.ownerKey);
-    await this.writeIndex(record.ownerKey, [toSummary(record), ...index.filter((item) => item.id !== record.id)]);
+    const summary = toSummary(record);
+    await this.mutateIndex(record.ownerKey, (index) => [summary, ...index.filter((item) => item.id !== record.id)]);
   }
 
-  private async writeIndex(ownerKey: string, summaries: AssessmentSummary[]): Promise<void> {
-    await this.blob.put(this.indexKey(ownerKey), summaries.filter(isSummary).sort(sortSummaries).slice(0, INDEX_LIMIT));
+  private async mutateIndex(ownerKey: string, mutate: (summaries: AssessmentSummary[]) => AssessmentSummary[]): Promise<void> {
+    for (let attempt = 0; attempt < INDEX_WRITE_RETRIES; attempt += 1) {
+      const current = await this.readLatestIndex(ownerKey);
+      const next: AssessmentIndexRevision = {
+        revision: current.revision + 1,
+        summaries: mutate(current.summaries).filter(isSummary).sort(sortSummaries).slice(0, INDEX_LIMIT),
+      };
+      try {
+        await this.blob.put(this.indexRevisionKey(ownerKey, next.revision), next, { onlyIfNew: true });
+        return;
+      } catch (error) {
+        if (!(error instanceof BlobPreconditionFailedError)) throw error;
+      }
+    }
+    throw new Error('INDEX_WRITE_CONFLICT');
+  }
+
+  private async readLatestIndex(ownerKey: string): Promise<AssessmentIndexRevision> {
+    const prefix = `${this.indexPrefix(ownerKey)}/`;
+    const revisions = (await this.blob.list(prefix, { consistency: 'strong', limit: INDEX_DISCOVERY_LIMIT })).blobs
+      .map((key) => Number(/\/(\d{12})\.json$/.exec(key)?.[1]))
+      .map((inverse) => 999_999_999_999 - inverse)
+      .filter((revision) => Number.isInteger(revision) && revision > 0);
+    const revision = revisions.length === 0 ? 0 : Math.max(...revisions);
+    if (revision === 0) return { revision: 0, summaries: [] };
+    return await this.blob.get<AssessmentIndexRevision>(this.indexRevisionKey(ownerKey, revision), { consistency: 'strong' })
+      ?? { revision: 0, summaries: [] };
   }
 
   private async writePointer(ownerKey: string, id: string, revision: number): Promise<void> {
@@ -170,7 +200,7 @@ export class BlobAssessmentRepository implements AssessmentRepository {
 
   private async deleteAssessment(ownerKey: string, id: string): Promise<void> {
     const prefix = `${this.baseKey(ownerKey, id)}/`;
-    const keys = (await this.blob.list(prefix)).blobs.slice(0, this.cleanupLimit);
+    const keys = (await this.blob.list(prefix, { consistency: 'strong', limit: this.cleanupLimit })).blobs;
     await Promise.all(keys.map((key) => this.blob.delete(key)));
     await this.blob.delete(`${this.baseKey(ownerKey, id)}.json`);
   }
@@ -191,8 +221,13 @@ export class BlobAssessmentRepository implements AssessmentRepository {
   private get cleanupLimit(): number { return this.options.cleanupLimit ?? DEFAULT_CLEANUP_LIMIT; }
   private baseKey(ownerKey: string, id: string): string { return `assessments/${part(ownerKey)}/${part(id)}`; }
   private revisionKey(ownerKey: string, id: string, revision: number): string { return `${this.baseKey(ownerKey, id)}/revisions/${revision}.json`; }
-  private indexKey(ownerKey: string): string { return `assessments/${part(ownerKey)}/index.json`; }
+  private indexPrefix(ownerKey: string): string { return `assessments/${part(ownerKey)}/index-revisions`; }
+  private indexRevisionKey(ownerKey: string, revision: number): string {
+    return `${this.indexPrefix(ownerKey)}/${String(999_999_999_999 - revision).padStart(12, '0')}.json`;
+  }
 }
+
+type AssessmentIndexRevision = { revision: number; summaries: AssessmentSummary[] };
 
 function toSummary(record: AssessmentRecord): AssessmentSummary {
   return { id: record.id, revision: record.revision, status: record.status, createdAt: record.createdAt, updatedAt: record.updatedAt, submittedAt: record.submittedAt, topic: record.paper.topic, questionCount: record.paper.questions.length || record.paper.questionCount, answeredCount: Object.values(record.answers).filter((answer) => answer.length > 0).length, score: score(record.result) };

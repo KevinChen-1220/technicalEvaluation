@@ -1,5 +1,6 @@
 import { createMemoryStores, MemoryBlobPort } from '../src/storage/memoryStores';
 import { BlobSettingsRepository } from '../src/storage/settingsRepository';
+import { BlobReportRepository } from '../src/storage/reportRepository';
 
 describe('settings and reports', () => {
   test('reads owner settings strongly and returns the object just written', async () => {
@@ -17,5 +18,22 @@ describe('settings and reports', () => {
     await stores.reports.create({ id: 'new', ownerKey: 'owner-a', reason: 'other', createdAt: '2026-08-11T00:00:00.000Z', updatedAt: '2026-08-11T00:00:00.000Z' });
     await stores.reports.create({ id: 'other', ownerKey: 'owner-b', reason: 'other', createdAt: '2026-08-11T00:00:00.000Z', updatedAt: '2026-08-11T00:00:00.000Z' });
     await expect(stores.reports.list('owner-a')).resolves.toEqual([expect.objectContaining({ id: 'new' })]);
+  });
+
+  test('omits every expired report even when only one delete is permitted', async () => {
+    const stores = createMemoryStores({ now: () => new Date('2026-08-11T00:00:00.000Z'), reportRetentionDays: 1, cleanupLimit: 1 });
+    await stores.reports.create({ id: 'old-a', ownerKey: 'owner-a', reason: 'other', createdAt: '2026-08-08T00:00:00.000Z', updatedAt: '2026-08-08T00:00:00.000Z' });
+    await stores.reports.create({ id: 'old-b', ownerKey: 'owner-a', reason: 'other', createdAt: '2026-08-09T00:00:00.000Z', updatedAt: '2026-08-09T00:00:00.000Z' });
+    await stores.reports.create({ id: 'new', ownerKey: 'owner-a', reason: 'other', createdAt: '2026-08-11T00:00:00.000Z', updatedAt: '2026-08-11T00:00:00.000Z' });
+    await expect(stores.reports.list('owner-a')).resolves.toEqual([expect.objectContaining({ id: 'new' })]);
+  });
+
+  test('uses strong and bounded report discovery', async () => {
+    const blob = new MemoryBlobPort();
+    const list = jest.spyOn(blob, 'list');
+    const reports = new BlobReportRepository(blob, { now: () => new Date('2026-08-11T00:00:00.000Z') });
+    await reports.create({ id: 'r1', ownerKey: 'owner-a', reason: 'other', createdAt: '2026-08-11T00:00:00.000Z', updatedAt: '2026-08-11T00:00:00.000Z' });
+    await expect(reports.list('owner-a')).resolves.toHaveLength(1);
+    expect(list).toHaveBeenCalledWith('reports/owner-a/', { consistency: 'strong', limit: 200 });
   });
 });

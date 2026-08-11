@@ -20,7 +20,7 @@ export class BlobReportRepository {
   }
 
   async list(ownerKey: string): Promise<ReportRecord[]> {
-    const keys = (await this.blob.list(this.prefix(ownerKey))).blobs;
+    const keys = (await this.blob.list(this.prefix(ownerKey), { consistency: 'strong', limit: 200 })).blobs;
     const records = await Promise.all(keys.map((key) => this.blob.get<ReportRecord>(key, { consistency: 'strong' })));
     const retained: ReportRecord[] = [];
     let cleanups = 0;

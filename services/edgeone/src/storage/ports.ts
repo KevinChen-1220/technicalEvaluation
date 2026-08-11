@@ -22,9 +22,14 @@ export interface BlobListResult {
   directories: string[];
 }
 
+export interface BlobListOptions {
+  consistency?: BlobConsistency;
+  limit?: number;
+}
+
 export interface BlobPort {
   get<T>(key: string, options?: BlobReadOptions): Promise<T | null>;
   put<T>(key: string, value: T, options?: BlobWriteOptions): Promise<void>;
   delete(key: string): Promise<void>;
-  list(prefix?: string): Promise<BlobListResult>;
+  list(prefix?: string, options?: BlobListOptions): Promise<BlobListResult>;
 }

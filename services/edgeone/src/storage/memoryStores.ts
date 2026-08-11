@@ -1,5 +1,5 @@
 import { createEdgeOneStores, type StoreOptions } from './edgeOneStores';
-import { BlobPreconditionFailedError, type BlobListResult, type BlobPort, type BlobReadOptions, type BlobWriteOptions } from './ports';
+import { BlobPreconditionFailedError, type BlobListOptions, type BlobListResult, type BlobPort, type BlobReadOptions, type BlobWriteOptions } from './ports';
 
 export class MemoryBlobPort implements BlobPort {
   readonly records = new Map<string, unknown>();
@@ -15,8 +15,8 @@ export class MemoryBlobPort implements BlobPort {
 
   async delete(key: string): Promise<void> { this.records.delete(key); }
 
-  async list(prefix = ''): Promise<BlobListResult> {
-    return { blobs: [...this.records.keys()].filter((key) => key.startsWith(prefix)), directories: [] };
+  async list(prefix = '', options?: BlobListOptions): Promise<BlobListResult> {
+    return { blobs: [...this.records.keys()].filter((key) => key.startsWith(prefix)).sort().slice(0, options?.limit), directories: [] };
   }
 }
 

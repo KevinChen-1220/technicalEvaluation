@@ -673,13 +673,15 @@ function createBlobPort(store) {
     async delete(key) {
       await store.delete(key);
     },
-    async list(prefix) {
+    async list(prefix, options) {
       const result = await store.list({
         ...prefix === void 0 ? {} : { prefix },
-        directories: true
+        directories: true,
+        ...options?.consistency === void 0 ? {} : { consistency: options.consistency },
+        ...options?.limit === void 0 ? {} : { limit: options.limit }
       });
       return {
-        blobs: (result.blobs ?? []).map((blob) => typeof blob === "string" ? blob : blob.key ?? ""),
+        blobs: (result.blobs ?? []).map((blob) => typeof blob === "string" ? blob : blob.key ?? "").slice(0, options?.limit),
         directories: result.directories ?? []
       };
     }
