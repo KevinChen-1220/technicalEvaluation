@@ -23,7 +23,16 @@ describe('EdgeOne deployment artifacts', () => {
         headers: [{ key: 'Cache-Control', value: 'no-store' }],
       }),
     ]));
-    expect(existsSync(join(serviceRoot, 'cloud-functions', 'api', 'health.js'))).toBe(true);
+    for (const relativePath of [
+      ['api', 'health.js'],
+      ['api', 'session.js'],
+      ['api', 'generation.js'],
+      ['api', 'settings.js'],
+      ['api', 'reports.js'],
+      ['api', 'assessments', '[[path]].js'],
+    ]) {
+      expect(existsSync(join(serviceRoot, 'cloud-functions', ...relativePath))).toBe(true);
+    }
   });
 
   test('packages deployable functions while excluding TypeScript tests', () => {
@@ -35,6 +44,8 @@ describe('EdgeOne deployment artifacts', () => {
     const paths = packed[0]?.files.map((file) => file.path) ?? [];
 
     expect(paths).toContain('cloud-functions/api/health.js');
+    expect(paths).toContain('cloud-functions/api/generation.js');
+    expect(paths).toContain('cloud-functions/api/assessments/[[path]].js');
     expect(paths).not.toContain('test/buildArtifacts.test.ts');
     expect(paths.every((path) => !path.startsWith('node-functions/'))).toBe(true);
   });

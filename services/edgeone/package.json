@@ -12,7 +12,8 @@
     "build": "node scripts/build.mjs"
   },
   "dependencies": {
-    "@edgeone/pages-blob": "^0.0.16"
+    "@edgeone/pages-blob": "^0.0.16",
+    "jsonrepair": "^3.15.0"
   },
   "devDependencies": {
     "esbuild": "0.21.5"

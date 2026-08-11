@@ -4,6 +4,7 @@ export type ReportRecord = {
   id: string;
   ownerKey: string;
   reason: string;
+  policyVersion?: string;
   detail?: string;
   assessmentId?: string;
   createdAt: string;
