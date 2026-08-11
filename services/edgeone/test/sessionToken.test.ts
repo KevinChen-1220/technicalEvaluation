@@ -1,0 +1,50 @@
+import { issueSession, requireSession } from '../src/auth/sessionToken';
+import type { BlobPort } from '../src/storage/ports';
+
+function createBlob(): BlobPort & { records: Map<string, unknown> } {
+  const records = new Map<string, unknown>();
+  const get = jest.fn(async (key: string) => records.get(key) ?? null);
+  const put = jest.fn(async (key: string, value: unknown) => { records.set(key, value); });
+  return {
+    records,
+    get: get as BlobPort['get'],
+    put: put as BlobPort['put'],
+    delete: jest.fn(async (key: string) => { records.delete(key); }),
+    list: jest.fn(async () => ({ blobs: [], directories: [] })),
+  };
+}
+
+function deps(blob = createBlob(), now = new Date('2026-08-11T00:00:00.000Z')) {
+  return {
+    blob,
+    now: () => now,
+    sessionHmacKey: 'session-hmac-key',
+    ownerHmacKey: 'owner-hmac-key',
+    randomBytes: () => new Uint8Array(32).fill(7),
+  };
+}
+
+describe('opaque sessions', () => {
+  test('stores only hashed token and derived owner key with a seven-day expiration', async () => {
+    const blob = createBlob();
+    const result = await issueSession('openid-must-never-be-persisted', deps(blob));
+    const stored = [...blob.records.values()][0];
+
+    expect(result.token).toMatch(/^[A-Za-z0-9_-]+$/);
+    expect(result.expiresAt).toBe('2026-08-18T00:00:00.000Z');
+    expect(JSON.stringify(stored)).not.toContain('openid-must-never-be-persisted');
+    expect(stored).toEqual(expect.objectContaining({ tokenHash: expect.any(String), ownerKey: expect.any(String) }));
+    expect(blob.get).not.toHaveBeenCalled();
+  });
+
+  test('uses strong consistency and rejects an expired session', async () => {
+    const blob = createBlob();
+    const issued = await issueSession('open-id', deps(blob));
+    const expiredDeps = deps(blob, new Date('2026-08-18T00:00:00.001Z'));
+
+    await expect(requireSession(new Request('https://example.test/api/assessment', {
+      headers: { authorization: `Bearer ${issued.token}` },
+    }), expiredDeps)).rejects.toMatchObject({ code: 'SESSION_EXPIRED' });
+    expect(blob.get).toHaveBeenCalledWith(expect.stringMatching(/^sessions\/[a-f0-9]{64}\.json$/), { consistency: 'strong' });
+  });
+});
