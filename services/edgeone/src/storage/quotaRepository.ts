@@ -21,14 +21,14 @@ export class BlobQuotaRepository {
     if (reservationId !== undefined) {
       const marker = await this.readMarker(ownerKey, reservationId);
       if (marker !== null) {
-        return await this.ensureDailyReservation(ownerKey, marker.reservedDate, reservationId, marker.reservedAt);
+        return await this.ensureDailyReservation(ownerKey, marker.reservedDate, reservationId, now.toISOString());
       }
     }
 
     const today = await this.readLatestDay(ownerKey, utcDay);
     if (reservationId !== undefined && normalizedReservationIds(today).includes(reservationId)) {
       const marker = await this.claimMarker(ownerKey, reservationId, utcDay, now.toISOString());
-      return await this.ensureDailyReservation(ownerKey, marker.reservedDate, reservationId, marker.reservedAt);
+      return await this.ensureDailyReservation(ownerKey, marker.reservedDate, reservationId, now.toISOString());
     }
     const previous = await this.readLatestDay(ownerKey, previousUtcDay(utcDay));
     const mostRecent = latestByRequestTime(today, previous);
@@ -41,7 +41,7 @@ export class BlobQuotaRepository {
       return await this.appendDailyReservation(ownerKey, utcDay, undefined, now.toISOString());
     }
     const marker = await this.claimMarker(ownerKey, reservationId, utcDay, now.toISOString());
-    return await this.ensureDailyReservation(ownerKey, marker.reservedDate, reservationId, marker.reservedAt);
+    return await this.ensureDailyReservation(ownerKey, marker.reservedDate, reservationId, now.toISOString());
   }
 
   private async claimMarker(
@@ -77,26 +77,29 @@ export class BlobQuotaRepository {
     ownerKey: string,
     utcDay: string,
     reservationId: string,
-    reservedAt: string,
+    requestAt: string,
   ): Promise<QuotaDecision> {
-    return await this.appendDailyReservation(ownerKey, utcDay, reservationId, reservedAt);
+    return await this.appendDailyReservation(ownerKey, utcDay, reservationId, requestAt);
   }
 
   private async appendDailyReservation(
     ownerKey: string,
     utcDay: string,
     reservationId: string | undefined,
-    reservedAt: string,
+    requestAt: string,
   ): Promise<QuotaDecision> {
     for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
       const latest = await this.readLatestDay(ownerKey, utcDay);
       const reservationIds = normalizedReservationIds(latest);
       if (reservationId !== undefined && reservationIds.includes(reservationId)) return 'allowed';
+      if (latest !== null && new Date(requestAt).getTime() - new Date(latest.lastRequestAt).getTime() < 60_000) {
+        return 'rate_limited';
+      }
       const dailyCount = latest?.dailyCount ?? 0;
       if (dailyCount >= 5) return 'quota_exceeded';
       const next: QuotaReservation = {
         revision: (latest?.revision ?? 0) + 1,
-        lastRequestAt: latestRequestTime(latest?.lastRequestAt, reservedAt),
+        lastRequestAt: latestRequestTime(latest?.lastRequestAt, requestAt),
         utcDay,
         dailyCount: dailyCount + 1,
         reservationIds: reservationId === undefined ? reservationIds : [...reservationIds, reservationId],

@@ -34,6 +34,51 @@ describe('free tier quota', () => {
     }));
   });
 
+  test('allows only one of two concurrent reservations inside the rolling window', async () => {
+    const blob = new MemoryBlobPort();
+    const quota = new BlobQuotaRepository(blob);
+    const now = new Date('2026-08-11T00:00:00.000Z');
+
+    const decisions = await Promise.all([
+      quota.reserve('owner-a', now, true, 'job-a'),
+      quota.reserve('owner-a', now, true, 'job-b'),
+    ]);
+
+    expect([...decisions].sort()).toEqual(['allowed', 'rate_limited']);
+    const ledger = await blob.list('quotas/owner-a/ledger/', { consistency: 'strong' });
+    const records = (await Promise.all(ledger.blobs.map(async (key) => await blob.get<{
+      revision: number; dailyCount: number; reservationIds?: string[];
+    }>(key, { consistency: 'strong' })))).filter((record): record is NonNullable<typeof record> => record !== null);
+    expect(records.sort((left, right) => right.revision - left.revision)[0]).toEqual(expect.objectContaining({
+      dailyCount: 1,
+      reservationIds: [decisions[0] === 'allowed' ? 'job-a' : 'job-b'],
+    }));
+  });
+
+  test('repairs an uncounted marker after 60 seconds exactly once under concurrent retries', async () => {
+    const blob = new MemoryBlobPort();
+    const quota = new BlobQuotaRepository(blob);
+    const initialDecisions = await Promise.all([
+      quota.reserve('owner-a', new Date('2026-08-11T00:00:00.000Z'), true, 'job-a'),
+      quota.reserve('owner-a', new Date('2026-08-11T00:00:00.000Z'), true, 'job-b'),
+    ]);
+    const uncountedReservationId = initialDecisions[0] === 'rate_limited' ? 'job-a' : 'job-b';
+
+    await expect(Promise.all([
+      quota.reserve('owner-a', new Date('2026-08-11T00:01:00.000Z'), true, uncountedReservationId),
+      quota.reserve('owner-a', new Date('2026-08-11T00:01:00.000Z'), true, uncountedReservationId),
+    ])).resolves.toEqual(['allowed', 'allowed']);
+
+    const ledger = await blob.list('quotas/owner-a/ledger/', { consistency: 'strong' });
+    const records = (await Promise.all(ledger.blobs.map(async (key) => await blob.get<{
+      revision: number; dailyCount: number; reservationIds?: string[];
+    }>(key, { consistency: 'strong' })))).filter((record): record is NonNullable<typeof record> => record !== null);
+    expect(records.sort((left, right) => right.revision - left.revision)[0]).toEqual(expect.objectContaining({
+      dailyCount: 2,
+      reservationIds: expect.arrayContaining(['job-a', 'job-b']),
+    }));
+  });
+
   test('keeps A-B-A reservations idempotent for the whole UTC day', async () => {
     const blob = new MemoryBlobPort();
     const quota = new BlobQuotaRepository(blob);

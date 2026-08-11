@@ -1046,13 +1046,13 @@ var BlobQuotaRepository = class {
     if (reservationId !== void 0) {
       const marker2 = await this.readMarker(ownerKey, reservationId);
       if (marker2 !== null) {
-        return await this.ensureDailyReservation(ownerKey, marker2.reservedDate, reservationId, marker2.reservedAt);
+        return await this.ensureDailyReservation(ownerKey, marker2.reservedDate, reservationId, now.toISOString());
       }
     }
     const today = await this.readLatestDay(ownerKey, utcDay);
     if (reservationId !== void 0 && normalizedReservationIds(today).includes(reservationId)) {
       const marker2 = await this.claimMarker(ownerKey, reservationId, utcDay, now.toISOString());
-      return await this.ensureDailyReservation(ownerKey, marker2.reservedDate, reservationId, marker2.reservedAt);
+      return await this.ensureDailyReservation(ownerKey, marker2.reservedDate, reservationId, now.toISOString());
     }
     const previous = await this.readLatestDay(ownerKey, previousUtcDay(utcDay));
     const mostRecent = latestByRequestTime(today, previous);
@@ -1064,7 +1064,7 @@ var BlobQuotaRepository = class {
       return await this.appendDailyReservation(ownerKey, utcDay, void 0, now.toISOString());
     }
     const marker = await this.claimMarker(ownerKey, reservationId, utcDay, now.toISOString());
-    return await this.ensureDailyReservation(ownerKey, marker.reservedDate, reservationId, marker.reservedAt);
+    return await this.ensureDailyReservation(ownerKey, marker.reservedDate, reservationId, now.toISOString());
   }
   async claimMarker(ownerKey, reservationId, reservedDate, reservedAt) {
     const marker = {
@@ -1088,19 +1088,22 @@ var BlobQuotaRepository = class {
     if (marker.reservationIdHash !== hashReservationId(reservationId) || !/^\d{4}-\d{2}-\d{2}$/.test(marker.reservedDate) || !Number.isFinite(new Date(marker.reservedAt).getTime())) throw new Error("INVALID_QUOTA_MARKER");
     return marker;
   }
-  async ensureDailyReservation(ownerKey, utcDay, reservationId, reservedAt) {
-    return await this.appendDailyReservation(ownerKey, utcDay, reservationId, reservedAt);
+  async ensureDailyReservation(ownerKey, utcDay, reservationId, requestAt) {
+    return await this.appendDailyReservation(ownerKey, utcDay, reservationId, requestAt);
   }
-  async appendDailyReservation(ownerKey, utcDay, reservationId, reservedAt) {
+  async appendDailyReservation(ownerKey, utcDay, reservationId, requestAt) {
     for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
       const latest = await this.readLatestDay(ownerKey, utcDay);
       const reservationIds = normalizedReservationIds(latest);
       if (reservationId !== void 0 && reservationIds.includes(reservationId)) return "allowed";
+      if (latest !== null && new Date(requestAt).getTime() - new Date(latest.lastRequestAt).getTime() < 6e4) {
+        return "rate_limited";
+      }
       const dailyCount = latest?.dailyCount ?? 0;
       if (dailyCount >= 5) return "quota_exceeded";
       const next = {
         revision: (latest?.revision ?? 0) + 1,
-        lastRequestAt: latestRequestTime(latest?.lastRequestAt, reservedAt),
+        lastRequestAt: latestRequestTime(latest?.lastRequestAt, requestAt),
         utcDay,
         dailyCount: dailyCount + 1,
         reservationIds: reservationId === void 0 ? reservationIds : [...reservationIds, reservationId],

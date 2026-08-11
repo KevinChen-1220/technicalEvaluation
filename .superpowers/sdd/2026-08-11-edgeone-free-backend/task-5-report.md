@@ -2,7 +2,7 @@
 
 ## Status
 
-Completed, including all four strict review hardening rounds.
+Completed, including all five strict review hardening rounds.
 
 ## Generation Contract
 
@@ -44,6 +44,8 @@ Completed, including all four strict review hardening rounds.
 - Quota is reserved only after the first job claim. The immutable job-level `quota-reserved.json` marker and quota ledger reservation ID ensure retries reuse the original reservation; a failed-then-successful job increments the daily count once.
 - Each quota ledger revision carries the UTC day's bounded `reservationIds` set. A-B-A retries remain idempotent even when another job was recorded after A or A's job marker write failed.
 - Each owner/reservation pair also has a global immutable marker containing its first `reservedDate` and `reservedAt`. Daily ledgers are partitioned by UTC date, so cross-midnight retries repair or reuse the first day's entry and never charge the current day.
+- Every quota CAS retry strongly rereads the latest ledger revision and rechecks the rolling 60-second window before appending a different reservation. Concurrent reservations therefore serialize to one `allowed` result and one `rate_limited` result, while an already-recorded reservation remains idempotently allowed.
+- A marker whose first ledger write failed can be retried after the rolling window using the retry request time, while its immutable first date still selects the charged ledger. Concurrent retries of that marker append exactly one daily count.
 - Failure persistence uses a fresh two-second best-effort deadline, so an exhausted 115-second request deadline cannot leave a permanent running state. If that short write also fails, lease expiry permits recovery.
 - Immediately after any running job result from `begin`, including a newly claimed stale takeover, the route checks the deterministic assessment ID. An existing assessment completes that attempt before quota or LLM work.
 - `BlobPort.list` defaults to recursive flat blobs and exposes an explicit `directories` option. The EdgeOne adapter passes `directories: false` by default so nested job, assessment, quota, and token revisions remain discoverable.
@@ -63,10 +65,11 @@ Completed, including all four strict review hardening rounds.
 - New red-green tests cover stale running takeover, concurrent takeover, three-attempt exhaustion, durable quota failures, one real-ledger reservation across failure/retry, failure writes after global timeout, never-resolving stream cancellation, per-waiter token deadlines, cross-instance refresh locking, expired-lock takeover, and stable process coordination across EdgeOne Blob wrappers.
 - Third-round red-green tests reproduce EdgeOne delimiter grouping, A-B-A quota duplication, marker-write recovery, a 13-second stale token holder, unordered token-cache listing, and assessment recovery immediately after stale takeover.
 - Fourth-round red-green tests cover A@23:58, B@23:59, A@00:00 global idempotency, marker-first ledger repair, SDK lexicographic ordering, and token/lock revision 17 discovery with cleanup permanently failing.
+- Fifth-round red-green tests use real `Promise.all` contention to prove that two different reservations cannot both pass after a CAS conflict, and that an uncounted marker can be repaired after exactly 60 seconds without double-counting concurrent retries.
 
 ## Verification
 
-- `npm run test:edgeone -- --runInBand`: 17 suites, 126 tests passed.
+- `npm run test:edgeone -- --runInBand`: 17 suites, 128 tests passed.
 - `npm run typecheck:edgeone`: passed.
 - `npm run build:edgeone`: passed and regenerated all six Node Function bundles.
 - `npm run scan:secrets:source`: passed.
