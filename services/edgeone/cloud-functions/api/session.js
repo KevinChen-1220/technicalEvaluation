@@ -759,7 +759,11 @@ async function issueSession(openId, dependencies) {
     createdAt: now.toISOString(),
     expiresAt
   };
-  await dependencies.blob.put(sessionBlobKey(tokenHash), stored);
+  try {
+    await dependencies.blob.put(sessionBlobKey(tokenHash), stored);
+  } catch {
+    throw backendUnavailable();
+  }
   return { token, expiresAt };
 }
 function sessionDependenciesFromEnvironment(blob, env) {
@@ -771,7 +775,7 @@ function sessionDependenciesFromEnvironment(blob, env) {
 }
 function requireSessionKeys(dependencies) {
   if (!dependencies.sessionHmacKey || !dependencies.ownerHmacKey) {
-    throw new ApiError("SERVICE_UNAVAILABLE", 503, true);
+    throw backendUnavailable();
   }
   return { sessionHmacKey: dependencies.sessionHmacKey, ownerHmacKey: dependencies.ownerHmacKey };
 }
@@ -784,19 +788,35 @@ function tokenProof(token, sessionHmacKey) {
 function sessionBlobKey(tokenHash) {
   return `sessions/${tokenHash}.json`;
 }
+function backendUnavailable() {
+  return new ApiError("BACKEND_UNAVAILABLE", 503, true);
+}
 
 // src/routes/session.ts
 async function createSessionRoute(request, context, fetch2) {
   try {
     if (request.method !== "POST") throw new ApiError("METHOD_NOT_ALLOWED", 405);
-    const payload = await request.json();
+    assertSessionEnvironment(context.env);
+    const payload = await requestPayload(request);
     if (typeof payload.code !== "string") throw new ApiError("INVALID_REQUEST", 400);
     const { openId } = await exchangeWeChatCode(payload.code, context.env, fetch2);
     const session = await issueSession(openId, sessionDependenciesFromEnvironment(context.blob, context.env));
     return success(session, 201);
   } catch (error) {
     if (error instanceof ApiError) return failure(error.code, error.retryable, error.status);
-    return failure("INVALID_REQUEST", false, 400);
+    return failure("BACKEND_UNAVAILABLE", true, 503);
+  }
+}
+function assertSessionEnvironment(env) {
+  if (!env.WECHAT_APP_ID || !env.WECHAT_APP_SECRET || !env.SESSION_HMAC_KEY || !env.OWNER_HMAC_KEY) {
+    throw new ApiError("BACKEND_UNAVAILABLE", 503, true);
+  }
+}
+async function requestPayload(request) {
+  try {
+    return await request.json();
+  } catch {
+    throw new ApiError("INVALID_REQUEST", 400);
   }
 }
 

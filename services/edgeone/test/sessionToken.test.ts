@@ -47,4 +47,25 @@ describe('opaque sessions', () => {
     }), expiredDeps)).rejects.toMatchObject({ code: 'SESSION_EXPIRED' });
     expect(blob.get).toHaveBeenCalledWith(expect.stringMatching(/^sessions\/[a-f0-9]{64}\.json$/), { consistency: 'strong' });
   });
+
+  test('maps Blob read failures to a retryable backend error', async () => {
+    const blob = createBlob();
+    const issued = await issueSession('open-id', deps(blob));
+    (blob.get as unknown as jest.Mock).mockRejectedValueOnce(new Error('Blob unavailable'));
+
+    await expect(requireSession(new Request('https://example.test/api/assessment', {
+      headers: { authorization: `Bearer ${issued.token}` },
+    }), deps(blob))).rejects.toMatchObject({ code: 'BACKEND_UNAVAILABLE', status: 503, retryable: true });
+  });
+
+  test('maps corrupted session records to a retryable backend error', async () => {
+    const blob = createBlob();
+    const issued = await issueSession('open-id', deps(blob));
+    const [key] = [...blob.records.keys()];
+    blob.records.set(key!, { tokenHash: null });
+
+    await expect(requireSession(new Request('https://example.test/api/assessment', {
+      headers: { authorization: `Bearer ${issued.token}` },
+    }), deps(blob))).rejects.toMatchObject({ code: 'BACKEND_UNAVAILABLE', status: 503, retryable: true });
+  });
 });

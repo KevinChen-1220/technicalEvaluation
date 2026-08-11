@@ -44,7 +44,11 @@ export async function issueSession(
     expiresAt,
   };
 
-  await dependencies.blob.put(sessionBlobKey(tokenHash), stored);
+  try {
+    await dependencies.blob.put(sessionBlobKey(tokenHash), stored);
+  } catch {
+    throw backendUnavailable();
+  }
   return { token, expiresAt };
 }
 
@@ -52,8 +56,15 @@ export async function requireSession(request: Request, dependencies: SessionDepe
   const keys = requireSessionKeys(dependencies);
   const token = bearerToken(request.headers.get('authorization'));
   const tokenHash = hashToken(token);
-  const stored = await dependencies.blob.get<StoredSession>(sessionBlobKey(tokenHash), { consistency: 'strong' });
+  let stored: StoredSession | null;
+  try {
+    stored = await dependencies.blob.get<StoredSession>(sessionBlobKey(tokenHash), { consistency: 'strong' });
+  } catch {
+    throw backendUnavailable();
+  }
   if (!stored) throw new ApiError('UNAUTHORIZED', 401);
+
+  if (!isValidStoredSession(stored)) throw backendUnavailable();
 
   if (!constantTimeEqual(stored.tokenHash, tokenHash) || !constantTimeEqual(stored.tokenProof, tokenProof(token, keys.sessionHmacKey))) {
     throw new ApiError('UNAUTHORIZED', 401);
@@ -75,7 +86,7 @@ export function sessionDependenciesFromEnvironment(blob: BlobPort, env: Record<s
 
 function requireSessionKeys(dependencies: SessionDependencies): { sessionHmacKey: string; ownerHmacKey: string } {
   if (!dependencies.sessionHmacKey || !dependencies.ownerHmacKey) {
-    throw new ApiError('SERVICE_UNAVAILABLE', 503, true);
+    throw backendUnavailable();
   }
   return { sessionHmacKey: dependencies.sessionHmacKey, ownerHmacKey: dependencies.ownerHmacKey };
 }
@@ -104,10 +115,18 @@ function constantTimeEqual(left: string, right: string): boolean {
   return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
 }
 
-function isValidStoredSession(value: StoredSession): boolean {
-  return typeof value.tokenHash === 'string'
-    && typeof value.tokenProof === 'string'
-    && typeof value.ownerKey === 'string'
-    && typeof value.expiresAt === 'string'
-    && Number.isFinite(new Date(value.expiresAt).getTime());
+function isValidStoredSession(value: unknown): value is StoredSession {
+  if (!value || typeof value !== 'object') return false;
+  const session = value as Partial<StoredSession>;
+  return typeof session.tokenHash === 'string'
+    && typeof session.tokenProof === 'string'
+    && typeof session.ownerKey === 'string'
+    && typeof session.createdAt === 'string'
+    && typeof session.expiresAt === 'string'
+    && Number.isFinite(new Date(session.createdAt).getTime())
+    && Number.isFinite(new Date(session.expiresAt).getTime());
+}
+
+function backendUnavailable(): ApiError {
+  return new ApiError('BACKEND_UNAVAILABLE', 503, true);
 }

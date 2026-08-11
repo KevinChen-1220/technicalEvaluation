@@ -2,6 +2,51 @@ import { createSessionRoute } from '../src/routes/session';
 import type { EdgeOneContext } from '../src/platform/context';
 
 describe('session route', () => {
+  test('preflights every required credential before calling WeChat', async () => {
+    const fetch = jest.fn(async () => new Response(JSON.stringify({ openid: 'never-used' })));
+    const context: EdgeOneContext = {
+      request: new Request('https://example.test/api/session'),
+      env: {
+        WECHAT_APP_ID: 'wx-runtime-app',
+        WECHAT_APP_SECRET: 'runtime-app-secret',
+        SESSION_HMAC_KEY: 'runtime-session-key',
+      },
+      blob: {
+        get: jest.fn(), put: jest.fn(), delete: jest.fn(), list: jest.fn(async () => ({ blobs: [], directories: [] })),
+      },
+    };
+
+    const response = await createSessionRoute(new Request('https://example.test/api/session', {
+      method: 'POST', body: JSON.stringify({ code: 'wx-code' }),
+    }), context, fetch);
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ ok: false, error: { code: 'BACKEND_UNAVAILABLE', retryable: true } });
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  test('maps Blob persistence failures to a retryable backend response', async () => {
+    const context: EdgeOneContext = {
+      request: new Request('https://example.test/api/session'),
+      env: {
+        WECHAT_APP_ID: 'wx-runtime-app', WECHAT_APP_SECRET: 'runtime-app-secret',
+        SESSION_HMAC_KEY: 'runtime-session-key', OWNER_HMAC_KEY: 'runtime-owner-key',
+      },
+      blob: {
+        get: jest.fn(),
+        put: jest.fn(async () => { throw new Error('Blob service unavailable'); }) as EdgeOneContext['blob']['put'],
+        delete: jest.fn(), list: jest.fn(async () => ({ blobs: [], directories: [] })),
+      },
+    };
+
+    const response = await createSessionRoute(new Request('https://example.test/api/session', {
+      method: 'POST', body: JSON.stringify({ code: 'wx-code' }),
+    }), context, async () => new Response(JSON.stringify({ openid: 'private-openid' })));
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ ok: false, error: { code: 'BACKEND_UNAVAILABLE', retryable: true } });
+  });
+
   test('creates an opaque session from the runtime environment and ignores client owner fields', async () => {
     const records = new Map<string, unknown>();
     const context: EdgeOneContext = {
