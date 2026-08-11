@@ -63,8 +63,8 @@ export function normalizeApiBaseUrl(value: string | undefined): string {
   } catch {
     throw publicError('CONFIGURATION_ERROR', 'EdgeOne API base URL must be HTTPS.');
   }
-  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.search || parsed.hash) {
-    throw publicError('CONFIGURATION_ERROR', 'EdgeOne API base URL must be HTTPS.');
+  if (parsed.protocol !== 'https:' || parsed.username || parsed.password || parsed.search || parsed.hash || parsed.pathname !== '/') {
+    throw publicError('CONFIGURATION_ERROR', 'EdgeOne API base URL must be an HTTPS origin root.');
   }
   return parsed.toString().replace(/\/+$/, '');
 }

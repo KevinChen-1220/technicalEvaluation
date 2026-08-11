@@ -1,9 +1,9 @@
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, extname, join } from 'node:path';
+import { dirname, extname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { verifyFormalPreflight } from './wechat-release-validation.mjs';
+import { isProductionEdgeOneApiBaseUrl, verifyFormalPreflight } from './wechat-release-validation.mjs';
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const args = parseReleaseArgs(process.argv.slice(2));
@@ -42,25 +42,25 @@ function verifyReleaseCandidate({ profile, checkOnly, disclosureFile: selectedDi
   }
 
   cleanReleaseArtifacts();
-  evidence.push('clean release artifacts: apps/wechat/dist and services/cloudbase/dist removed');
+  evidence.push('clean release artifacts: apps/wechat/dist removed');
 
   const buildEnv = {
     ...process.env,
     TARO_APP_RELEASE_PROFILE: profile,
     TARO_APP_RELEASE_FIXTURE_MODE: 'disabled',
     TARO_APP_RELEASE_DISCLOSURE_FILE: disclosureFile,
-    TARO_APP_CLOUDBASE_ENV_ID: process.env.TARO_APP_CLOUDBASE_ENV_ID
-      ?? (profile === 'formal' ? '' : 'release-development-public-env'),
+    TARO_APP_EDGEONE_API_BASE_URL: process.env.TARO_APP_EDGEONE_API_BASE_URL
+      ?? (profile === 'formal' ? '' : 'https://release-development.edgeone.run'),
   };
 
   const commands = [
     ['npm', ['run', 'test', '--', '--runInBand']],
     ['npm', ['run', 'test:wechat', '--', '--runInBand']],
-    ['npm', ['run', 'test:cloudbase', '--', '--runInBand']],
+    ['npm', ['run', 'test:edgeone', '--', '--runInBand']],
     ['npm', ['run', 'typecheck']],
     ['npm', ['run', 'typecheck:wechat']],
-    ['npm', ['run', 'typecheck:cloudbase']],
-    ['npm', ['run', 'build:cloudbase']],
+    ['npm', ['run', 'typecheck:edgeone']],
+    ['npm', ['run', 'build:edgeone']],
     ['npm', ['run', 'build:web']],
     ['npm', ['run', 'verify:web']],
     ['npm', ['run', 'verify:assets']],
@@ -108,7 +108,7 @@ function verifyReleaseCandidate({ profile, checkOnly, disclosureFile: selectedDi
   const hashes = hashArtifacts([
     'apps/wechat/dist/app.json',
     'apps/wechat/dist/app.js',
-    'services/cloudbase/dist/cloudbaserc.json',
+    'services/edgeone/edgeone.json',
   ]);
   writeCandidateEvidence(profile, evidence, hashes);
 
@@ -136,8 +136,8 @@ function verifyStaticReleaseContracts(profile, options = { inspectDist: true }) 
     '.github/ISSUE_TEMPLATE/wechat_production_smoke.yml',
     'apps/wechat/project.config.json',
     'apps/wechat/project.private.config.example.json',
-    'services/cloudbase/deploy/cloudbaserc.json',
-    'services/cloudbase/database/indexes.json',
+    'services/edgeone/edgeone.json',
+    'services/edgeone/cloud-functions/api/session.js',
   ];
   const missing = requiredFiles.filter((file) => !existsSync(join(repoRoot, file)));
   if (missing.length > 0) fail(missing.map((file) => `${file} is required`));
@@ -174,71 +174,23 @@ function verifyStaticReleaseContracts(profile, options = { inspectDist: true }) 
   const absentPages = requiredPages.filter((page) => !sourceConfig.includes(page));
   if (absentPages.length > 0) fail(absentPages.map((page) => `missing route ${page}`));
 
-  const cloudbaserc = JSON.parse(readFileSync(join(repoRoot, 'services/cloudbase/deploy/cloudbaserc.json'), 'utf8'));
-  const rulesDirectory = join(repoRoot, 'services/cloudbase/database/security-rules');
-  const rules = existsSync(rulesDirectory)
-    ? readdirSync(rulesDirectory).filter((name) => name.endsWith('.json'))
-    : [];
-  if (rules.length < 5) fail(['CloudBase per-collection security rules are required']);
-  const functionNames = new Set(cloudbaserc.functions?.map((entry) => entry.name));
-  const requiredFunctions = [
-    'create-generation-job',
-    'get-generation-job',
-    'get-assessment',
-    'update-assessment',
-    'list-assessments',
-    'complete-assessment',
-    'get-user-settings',
-    'update-user-settings',
-    'create-report',
-    'generation-worker',
-    'retention-cleanup',
-  ];
-  const absentFunctions = requiredFunctions.filter((name) => !functionNames.has(name));
-  if (absentFunctions.length > 0) fail(absentFunctions.map((name) => `missing CloudBase function ${name}`));
-  const retention = cloudbaserc.functions.find((entry) => entry.name === 'retention-cleanup');
-  if (!Array.isArray(retention?.triggers) || retention.triggers.every((trigger) => trigger.type !== 'timer')) {
-    fail(['retention-cleanup must include a timer trigger']);
-  }
-  const worker = cloudbaserc.functions.find((entry) => entry.name === 'generation-worker');
-  const workerTimer = worker?.triggers?.find((trigger) => trigger.type === 'timer');
-  if (workerTimer?.config !== '0 */1 * * * * *') {
-    fail(['generation-worker must include the controlled one-minute timer trigger']);
-  }
-  const inputModerationConfig = JSON.parse(readFileSync(join(repoRoot, 'services/cloudbase/functions/create-generation-job/config.json'), 'utf8'));
-  if (!inputModerationConfig.permissions?.openapi?.includes('security.msgSecCheck')) {
-    fail(['create-generation-job must declare the WeChat security.msgSecCheck capability']);
-  }
-  const invokeRules = JSON.parse(readFileSync(join(repoRoot, 'services/cloudbase/database/function-invoke-rules.json'), 'utf8'));
-  if (invokeRules['generation-worker']?.invoke !== false && invokeRules['*']?.invoke !== false) {
-    fail(['generation-worker must remain denied to client invocation']);
-  }
+  verifyNoLegacyClientConfiguration(options.inspectDist);
 
-  if (options.inspectDist) {
-    for (const entry of cloudbaserc.functions) {
-      const bundlePath = join(repoRoot, 'services/cloudbase/dist', entry.name, 'index.js');
-      const packagePath = join(repoRoot, 'services/cloudbase/functions', entry.name, 'package.json');
-      if (!existsSync(bundlePath) || !existsSync(packagePath)) continue;
-      const bundle = readFileSync(bundlePath, 'utf8');
-      const functionPackage = JSON.parse(readFileSync(packagePath, 'utf8'));
-      if (bundle.includes('require("wx-server-sdk")') && functionPackage.dependencies?.['wx-server-sdk'] !== '4.0.2') {
-        fail([`${entry.name} must declare pinned wx-server-sdk@4.0.2`]);
-      }
-    }
-  }
+  const edgeone = JSON.parse(readFileSync(join(repoRoot, 'services/edgeone/edgeone.json'), 'utf8'));
+  if (edgeone.cloudFunctions?.nodejs?.maxDuration !== 120) fail(['EdgeOne Node Functions must allow the 120-second generation budget']);
+  const requiredFunctions = ['health.js', 'session.js', 'generation.js', 'settings.js', 'reports.js', 'assessments/[[path]].js'];
+  const absentFunctions = requiredFunctions.filter((file) => !existsSync(join(repoRoot, 'services/edgeone/cloud-functions/api', file)));
+  if (absentFunctions.length > 0) fail(absentFunctions.map((file) => `missing EdgeOne function ${file}`));
 
   if (profile === 'formal') {
-    const envId = process.env.TARO_APP_CLOUDBASE_ENV_ID?.trim() ?? '';
-    if (envId.length === 0 || /(?:dev|test|placeholder|example|待配置)/i.test(envId)) {
-      fail(['formal profile requires a production CloudBase environment id']);
-    }
+    if (!isProductionEdgeOneApiBaseUrl(process.env.TARO_APP_EDGEONE_API_BASE_URL)) fail(['formal profile requires a production HTTPS EdgeOne API origin root']);
   }
 
   if (options.inspectDist) verifyNoFixtureInDistIfPresent();
 }
 
 function cleanReleaseArtifacts() {
-  for (const path of ['apps/wechat/dist', 'services/cloudbase/dist']) {
+  for (const path of ['apps/wechat/dist']) {
     rmSync(join(repoRoot, path), { recursive: true, force: true });
   }
 }
@@ -252,6 +204,21 @@ function verifyNoFixtureInDistIfPresent() {
   if (/SKILLSCOPE_RELEASE_FIXTURE_MODE|fixture-assessment-|fixture-job-|Release fixture question/i.test(packagedText)) {
     fail(['dist contains deterministic release fixture code']);
   }
+}
+
+function verifyNoLegacyClientConfiguration(inspectDist) {
+  const paths = [join(repoRoot, 'apps/wechat/src'), join(repoRoot, 'apps/wechat/config')];
+  if (inspectDist && existsSync(join(repoRoot, 'apps/wechat/dist'))) paths.push(join(repoRoot, 'apps/wechat/dist'));
+  const forbidden = [
+    /TARO_APP_CLOUDBASE_ENV_ID/,
+    /Taro\.cloud\.callFunction/,
+    /(?:LLM_API_KEY|LLM_BASE_URL|LLM_MODEL|WECHAT_APP_SECRET|SESSION_HMAC_KEY|OWNER_HMAC_KEY|OPENID_ENCRYPTION_KEY)/,
+  ];
+  const findings = paths.flatMap((directory) => readableFiles(directory).flatMap((path) => {
+    const source = readFileSync(path, 'utf8');
+    return forbidden.filter((pattern) => pattern.test(source)).map((pattern) => `${relative(repoRoot, path)} contains forbidden client configuration ${pattern}`);
+  }));
+  if (findings.length > 0) fail(findings);
 }
 
 function writeCandidateEvidence(profile, commandEvidence, hashes) {
@@ -273,7 +240,7 @@ function writeCandidateEvidence(profile, commandEvidence, hashes) {
     '',
     '## External Blockers',
     '',
-    '- 仍需真实 WeChat AppID、登录态、上传私钥、CloudBase 环境和真机预览结果。',
+    '- 仍需真实 WeChat AppID、登录态、上传私钥、EdgeOne HTTPS 域名和真机预览结果。',
     '- 当前证据只覆盖本机可执行验证，不声明微信审核或真机通过。',
     '',
   ];

@@ -12,6 +12,7 @@ await rm(outputRoot, { recursive: true, force: true });
 
 await build({
   entryPoints: entries,
+  absWorkingDir: serviceRoot,
   outdir: outputRoot,
   outbase: sourceRoot,
   bundle: true,

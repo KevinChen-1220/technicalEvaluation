@@ -1,4 +1,6 @@
 import { createCloudRuntime } from '../src/services/cloudRuntime';
+import { createEdgeOneRuntime } from '../src/services/edgeOneRuntime';
+import { createSessionClient } from '../src/services/sessionClient';
 
 jest.mock('@tarojs/taro', () => ({
   __esModule: true,
@@ -30,8 +32,8 @@ describe('Mini Program EdgeOne runtime', () => {
     }));
   });
 
-  test.each([undefined, '', 'http://api.example.edgeone.run', 'not a url'])(
-    'rejects an absent or non-HTTPS API base URL: %p',
+  test.each([undefined, '', 'http://api.example.edgeone.run', 'https://api.example.edgeone.run/api', 'https://api.example.edgeone.run/nested', 'not a url'])(
+    'rejects an absent, non-HTTPS, or non-origin API base URL: %p',
     (apiBaseUrl) => {
       const runtime = createCloudRuntime({
         apiBaseUrl,
@@ -78,6 +80,49 @@ describe('Mini Program EdgeOne runtime', () => {
     expect(request).toHaveBeenCalledTimes(2);
   });
 
+  test('coalesces concurrent 401 refreshes into one wx login and session exchange', async () => {
+    const values = new Map<string, unknown>([
+      ['skill-scope:edgeone-session', { token: 'old-token', expiresAt: '2026-08-20T00:00:00.000Z' }],
+    ]);
+    let releaseLogin: ((value: { code: string }) => void) | undefined;
+    const login = jest.fn(() => new Promise<{ code: string }>((resolve) => { releaseLogin = resolve; }));
+    const exchange = jest.fn(async () => ({ token: 'new-token', expiresAt: '2026-08-20T00:00:00.000Z' }));
+    const session = createSessionClient({
+      storage: {
+        get: <T>(key: string) => values.get(key) as T | undefined,
+        set: <T>(key: string, value: T) => { values.set(key, value); },
+        remove: (key: string) => { values.delete(key); },
+      },
+      login,
+      exchange,
+      now: () => new Date('2026-08-11T00:00:00.000Z'),
+    });
+    const unauthorized: Array<(value: { statusCode: number; data: unknown }) => void> = [];
+    const request = jest.fn(async (input: { header?: Record<string, string> }) => {
+      if (input.header?.Authorization === 'Bearer old-token') {
+        return await new Promise<{ statusCode: number; data: unknown }>((resolve) => unauthorized.push(resolve));
+      }
+      return { statusCode: 200, data: { ok: true, data: { type: 'listed' } } };
+    });
+    const runtime = createEdgeOneRuntime({ apiBaseUrl: 'https://api.example.edgeone.run', request, session });
+
+    const both = Promise.all([
+      runtime.request({ path: '/api/assessments', method: 'GET', timeoutMs: 15_000 }),
+      runtime.request({ path: '/api/assessments', method: 'GET', timeoutMs: 15_000 }),
+    ]);
+    await waitFor(() => unauthorized.length === 2);
+    unauthorized.forEach((resolve) => resolve({
+      statusCode: 401, data: { ok: false, error: { code: 'UNAUTHORIZED', retryable: false } },
+    }));
+    await waitFor(() => login.mock.calls.length === 1);
+    expect(login).toHaveBeenCalledTimes(1);
+    releaseLogin?.({ code: 'fresh-wechat-code' });
+
+    await expect(both).resolves.toEqual([{ type: 'listed' }, { type: 'listed' }]);
+    expect(exchange).toHaveBeenCalledTimes(1);
+    expect(exchange).toHaveBeenCalledWith('fresh-wechat-code');
+  });
+
   test('marks startup offline when EdgeOne is unavailable without preventing a later local UI render', async () => {
     const runtime = createCloudRuntime({
       apiBaseUrl: 'https://api.example.edgeone.run',
@@ -100,3 +145,11 @@ describe('Mini Program EdgeOne runtime', () => {
       .rejects.toMatchObject({ errorCode: 'INVALID_RESPONSE' });
   });
 });
+
+async function waitFor(condition: () => boolean): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (condition()) return;
+    await Promise.resolve();
+  }
+  throw new Error('Timed out waiting for asynchronous test condition.');
+}

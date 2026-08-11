@@ -15,7 +15,7 @@ describe('WeChat EdgeOne build configuration', () => {
     jest.resetModules();
   });
 
-  test.each(['', 'http://api.example.edgeone.run', 'not-a-url'])('rejects a non-HTTPS formal API URL: %p', (url) => {
+  test.each(['', 'http://api.example.edgeone.run', 'https://api.example.edgeone.run/api', 'https://api.example.edgeone.run/nested', 'not-a-url'])('rejects a non-origin HTTPS formal API URL: %p', (url) => {
     const directory = mkdtempSync(join(tmpdir(), 'skill-scope-disclosure-'));
     const previousUrl = process.env.TARO_APP_EDGEONE_API_BASE_URL;
     const previousProfile = process.env.TARO_APP_RELEASE_PROFILE;

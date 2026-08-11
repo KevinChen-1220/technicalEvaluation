@@ -40,36 +40,30 @@ export function verifyFormalPreflight({ repoRoot, disclosureFile, environment = 
   });
 
   const findings = [];
-  const envId = environment.TARO_APP_CLOUDBASE_ENV_ID?.trim() ?? '';
-  if (envId.length === 0 || /(?:dev|test|placeholder|example|待配置)/i.test(envId)) {
-    findings.push('formal profile requires a production CloudBase environment id');
+  if (!isProductionEdgeOneApiBaseUrl(environment.TARO_APP_EDGEONE_API_BASE_URL)) {
+    findings.push('formal profile requires a production HTTPS EdgeOne API origin root');
+  }
+  if (isNonEmpty(environment.TARO_APP_CLOUDBASE_ENV_ID)) {
+    findings.push('TARO_APP_CLOUDBASE_ENV_ID is forbidden for formal EdgeOne release');
   }
   if (environment.SKILLSCOPE_ENV !== 'production') findings.push('SKILLSCOPE_ENV must be production');
-  verifyFormalConfigurationValue('CONTENT_SAFETY_URL', environment.CONTENT_SAFETY_URL, findings);
-  verifyFormalConfigurationValue('CONTENT_SAFETY_API_KEY', environment.CONTENT_SAFETY_API_KEY, findings);
-  verifyFormalConfigurationValue('CONTENT_SAFETY_PROVIDER', environment.CONTENT_SAFETY_PROVIDER, findings);
-  if (environment.SKILLSCOPE_ALLOW_UNSAFE_MODERATION === 'true') {
-    findings.push('SKILLSCOPE_ALLOW_UNSAFE_MODERATION cannot be true for formal release');
-  }
-  if (isNonEmpty(environment.CONTENT_SAFETY_URL)) {
-    try {
-      const url = new URL(environment.CONTENT_SAFETY_URL);
-      if (url.protocol !== 'https:' || url.username || url.password) {
-        findings.push('CONTENT_SAFETY_URL must be a credential-free HTTPS URL');
-      }
-    } catch {
-      findings.push('CONTENT_SAFETY_URL must be a valid HTTPS URL');
-    }
-  }
-
-  const moderationConfig = JSON.parse(readFileSync(
-    join(repoRoot, 'services/cloudbase/functions/create-generation-job/config.json'),
-    'utf8',
-  ));
-  if (!moderationConfig.permissions?.openapi?.includes('security.msgSecCheck')) {
-    findings.push('create-generation-job must declare the WeChat security.msgSecCheck capability');
-  }
   if (findings.length > 0) fail(findings);
+}
+
+export function isProductionEdgeOneApiBaseUrl(value) {
+  if (!isNonEmpty(value) || /(?:dev|test|example|invalid|placeholder|localhost|待配置)/i.test(value.trim())) return false;
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === 'https:'
+      && !url.username
+      && !url.password
+      && !url.port
+      && !url.search
+      && !url.hash
+      && url.pathname === '/';
+  } catch {
+    return false;
+  }
 }
 
 function verifyBuiltDisclosure(directory, disclosure, fields) {
@@ -91,11 +85,6 @@ function readableFiles(directory) {
     else if (['.js', '.json', '.wxml', '.wxss', '.map', '.txt'].includes(extname(path))) paths.push(path);
   }
   return paths;
-}
-
-function verifyFormalConfigurationValue(name, value, findings) {
-  if (!isNonEmpty(value)) findings.push(`${name} is required`);
-  else if (isPlaceholder(value)) findings.push(`${name} cannot be a placeholder`);
 }
 
 function isNonEmpty(value) {

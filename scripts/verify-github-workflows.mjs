@@ -23,11 +23,11 @@ const releaseCheckStepAllowlist = [
   { name: 'Verify GitHub workflow YAML', run: 'npm run verify:github-workflows' },
   { name: 'Run shared tests', run: 'npm test -- --runInBand' },
   { name: 'Run WeChat tests', run: 'npm run test:wechat -- --runInBand' },
-  { name: 'Run CloudBase tests', run: 'npm run test:cloudbase -- --runInBand' },
+  { name: 'Run EdgeOne tests', run: 'npm run test:edgeone -- --runInBand' },
   { name: 'Check root types', run: 'npm run typecheck' },
   { name: 'Check WeChat types', run: 'npm run typecheck:wechat' },
-  { name: 'Check CloudBase types', run: 'npm run typecheck:cloudbase' },
-  { name: 'Build CloudBase artifacts', run: 'npm run build:cloudbase' },
+  { name: 'Check EdgeOne types', run: 'npm run typecheck:edgeone' },
+  { name: 'Build EdgeOne artifacts', run: 'npm run build:edgeone' },
   { name: 'Build web app', run: 'npm run build:web' },
   { name: 'Verify web metadata', run: 'npm run verify:web' },
   { name: 'Verify native brand assets', run: 'npm run verify:assets' },
@@ -37,7 +37,7 @@ const releaseCheckStepAllowlist = [
     env: {
       TARO_APP_RELEASE_PROFILE: 'development',
       TARO_APP_RELEASE_FIXTURE_MODE: 'disabled',
-      TARO_APP_CLOUDBASE_ENV_ID: 'release-development-public-env',
+      TARO_APP_EDGEONE_API_BASE_URL: 'https://release-development.edgeone.run',
       TARO_APP_RELEASE_DISCLOSURE_FILE: 'docs/wechat/release-disclosure.development.json',
     },
   },
@@ -78,12 +78,8 @@ const uploadStepAllowlist = [
     run: 'npm run verify:wechat-release:formal -- --disclosure-file "$DISCLOSURE_FILE"',
     env: {
       DISCLOSURE_FILE: '${{ inputs.disclosure_file }}',
-      TARO_APP_CLOUDBASE_ENV_ID: '${{ secrets.TARO_APP_CLOUDBASE_ENV_ID }}',
+      TARO_APP_EDGEONE_API_BASE_URL: '${{ secrets.TARO_APP_EDGEONE_API_BASE_URL }}',
       SKILLSCOPE_ENV: 'production',
-      SKILLSCOPE_ALLOW_UNSAFE_MODERATION: 'false',
-      CONTENT_SAFETY_URL: '${{ secrets.CONTENT_SAFETY_URL }}',
-      CONTENT_SAFETY_API_KEY: '${{ secrets.CONTENT_SAFETY_API_KEY }}',
-      CONTENT_SAFETY_PROVIDER: '${{ secrets.CONTENT_SAFETY_PROVIDER }}',
     },
   },
   {
@@ -105,7 +101,7 @@ const releasePaths = [
   'docs/wechat/**',
   'packages/**',
   'scripts/**',
-  'services/cloudbase/**',
+  'services/edgeone/**',
   'package.json',
   'package-lock.json',
 ];
@@ -287,10 +283,7 @@ function verifyWeChatReleaseWorkflow() {
       name: 'Run formal release verification',
       command: 'npm run verify:wechat-release:formal -- --disclosure-file "$DISCLOSURE_FILE"',
       bindings: [
-        ['TARO_APP_CLOUDBASE_ENV_ID', 'TARO_APP_CLOUDBASE_ENV_ID'],
-        ['CONTENT_SAFETY_URL', 'CONTENT_SAFETY_URL'],
-        ['CONTENT_SAFETY_API_KEY', 'CONTENT_SAFETY_API_KEY'],
-        ['CONTENT_SAFETY_PROVIDER', 'CONTENT_SAFETY_PROVIDER'],
+        ['TARO_APP_EDGEONE_API_BASE_URL', 'TARO_APP_EDGEONE_API_BASE_URL'],
       ],
     },
     {

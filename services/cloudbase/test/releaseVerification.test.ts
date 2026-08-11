@@ -24,8 +24,8 @@ describe('WeChat release verification assets', () => {
       'docs/wechat/release-disclosure.development.json',
       'docs/wechat/release-disclosure.production.template.json',
       'docs/wechat/release-manifest.template.json',
-      'apps/wechat/cloudbase.env.development.example',
-      'apps/wechat/cloudbase.env.production.example',
+      'apps/wechat/edgeone.env.development.example',
+      'apps/wechat/edgeone.env.production.example',
       'apps/wechat/project.private.config.example.json',
       'services/cloudbase/env.development.example',
       'services/cloudbase/env.production.example',
@@ -34,7 +34,7 @@ describe('WeChat release verification assets', () => {
     for (const file of requiredFiles) {
       const fullPath = join(repoRoot, file);
       expect(existsSync(fullPath)).toBe(true);
-      expect(readFileSync(fullPath, 'utf8')).toMatch(/SkillScope|技能测评|隐私|CloudBase|待配置/);
+      expect(readFileSync(fullPath, 'utf8')).toMatch(/SkillScope|技能测评|隐私|EdgeOne|待配置/);
     }
   });
 
@@ -451,10 +451,10 @@ describe('WeChat release verification assets', () => {
     },
     {
       name: 'a missing required upload secret hidden in a comment',
-      expected: /missing required upload secret.*CONTENT_SAFETY_PROVIDER/i,
+      expected: /missing required upload secret.*TARO_APP_EDGEONE_API_BASE_URL/i,
       mutate: (source: string) => source.replace(
-        '          CONTENT_SAFETY_PROVIDER: ${{ secrets.CONTENT_SAFETY_PROVIDER }}',
-        '          # secrets.CONTENT_SAFETY_PROVIDER',
+        '          TARO_APP_EDGEONE_API_BASE_URL: ${{ secrets.TARO_APP_EDGEONE_API_BASE_URL }}',
+        '          # secrets.TARO_APP_EDGEONE_API_BASE_URL',
       ),
     },
     {
@@ -675,12 +675,8 @@ describe('WeChat release verification assets', () => {
       }));
       const environment = {
         ...process.env,
-        TARO_APP_CLOUDBASE_ENV_ID: 'prod-cloudbase-1',
+        TARO_APP_EDGEONE_API_BASE_URL: 'https://api.skillscope.cn',
         SKILLSCOPE_ENV: 'production',
-        CONTENT_SAFETY_URL: 'https://moderation.skillscope.invalid/v1/check',
-        CONTENT_SAFETY_API_KEY: 'formal-test-secret',
-        CONTENT_SAFETY_PROVIDER: 'skillscope-moderation',
-        SKILLSCOPE_ALLOW_UNSAFE_MODERATION: 'false',
       };
       const downgradeCases = [
         ['--file', join(repoRoot, 'docs/wechat/release-disclosure.development.json'), '--mode', 'development'],
@@ -704,7 +700,7 @@ describe('WeChat release verification assets', () => {
     }
   });
 
-  test('formal preflight is an independent script with placeholder gates', () => {
+  test('formal preflight is an independent script with EdgeOne origin-root gates', () => {
     const directory = mkdtempSync(join(tmpdir(), 'skill-scope-formal-preflight-'));
     try {
       const file = join(directory, 'production.json');
@@ -718,40 +714,33 @@ describe('WeChat release verification assets', () => {
         join(repoRoot, 'scripts', 'verify-wechat-formal-preflight.mjs'),
         '--disclosure-file', file,
       ];
-      const missingSafety = spawnSync(process.execPath, baseArgs, {
+      const valid = spawnSync(process.execPath, baseArgs, {
         cwd: repoRoot, encoding: 'utf8',
         env: {
           ...process.env,
-          TARO_APP_CLOUDBASE_ENV_ID: 'prod-cloudbase-1',
+          TARO_APP_EDGEONE_API_BASE_URL: 'https://api.skillscope.cn',
           SKILLSCOPE_ENV: 'production',
-          CONTENT_SAFETY_URL: '',
-          CONTENT_SAFETY_API_KEY: '',
-          CONTENT_SAFETY_PROVIDER: '',
-          SKILLSCOPE_ALLOW_UNSAFE_MODERATION: 'false',
         },
       });
-      expect(missingSafety.status).not.toBe(0);
-      expect(`${missingSafety.stdout}${missingSafety.stderr}`).toMatch(/CONTENT_SAFETY_URL|CONTENT_SAFETY_API_KEY/);
+      expect(valid.status).toBe(0);
 
       for (const [name, value, expected] of [
-        ['CONTENT_SAFETY_URL', 'https://example.com/check', /CONTENT_SAFETY_URL.*placeholder/i],
-        ['CONTENT_SAFETY_API_KEY', 'changeme', /CONTENT_SAFETY_API_KEY.*placeholder/i],
-        ['CONTENT_SAFETY_PROVIDER', 'TBD', /CONTENT_SAFETY_PROVIDER.*placeholder/i],
+        ['TARO_APP_EDGEONE_API_BASE_URL', 'http://api.skillscope.cn', /HTTPS EdgeOne API origin root/i],
+        ['TARO_APP_EDGEONE_API_BASE_URL', 'https://api.skillscope.cn/api', /HTTPS EdgeOne API origin root/i],
+        ['TARO_APP_EDGEONE_API_BASE_URL', 'https://api.example.edgeone.run', /HTTPS EdgeOne API origin root/i],
+        ['TARO_APP_CLOUDBASE_ENV_ID', 'legacy-cloudbase', /CLOUDBASE.*forbidden/i],
       ] as const) {
-        const placeholder = spawnSync(process.execPath, baseArgs, {
+        const invalid = spawnSync(process.execPath, baseArgs, {
           cwd: repoRoot, encoding: 'utf8',
           env: {
             ...process.env,
-            TARO_APP_CLOUDBASE_ENV_ID: 'prod-cloudbase-1',
+            TARO_APP_EDGEONE_API_BASE_URL: 'https://api.skillscope.cn',
             SKILLSCOPE_ENV: 'production',
-            CONTENT_SAFETY_URL: 'https://moderation.skillscope.invalid/v1/check',
-            CONTENT_SAFETY_API_KEY: 'formal-test-secret',
-            CONTENT_SAFETY_PROVIDER: 'skillscope-moderation',
             [name]: value,
           },
         });
-        expect(placeholder.status).not.toBe(0);
-        expect(`${placeholder.stdout}${placeholder.stderr}`).toMatch(expected);
+        expect(invalid.status).not.toBe(0);
+        expect(`${invalid.stdout}${invalid.stderr}`).toMatch(expected);
       }
     } finally {
       rmSync(directory, { recursive: true, force: true });
