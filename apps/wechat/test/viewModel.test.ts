@@ -1,7 +1,6 @@
 import {
   createGenerationInput,
   createMiniProgramShellState,
-  normalizeQuestionCount,
   validateGeneratedAssessment,
 } from '../src/shell/viewModel';
 
@@ -19,18 +18,12 @@ describe('Mini Program shell view model', () => {
     expect(state.settings.disclosure).toContain('隐私');
   });
 
-  it('creates every new generation request with fifty questions', () => {
-    expect(createGenerationInput({ topic: 'TypeScript' })).toEqual({
+  it('creates a count-free generation DTO', () => {
+    expect(createGenerationInput({ topic: 'TypeScript', notes: 'Focus on generics.', clientRequestId: 'request-1' })).toEqual({
       topic: 'TypeScript',
-      questionCount: 50,
+      notes: 'Focus on generics.',
+      clientRequestId: 'request-1',
     });
-  });
-
-  it('normalizes legacy persisted question counts to fifty for a new request', () => {
-    expect(normalizeQuestionCount(50)).toBe(50);
-    expect(normalizeQuestionCount(100)).toBe(50);
-    expect(normalizeQuestionCount(75)).toBe(50);
-    expect(normalizeQuestionCount(undefined)).toBe(50);
   });
 
   it('does not expose client provider configuration in public state', () => {

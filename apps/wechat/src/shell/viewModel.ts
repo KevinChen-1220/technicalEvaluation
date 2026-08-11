@@ -1,4 +1,4 @@
-import { ASSESSMENT_QUESTION_COUNT, validateAssessmentPaper } from '@dynamic-assessment/assessment-core';
+import { validateAssessmentPaper, type NewAssessmentRequest } from '@dynamic-assessment/assessment-core';
 
 export type MiniProgramTabId = 'generate' | 'history' | 'settings';
 
@@ -50,20 +50,11 @@ export function createMiniProgramShellState(): MiniProgramShellState {
   return shellState;
 }
 
-export function normalizeQuestionCount(value: unknown): 50 | 100 {
-  void value;
-  return ASSESSMENT_QUESTION_COUNT;
-}
-
-export function createGenerationInput(input: { topic: string; notes?: string }): {
-  topic: string;
-  notes?: string;
-  questionCount: typeof ASSESSMENT_QUESTION_COUNT;
-} {
+export function createGenerationInput(input: NewAssessmentRequest): NewAssessmentRequest {
   return {
     topic: input.topic,
     ...(input.notes === undefined ? {} : { notes: input.notes }),
-    questionCount: ASSESSMENT_QUESTION_COUNT,
+    ...(input.clientRequestId === undefined ? {} : { clientRequestId: input.clientRequestId }),
   };
 }
 

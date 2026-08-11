@@ -1,5 +1,12 @@
 import { GenerationController } from '../src/generation/controller';
+import { createCloudClient } from '../src/services/cloud';
 import type { CachedAssessment } from '../src/storage/assessmentCache';
+import { createGenerationIntentStore } from '../src/storage/generationIntent';
+
+jest.mock('@tarojs/taro', () => ({
+  __esModule: true,
+  default: { cloud: { callFunction: jest.fn() } },
+}));
 
 const request = { topic: 'TypeScript', notes: 'Generics' };
 
@@ -178,6 +185,40 @@ describe('GenerationController', () => {
     expect(controller.getState().status).toBe('completed');
   });
 
+  test('normalizes a legacy 100-question intent before resuming its cloud request', async () => {
+    const storage = memoryIntentStorage();
+    storage.set('skill-scope:generation-intent', {
+      clientRequestId: 'legacy-request-1',
+      input: { topic: 'TypeScript', notes: 'Legacy intent', questionCount: 100 },
+    });
+    const calls: Array<{ name: string; data: Record<string, unknown> }> = [];
+    const cloudClient = createCloudClient(async (call) => {
+      calls.push(call);
+      if (call.name === 'create-generation-job') return { result: { jobId: 'job-1', status: 'queued' } };
+      return { result: { jobId: 'job-1', status: 'failed', progress: 100, retryable: false, errorCode: 'INVALID_REQUEST' } };
+    });
+    const intentStore = createGenerationIntentStore(storage);
+    const controller = new GenerationController({
+      createJob: cloudClient.createGenerationJob,
+      getJob: (jobId) => cloudClient.getGenerationJob({ jobId }),
+      getAssessment: async () => assessment,
+      cacheAssessment: () => undefined,
+      navigate: async () => undefined,
+      sleep: async () => undefined,
+    }, { intentStore });
+
+    expect(intentStore.load()).toEqual({
+      clientRequestId: 'legacy-request-1',
+      input: { topic: 'TypeScript', notes: 'Legacy intent' },
+    });
+    await expect(controller.resumePending()).resolves.toBe(true);
+
+    expect(calls[0]).toEqual({
+      name: 'create-generation-job',
+      data: { topic: 'TypeScript', notes: 'Legacy intent', clientRequestId: 'legacy-request-1' },
+    });
+  });
+
   test('fails immediately when a completed job has no persisted assessment id', async () => {
     const getJob = jest.fn()
       .mockResolvedValueOnce({ jobId: 'job-1', status: 'completed', progress: 100, retryable: false })
@@ -254,5 +295,13 @@ function memoryIntentStore() {
     load: () => value,
     save: (next: unknown) => { value = next; },
     clear: () => { value = undefined; },
+  };
+}
+
+function memoryIntentStorage() {
+  const values = new Map<string, unknown>();
+  return {
+    get: <T>(key: string) => values.get(key) as T | undefined,
+    set: <T>(key: string, value: T) => { values.set(key, value); },
   };
 }
