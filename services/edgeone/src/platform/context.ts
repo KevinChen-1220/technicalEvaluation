@@ -19,7 +19,7 @@ interface EdgeOneBlobStore {
   }>;
 }
 
-export function createEdgeOneContext(request: Request, env: EdgeOneEnvironment = process.env): EdgeOneContext {
+export function createEdgeOneContext(request: Request, env: EdgeOneEnvironment): EdgeOneContext {
   return {
     request,
     env,

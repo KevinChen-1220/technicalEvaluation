@@ -1,4 +1,4 @@
-import { execFileSync } from 'node:child_process';
+import { execFileSync, execSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -12,17 +12,30 @@ describe('EdgeOne deployment artifacts', () => {
     });
 
     const config = JSON.parse(readFileSync(join(serviceRoot, 'edgeone.json'), 'utf8')) as {
-      cloudFunctions?: { maxDuration?: number };
+      cloudFunctions?: { nodejs?: { maxDuration?: number } };
       headers?: Array<{ source?: string; headers?: Array<{ key?: string; value?: string }> }>;
     };
 
-    expect(config.cloudFunctions?.maxDuration).toBe(120);
+    expect(config.cloudFunctions?.nodejs?.maxDuration).toBe(120);
     expect(config.headers).toEqual(expect.arrayContaining([
       expect.objectContaining({
         source: '/api/*',
         headers: [{ key: 'Cache-Control', value: 'no-store' }],
       }),
     ]));
-    expect(existsSync(join(serviceRoot, 'dist', 'cloud-functions', 'api', 'health.js'))).toBe(true);
+    expect(existsSync(join(serviceRoot, 'cloud-functions', 'api', 'health.js'))).toBe(true);
+  });
+
+  test('packages deployable functions while excluding TypeScript tests', () => {
+    const output = execSync('npm pack --dry-run --json --workspace @dynamic-assessment/edgeone', {
+      cwd: repositoryRoot,
+      encoding: 'utf8',
+    });
+    const packed = JSON.parse(output) as Array<{ files: Array<{ path: string }> }>;
+    const paths = packed[0]?.files.map((file) => file.path) ?? [];
+
+    expect(paths).toContain('cloud-functions/api/health.js');
+    expect(paths).not.toContain('test/buildArtifacts.test.ts');
+    expect(paths.every((path) => !path.startsWith('node-functions/'))).toBe(true);
   });
 });

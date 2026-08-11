@@ -5,10 +5,10 @@ import { build } from 'esbuild';
 
 const serviceRoot = join(dirname(fileURLToPath(import.meta.url)), '..');
 const sourceRoot = join(serviceRoot, 'node-functions');
-const outputRoot = join(serviceRoot, 'dist', 'cloud-functions');
+const outputRoot = join(serviceRoot, 'cloud-functions');
 const entries = await findEntries(sourceRoot);
 
-await rm(join(serviceRoot, 'dist'), { recursive: true, force: true });
+await rm(outputRoot, { recursive: true, force: true });
 
 await build({
   entryPoints: entries,
