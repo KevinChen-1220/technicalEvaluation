@@ -1,0 +1,16 @@
+{
+  "name": "@dynamic-assessment/edgeone",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "test": "jest --config ../../jest.config.js --runInBand services/edgeone/test",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "node scripts/build.mjs"
+  },
+  "dependencies": {
+    "@edgeone/pages-blob": "^0.0.16"
+  },
+  "devDependencies": {
+    "esbuild": "0.21.5"
+  }
+}
