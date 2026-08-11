@@ -2,6 +2,14 @@ export type QuestionType = 'single_choice' | 'multiple_choice' | 'true_false';
 
 export type QuestionDifficulty = 'easy' | 'medium' | 'hard';
 
+export const ASSESSMENT_QUESTION_COUNT = 50 as const;
+
+export type NewAssessmentRequest = {
+  topic: string;
+  notes?: string;
+  clientRequestId?: string;
+};
+
 export type AssessmentOption = {
   id: string;
   text: string;

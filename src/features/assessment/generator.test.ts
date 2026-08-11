@@ -1,5 +1,6 @@
 import { samplePaper } from './samplePaper';
 import type { AssessmentPaper } from './types';
+import { ASSESSMENT_QUESTION_COUNT } from '@dynamic-assessment/assessment-core';
 import { buildAssessmentPrompt, extractJsonObject, generateAssessment } from './generator';
 import type { ModelConfig } from '../config/modelConfig';
 
@@ -26,12 +27,12 @@ describe('buildAssessmentPrompt', () => {
   it('asks for strict JSON, exact question count, supported types, answers, explanations, and scoring levels', () => {
     const prompt = buildAssessmentPrompt({
       topic: 'SQL optimization',
-      questionCount: 100,
       notes: 'Focus on indexing and query plans.',
     });
 
     expect(prompt).toContain('SQL optimization');
-    expect(prompt).toContain('exactly 100 questions');
+    expect(ASSESSMENT_QUESTION_COUNT).toBe(50);
+    expect(prompt).toContain('exactly 50 questions');
     expect(prompt).toContain('single_choice');
     expect(prompt).toContain('multiple_choice');
     expect(prompt).toContain('true_false');
@@ -54,17 +55,14 @@ describe('buildAssessmentPrompt', () => {
   it('uses the topic as the sole language source for Chinese, English, or other-language input', () => {
     const chinesePrompt = buildAssessmentPrompt({
       topic: 'iOS 开发能力',
-      questionCount: 50,
       notes: 'Focus on concurrency and memory management.',
     });
     const englishPrompt = buildAssessmentPrompt({
       topic: 'iOS development capability',
-      questionCount: 50,
       notes: '重点考察并发与内存管理。',
     });
     const spanishPrompt = buildAssessmentPrompt({
       topic: 'Arquitectura de backend',
-      questionCount: 50,
       notes: '重点考察可扩展性。',
     });
 
@@ -122,7 +120,7 @@ describe('generateAssessment', () => {
     const completionFn = jest.fn().mockResolvedValue(JSON.stringify(validGeneratedPaper));
 
     await expect(
-      generateAssessment({ topic: 'iOS', questionCount: 50, notes: 'Practical questions.' }, config, completionFn),
+      generateAssessment({ topic: 'iOS', notes: 'Practical questions.' }, config, completionFn),
     ).resolves.toEqual(validGeneratedPaper);
 
     expect(completionFn).toHaveBeenCalledWith(config, [
@@ -147,7 +145,7 @@ describe('generateAssessment', () => {
     };
 
     const result = await generateAssessment(
-      { topic: 'iOS', questionCount: 50 },
+      { topic: 'iOS' },
       config,
       jest.fn().mockResolvedValue(JSON.stringify(generatedPaper)),
     );
@@ -169,7 +167,7 @@ describe('generateAssessment', () => {
     };
 
     await expect(generateAssessment(
-      { topic: `根据 ${suppliedUri} 生成资料分析题`, questionCount: 50 },
+      { topic: `根据 ${suppliedUri} 生成资料分析题` },
       config,
       jest.fn().mockResolvedValue(JSON.stringify(generatedPaper)),
     )).resolves.toEqual(generatedPaper);
@@ -193,7 +191,7 @@ describe('generateAssessment', () => {
     };
 
     await expect(generateAssessment(
-      { topic, questionCount: 50 },
+      { topic },
       config,
       jest.fn().mockResolvedValue(JSON.stringify(generatedPaper)),
     )).resolves.toEqual(generatedPaper);
@@ -215,7 +213,7 @@ describe('generateAssessment', () => {
       .mockResolvedValueOnce(JSON.stringify(validGeneratedPaper));
 
     await expect(generateAssessment(
-      { topic: '资料分析', questionCount: 50 },
+      { topic: '资料分析' },
       config,
       completionFn,
     )).resolves.toEqual(validGeneratedPaper);
@@ -242,7 +240,7 @@ describe('generateAssessment', () => {
       .mockResolvedValueOnce(JSON.stringify(validGeneratedPaper));
 
     await expect(generateAssessment(
-      { topic: '参考https://example.com/图表.png生成题目', questionCount: 50 },
+      { topic: '参考https://example.com/图表.png生成题目' },
       config,
       completionFn,
     )).resolves.toEqual(validGeneratedPaper);
@@ -253,7 +251,7 @@ describe('generateAssessment', () => {
   it('throws readable validation errors when generated JSON is invalid', async () => {
     const completionFn = jest.fn().mockResolvedValue(JSON.stringify({ ...validGeneratedPaper, questions: [] }));
 
-    await expect(generateAssessment({ topic: 'iOS', questionCount: 50 }, config, completionFn)).rejects.toThrow(
+    await expect(generateAssessment({ topic: 'iOS' }, config, completionFn)).rejects.toThrow(
       'Generated assessment is invalid: Expected 50 questions but received 0.',
     );
   });
@@ -263,7 +261,7 @@ describe('generateAssessment', () => {
       .mockResolvedValueOnce('{broken')
       .mockResolvedValueOnce(JSON.stringify(validGeneratedPaper));
 
-    await expect(generateAssessment({ topic: 'iOS', questionCount: 50 }, config, completionFn)).resolves.toEqual(
+    await expect(generateAssessment({ topic: 'iOS' }, config, completionFn)).resolves.toEqual(
       validGeneratedPaper,
     );
 
@@ -278,7 +276,7 @@ describe('generateAssessment', () => {
       .mockResolvedValueOnce(JSON.stringify({ ...validGeneratedPaper, questions: [] }))
       .mockResolvedValueOnce(JSON.stringify(validGeneratedPaper));
 
-    await expect(generateAssessment({ topic: 'iOS', questionCount: 50 }, config, completionFn)).resolves.toEqual(
+    await expect(generateAssessment({ topic: 'iOS' }, config, completionFn)).resolves.toEqual(
       validGeneratedPaper,
     );
 
@@ -303,7 +301,7 @@ describe('generateAssessment', () => {
       .mockResolvedValueOnce(JSON.stringify(invalidPaper))
       .mockResolvedValueOnce(JSON.stringify(validGeneratedPaper));
 
-    await expect(generateAssessment({ topic: 'iOS', questionCount: 50 }, config, completionFn)).resolves.toEqual(
+    await expect(generateAssessment({ topic: 'iOS' }, config, completionFn)).resolves.toEqual(
       validGeneratedPaper,
     );
 
@@ -319,7 +317,7 @@ describe('generateAssessment', () => {
       .mockResolvedValueOnce(JSON.stringify({ ...validGeneratedPaper, questions: [null] }))
       .mockResolvedValueOnce(JSON.stringify(validGeneratedPaper));
 
-    await expect(generateAssessment({ topic: 'iOS', questionCount: 50 }, config, completionFn)).resolves.toEqual(
+    await expect(generateAssessment({ topic: 'iOS' }, config, completionFn)).resolves.toEqual(
       validGeneratedPaper,
     );
 
@@ -331,7 +329,7 @@ describe('generateAssessment', () => {
       .mockResolvedValueOnce('<html><body>Login required</body></html>')
       .mockResolvedValueOnce(JSON.stringify(validGeneratedPaper));
 
-    await expect(generateAssessment({ topic: 'iOS', questionCount: 50 }, config, completionFn)).rejects.toThrow(
+    await expect(generateAssessment({ topic: 'iOS' }, config, completionFn)).rejects.toThrow(
       'Model response looked like HTML/XML instead of assessment JSON. Check the provider endpoint and model response format.',
     );
 

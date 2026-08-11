@@ -65,7 +65,6 @@ function AppContent() {
   const [config, setConfig] = useState<ModelConfig>(emptyConfig);
   const [topic, setTopic] = useState(defaultAssessmentBrief.topic);
   const [notes, setNotes] = useState(defaultAssessmentBrief.notes);
-  const [questionCount, setQuestionCount] = useState<50 | 100>(50);
   const [paper, setPaper] = useState<AssessmentPaper | null>(null);
   const [answers, setAnswers] = useState<Record<string, string[]>>({});
   const [result, setResult] = useState<AssessmentResult | null>(null);
@@ -142,11 +141,11 @@ function AppContent() {
     setIsGenerating(true);
     setGenerationError(null);
     try {
-      const generated = await generateAssessment({ topic, questionCount, notes }, config);
+      const generated = await generateAssessment({ topic, notes }, config);
       await beginAssessment(generated);
     } catch (error) {
       const message = error instanceof Error ? localizeErrorMessage(error.message) : zhCN.alerts.unknownGenerationError;
-      setGenerationError(questionCount === 100 ? `${message} ${zhCN.alerts.truncatedHint}` : message);
+      setGenerationError(message);
     } finally {
       setIsGenerating(false);
     }
@@ -284,10 +283,6 @@ function AppContent() {
                   </View>
                   <Input label={zhCN.assess.topic} value={topic} onChangeText={setTopic} placeholder={zhCN.assess.topicPlaceholder} />
                   <Input label={zhCN.assess.notes} value={notes} onChangeText={setNotes} placeholder={zhCN.assess.notesPlaceholder} multiline />
-                  <View style={styles.segment}>
-                    <Chip label="50" active={questionCount === 50} onPress={() => setQuestionCount(50)} />
-                    <Chip label="100" active={questionCount === 100} onPress={() => setQuestionCount(100)} />
-                  </View>
                   {generationError ? <Text style={styles.error}>{generationError}</Text> : null}
                   <Button
                     label={isGenerating ? zhCN.assess.generating : zhCN.assess.generate}
@@ -501,14 +496,6 @@ function Button({
   );
 }
 
-function Chip({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
-  return (
-    <Pressable onPress={onPress} style={[styles.chip, active ? styles.activeChip : null]}>
-      <Text style={[styles.chipText, active ? styles.activeChipText : null]}>{label}</Text>
-    </Pressable>
-  );
-}
-
 function Option({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
   return (
     <Pressable onPress={onPress} style={[styles.option, active ? styles.activeOption : null]}>
@@ -559,7 +546,6 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.sm },
   configStatus: { alignItems: 'flex-start', flexDirection: 'row', flexWrap: 'wrap', gap: theme.spacing.md, justifyContent: 'space-between' },
   configText: { flex: 1, minWidth: 220 },
-  segment: { alignSelf: 'flex-start', backgroundColor: theme.colors.accentSoft, borderRadius: theme.radius.pill, flexDirection: 'row', gap: theme.spacing.xs, padding: 4 },
   kicker: { color: theme.colors.accent, fontSize: 13, fontWeight: '800', letterSpacing: 0, textTransform: 'uppercase' },
   title: { color: theme.colors.ink, fontSize: 32, fontWeight: '800', lineHeight: 38 },
   question: { color: theme.colors.ink, fontSize: 24, fontWeight: '800', lineHeight: 31 },
@@ -578,10 +564,6 @@ const styles = StyleSheet.create({
   buttonContent: { alignItems: 'center', flexDirection: 'row', gap: theme.spacing.sm },
   buttonText: { color: theme.colors.surface, fontSize: 15, fontWeight: '800' },
   secondaryButtonText: { color: theme.colors.ink },
-  chip: { alignItems: 'center', borderRadius: theme.radius.pill, minWidth: 58, paddingHorizontal: theme.spacing.md, paddingVertical: theme.spacing.sm },
-  activeChip: { backgroundColor: theme.colors.accent },
-  chipText: { color: theme.colors.ink, fontWeight: '800' },
-  activeChipText: { color: theme.colors.surface },
   option: { backgroundColor: theme.colors.surface, borderColor: theme.colors.border, borderRadius: theme.radius.card, borderWidth: 1, padding: theme.spacing.md },
   activeOption: { backgroundColor: theme.colors.accentSoft, borderColor: theme.colors.accent },
   optionText: { color: theme.colors.ink, fontSize: 16, lineHeight: 22 },

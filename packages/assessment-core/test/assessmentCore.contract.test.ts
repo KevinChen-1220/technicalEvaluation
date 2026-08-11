@@ -1,5 +1,6 @@
 import {
   buildWrongQuestionReviews,
+  ASSESSMENT_QUESTION_COUNT,
   findFirstUnansweredQuestionIndex,
   scoreAssessment,
   validateAssessmentPaper,
@@ -35,8 +36,26 @@ const paper: AssessmentPaper = {
 };
 
 describe('assessment-core public contract', () => {
+  it('exports the fixed question count for newly generated assessments', () => {
+    expect(ASSESSMENT_QUESTION_COUNT).toBe(50);
+  });
+
   it('validates a compatible assessment JSON paper', () => {
     expect(validateAssessmentPaper(paper)).toEqual({ ok: true, errors: [], paper });
+  });
+
+  it('keeps a legacy 100-question assessment readable', () => {
+    const legacyPaper: AssessmentPaper = {
+      ...paper,
+      questionCount: 100,
+      scoring: { ...paper.scoring, maxScore: 100 },
+      questions: Array.from({ length: 100 }, (_, index) => ({
+        ...paper.questions[index % paper.questions.length]!,
+        id: `legacy-q${index + 1}`,
+      })),
+    };
+
+    expect(validateAssessmentPaper(legacyPaper)).toEqual({ ok: true, errors: [], paper: legacyPaper });
   });
 
   it('validates a generated question list through the public package export', () => {

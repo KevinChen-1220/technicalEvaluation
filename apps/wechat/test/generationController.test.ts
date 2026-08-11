@@ -1,7 +1,7 @@
 import { GenerationController } from '../src/generation/controller';
 import type { CachedAssessment } from '../src/storage/assessmentCache';
 
-const request = { topic: 'TypeScript', notes: 'Generics', questionCount: 50 as const };
+const request = { topic: 'TypeScript', notes: 'Generics' };
 
 describe('GenerationController', () => {
   test('moves through creating and polling with bounded delays until completion', async () => {

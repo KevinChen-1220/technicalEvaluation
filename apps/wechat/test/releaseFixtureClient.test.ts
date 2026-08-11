@@ -4,7 +4,7 @@ import { createReleaseFixtureCloudClient } from '../src/fixtures/releaseFixtureC
 describe('release fixture cloud client', () => {
   test('returns the same fixture job for the same client request id', async () => {
     const client = createReleaseFixtureCloudClient({ now: () => '2026-08-10T08:00:00.000Z' });
-    const input = { topic: '幂等', questionCount: 50 as const, clientRequestId: 'request-1' };
+    const input = { topic: '幂等', clientRequestId: 'request-1' };
 
     const first = await client.createGenerationJob(input);
     const second = await client.createGenerationJob({ ...input, topic: '重复提交不应创建新试卷' });
@@ -18,7 +18,6 @@ describe('release fixture cloud client', () => {
     const created = await client.createGenerationJob({
       topic: '微信小程序发布候选验证',
       notes: '覆盖长题干、宽表格、柱状图、图片失败回退、单选和多选。',
-      questionCount: 50,
     });
     const job = await client.getGenerationJob({ jobId: created.jobId });
     const result = await client.getAssessment({ assessmentId: job.assessmentId ?? '' });
@@ -38,11 +37,10 @@ describe('release fixture cloud client', () => {
     expect(JSON.stringify(result.assessment.paper)).not.toMatch(/correctOptionIds|explanation/);
   });
 
-  test('supports 100 question drafts and completed results with more than ten wrong questions', async () => {
+  test('always creates 50-question drafts for new requests', async () => {
     const client = createReleaseFixtureCloudClient({ now: () => '2026-08-10T08:00:00.000Z' });
     const created = await client.createGenerationJob({
       topic: 'Release Candidate English Skill Check',
-      questionCount: 100,
     });
     const job = await client.getGenerationJob({ jobId: created.jobId });
     const draft = await client.getAssessment({ assessmentId: job.assessmentId ?? '' });
@@ -59,7 +57,7 @@ describe('release fixture cloud client', () => {
       expectedRevision: draft.assessment.revision,
     });
 
-    expect(draft.assessment.paper.questions).toHaveLength(100);
+    expect(draft.assessment.paper.questions).toHaveLength(50);
     expect(completed.type).toBe('completed');
     if (completed.type !== 'completed') return;
     expect(completed.assessment.result.wrongQuestionIds.length).toBeGreaterThan(10);
@@ -68,7 +66,7 @@ describe('release fixture cloud client', () => {
 
   test('lists fixture drafts immediately for history and preserves local-only report/settings calls', async () => {
     const client = createReleaseFixtureCloudClient({ now: () => '2026-08-10T08:00:00.000Z' });
-    await client.createGenerationJob({ topic: '历史记录烟测', questionCount: 50 });
+    await client.createGenerationJob({ topic: '历史记录烟测' });
 
     const history = await client.listAssessments({});
     const settings = await client.acceptPrivacyPolicy({ privacyPolicyVersion: '2026-08-10' });

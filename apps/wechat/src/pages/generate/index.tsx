@@ -9,14 +9,13 @@ import {
   createPrivacyConsentViewModel,
   type PrivacyConsentRecord,
 } from '../../privacy/consent';
-import { createMiniProgramShellState, normalizeQuestionCount } from '../../shell/viewModel';
+import { createMiniProgramShellState } from '../../shell/viewModel';
 import { assessmentCache, generationIntentStore, privacyConsentStore } from '../../storage/runtime';
 
 export default function GeneratePage() {
   const shell = createMiniProgramShellState();
   const [topic, setTopic] = useState('');
   const [notes, setNotes] = useState('');
-  const [questionCount, setQuestionCount] = useState<50 | 100>(50);
   const [generation, setGeneration] = useState<GenerationState>({ status: 'idle', progress: 0 });
   const [privacyConsent, setPrivacyConsent] = useState<PrivacyConsentRecord | undefined>(() => privacyConsentStore.get());
   const [acceptingPrivacy, setAcceptingPrivacy] = useState(false);
@@ -100,7 +99,6 @@ export default function GeneratePage() {
     const input = {
       topic,
       ...(notes.trim().length === 0 ? {} : { notes }),
-      questionCount,
     };
     void (generation.status === 'failed' && generation.retryable !== false
       ? controllerRef.current?.retry(input)
@@ -150,25 +148,6 @@ export default function GeneratePage() {
           cursorSpacing={28}
           onInput={(event) => setNotes(event.detail.value)}
         />
-      </View>
-
-      <View className='form-section'>
-        <Text className='field-label'>{shell.generate.questionCountLabel}</Text>
-        <View className='count-control'>
-          {[50, 100].map((count) => {
-            const normalizedCount = normalizeQuestionCount(count);
-            return (
-              <View
-                key={normalizedCount}
-                className={`count-control__option ${questionCount === normalizedCount ? 'count-control__option--active' : ''}`}
-                hoverClass='count-control__option--pressed'
-                onClick={() => setQuestionCount(normalizedCount)}
-              >
-                <Text>{normalizedCount}</Text>
-              </View>
-            );
-          })}
-        </View>
       </View>
 
       <Button className='primary-action' type='primary' disabled={active || privacyGate.requiresConsentForGeneration} onClick={submit}>

@@ -1,4 +1,4 @@
-import { validateAssessmentPaper } from '@dynamic-assessment/assessment-core';
+import { ASSESSMENT_QUESTION_COUNT, validateAssessmentPaper } from '@dynamic-assessment/assessment-core';
 
 export type MiniProgramTabId = 'generate' | 'history' | 'settings';
 
@@ -10,7 +10,6 @@ export type MiniProgramShellState = {
     topicPlaceholder: string;
     notesLabel: string;
     notesPlaceholder: string;
-    questionCountLabel: string;
     submitLabel: string;
   };
   history: {
@@ -35,7 +34,6 @@ const shellState: MiniProgramShellState = {
     topicPlaceholder: '例如：后端架构能力',
     notesLabel: '补充说明',
     notesPlaceholder: '可选：补充考察重点',
-    questionCountLabel: '题目数量',
     submitLabel: '生成测评',
   },
   history: {
@@ -53,7 +51,20 @@ export function createMiniProgramShellState(): MiniProgramShellState {
 }
 
 export function normalizeQuestionCount(value: unknown): 50 | 100 {
-  return value === 100 ? 100 : 50;
+  void value;
+  return ASSESSMENT_QUESTION_COUNT;
+}
+
+export function createGenerationInput(input: { topic: string; notes?: string }): {
+  topic: string;
+  notes?: string;
+  questionCount: typeof ASSESSMENT_QUESTION_COUNT;
+} {
+  return {
+    topic: input.topic,
+    ...(input.notes === undefined ? {} : { notes: input.notes }),
+    questionCount: ASSESSMENT_QUESTION_COUNT,
+  };
 }
 
 export const validateGeneratedAssessment = validateAssessmentPaper;

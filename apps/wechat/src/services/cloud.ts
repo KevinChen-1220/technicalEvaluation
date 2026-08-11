@@ -1,4 +1,4 @@
-import type { AssessmentResult } from '@dynamic-assessment/assessment-core';
+import type { AssessmentResult, NewAssessmentRequest } from '@dynamic-assessment/assessment-core';
 import type {
   CachedAssessment,
   CachedCompletedAssessment,
@@ -8,12 +8,7 @@ import { cloudRuntime } from './cloudRuntime';
 
 declare const require: (moduleName: string) => { createReleaseFixtureCloudClient: () => ReturnType<typeof createCloudClient> };
 
-export type CreateGenerationInput = {
-  topic: string;
-  notes?: string;
-  questionCount: 50 | 100;
-  clientRequestId?: string;
-};
+export type CreateGenerationInput = NewAssessmentRequest;
 
 export type GenerationJobStatus = {
   jobId: string;
@@ -105,7 +100,6 @@ export function createCloudClient(
       const data = {
         topic: input.topic,
         ...(input.notes === undefined ? {} : { notes: input.notes }),
-        questionCount: input.questionCount,
         ...(input.clientRequestId === undefined ? {} : { clientRequestId: input.clientRequestId }),
       };
       const result = await call<unknown>('create-generation-job', data);

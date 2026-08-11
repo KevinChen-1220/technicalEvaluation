@@ -1,4 +1,9 @@
-import { scoreAssessment, type AssessmentPaper, type AssessmentQuestion } from '@dynamic-assessment/assessment-core';
+import {
+  ASSESSMENT_QUESTION_COUNT,
+  scoreAssessment,
+  type AssessmentPaper,
+  type AssessmentQuestion,
+} from '@dynamic-assessment/assessment-core';
 import type {
   AcceptPrivacyPolicyInput,
   AssessmentSummary,
@@ -39,12 +44,11 @@ export function createReleaseFixtureCloudClient(options: FixtureOptions = {}) {
       }
       sequence += 1;
       const createdAt = now();
-      const assessmentId = `fixture-assessment-${sequence}-${input.questionCount}`;
+      const assessmentId = `fixture-assessment-${sequence}-${ASSESSMENT_QUESTION_COUNT}`;
       const jobId = `fixture-job-${sequence}`;
       const fullPaper = buildFixturePaper({
-        id: `fixture-paper-${sequence}-${input.questionCount}`,
+        id: `fixture-paper-${sequence}-${ASSESSMENT_QUESTION_COUNT}`,
         topic: input.topic,
-        questionCount: input.questionCount,
         generatedAt: createdAt,
         ...(input.notes === undefined ? {} : { notes: input.notes }),
       });
@@ -166,24 +170,23 @@ function buildFixturePaper(input: {
   id: string;
   topic: string;
   notes?: string;
-  questionCount: 50 | 100;
   generatedAt: string;
 }): AssessmentPaper {
   const english = /^[\x00-\x7F\s.,:;!?'"()/_-]+$/.test(input.topic);
   return {
     id: input.id,
     topic: input.topic,
-    questionCount: input.questionCount,
+    questionCount: ASSESSMENT_QUESTION_COUNT,
     generatedAt: input.generatedAt,
     scoring: {
-      maxScore: input.questionCount,
+      maxScore: ASSESSMENT_QUESTION_COUNT,
       levels: [
         { minPercent: 0, maxPercent: 59, title: english ? 'Needs practice' : '需要巩固', summary: english ? 'Focus on fundamentals.' : '建议先补齐基础概念。' },
         { minPercent: 60, maxPercent: 84, title: english ? 'Ready' : '基本胜任', summary: english ? 'Core knowledge is usable.' : '核心知识已经可以应用。' },
         { minPercent: 85, maxPercent: 100, title: english ? 'Strong' : '熟练掌握', summary: english ? 'You can handle release work confidently.' : '可以较稳定地处理发布级任务。' },
       ],
     },
-    questions: Array.from({ length: input.questionCount }, (_, index) => buildFixtureQuestion(index, english, input.notes)),
+    questions: Array.from({ length: ASSESSMENT_QUESTION_COUNT }, (_, index) => buildFixtureQuestion(index, english, input.notes)),
   };
 }
 

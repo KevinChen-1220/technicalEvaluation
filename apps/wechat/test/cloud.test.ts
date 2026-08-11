@@ -26,7 +26,7 @@ describe('Mini Program cloud adapter', () => {
     });
     const unsafe = { OPENID: 'spoofed', owner: 'spoofed', provider: 'x', model: 'x', endpoint: 'http://x', apiKey: 'secret' };
 
-    await client.createGenerationJob({ topic: 'TS', notes: 'types', questionCount: 50, clientRequestId: 'request-1', ...unsafe });
+    await client.createGenerationJob({ topic: 'TS', notes: 'types', clientRequestId: 'request-1', ...unsafe });
     await client.getGenerationJob({ jobId: 'job-1', ...unsafe });
     await client.getAssessment({ assessmentId: 'assessment-1', ...unsafe });
     await client.updateAssessment({ assessmentId: 'assessment-1', answers: { q1: ['a'] }, expectedRevision: 1, ...unsafe });
@@ -65,7 +65,7 @@ describe('Mini Program cloud adapter', () => {
     } as unknown as Parameters<typeof client.createReport>[0]);
 
     expect(calls).toEqual([
-      { name: 'create-generation-job', data: { topic: 'TS', notes: 'types', questionCount: 50, clientRequestId: 'request-1' } },
+      { name: 'create-generation-job', data: { topic: 'TS', notes: 'types', clientRequestId: 'request-1' } },
       { name: 'get-generation-job', data: { jobId: 'job-1' } },
       { name: 'get-assessment', data: { assessmentId: 'assessment-1' } },
       { name: 'update-assessment', data: { assessmentId: 'assessment-1', answers: { q1: ['a'] }, expectedRevision: 1 } },
@@ -86,13 +86,13 @@ describe('Mini Program cloud adapter', () => {
   test('turns a safe cloud error response into a typed rejection', async () => {
     const client = createCloudClient(async () => ({ result: { errorCode: 'QUOTA_EXCEEDED' } }));
 
-    await expect(client.createGenerationJob({ topic: 'TS', questionCount: 50 }))
+    await expect(client.createGenerationJob({ topic: 'TS' }))
       .rejects.toMatchObject({ errorCode: 'QUOTA_EXCEEDED' });
   });
 
   test.each([
     ['create-generation-job', { jobId: '', status: 'queued' }, 'INTERNAL_ERROR', (client: ReturnType<typeof createCloudClient>) => (
-      client.createGenerationJob({ topic: 'TS', questionCount: 50 })
+      client.createGenerationJob({ topic: 'TS' })
     )],
     ['get-generation-job', { jobId: 'job-1', status: 'running', progress: 'half', retryable: false }, 'INTERNAL_ERROR', (client: ReturnType<typeof createCloudClient>) => (
       client.getGenerationJob({ jobId: 'job-1' })
@@ -166,7 +166,7 @@ describe('Mini Program cloud adapter', () => {
   test('maps a malformed callFunction envelope to a typed internal error', async () => {
     const client = createCloudClient(async () => null as unknown as { result?: unknown });
 
-    await expect(client.createGenerationJob({ topic: 'TS', questionCount: 50 }))
+    await expect(client.createGenerationJob({ topic: 'TS' }))
       .rejects.toMatchObject({ errorCode: 'INTERNAL_ERROR' });
   });
 });

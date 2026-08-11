@@ -1,14 +1,10 @@
 import { createChatCompletion, type ChatMessage } from '../../services/aiClient';
 import { jsonrepair } from 'jsonrepair';
 import type { ModelConfig } from '../config/modelConfig';
-import type { AssessmentPaper } from './types';
+import { ASSESSMENT_QUESTION_COUNT, type AssessmentPaper, type NewAssessmentRequest } from './types';
 import { validateAssessmentPaper } from './validation';
 
-export type AssessmentGenerationRequest = {
-  topic: string;
-  questionCount: 50 | 100;
-  notes?: string;
-};
+export type AssessmentGenerationRequest = Omit<NewAssessmentRequest, 'clientRequestId'>;
 
 export type CompletionFn = (config: ModelConfig, messages: ChatMessage[]) => Promise<string>;
 
@@ -26,10 +22,10 @@ The JSON must match this TypeScript shape:
 {
   "id": "stable-paper-id",
   "topic": "${request.topic.trim()}",
-  "questionCount": ${request.questionCount},
+  "questionCount": ${ASSESSMENT_QUESTION_COUNT},
   "generatedAt": "ISO-8601 timestamp",
   "scoring": {
-    "maxScore": ${request.questionCount},
+    "maxScore": ${ASSESSMENT_QUESTION_COUNT},
     "levels": [
       { "minPercent": 0, "maxPercent": 59, "title": "Needs Practice", "summary": "..." },
       { "minPercent": 60, "maxPercent": 79, "title": "Proficient", "summary": "..." },
@@ -79,7 +75,7 @@ The JSON must match this TypeScript shape:
 }
 
 Requirements:
-- Generate exactly ${request.questionCount} questions.
+- Generate exactly ${ASSESSMENT_QUESTION_COUNT} questions.
 - Use the topic field as the sole source of truth for the output language of every user-facing value, including topic, scoring titles and summaries, knowledge points, question prompts, option text, and explanations.
 - Additional notes must not change the output language, even when they are written in a different language.
 - For Chinese input, use Simplified Chinese. For English input, use English. For any other language, preserve the topic language.

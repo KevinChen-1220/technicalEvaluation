@@ -1,4 +1,5 @@
 import {
+  createGenerationInput,
   createMiniProgramShellState,
   normalizeQuestionCount,
   validateGeneratedAssessment,
@@ -18,9 +19,16 @@ describe('Mini Program shell view model', () => {
     expect(state.settings.disclosure).toContain('隐私');
   });
 
-  it('normalizes only the supported question counts', () => {
+  it('creates every new generation request with fifty questions', () => {
+    expect(createGenerationInput({ topic: 'TypeScript' })).toEqual({
+      topic: 'TypeScript',
+      questionCount: 50,
+    });
+  });
+
+  it('normalizes legacy persisted question counts to fifty for a new request', () => {
     expect(normalizeQuestionCount(50)).toBe(50);
-    expect(normalizeQuestionCount(100)).toBe(100);
+    expect(normalizeQuestionCount(100)).toBe(50);
     expect(normalizeQuestionCount(75)).toBe(50);
     expect(normalizeQuestionCount(undefined)).toBe(50);
   });

@@ -19,7 +19,7 @@ export function createGenerationIntentStore(storage: StoragePort): GenerationInt
   return {
     load() {
       const value = storage.get<unknown>(GENERATION_INTENT_KEY);
-      return isGenerationIntent(value) ? value : undefined;
+      return isGenerationIntent(value) ? normalizeGenerationIntent(value) : undefined;
     },
     save(intent) {
       storage.set(GENERATION_INTENT_KEY, intent);
@@ -36,9 +36,24 @@ function isGenerationIntent(value: unknown): value is GenerationIntent {
     && value.clientRequestId.length > 0
     && typeof value.input.topic === 'string'
     && (value.input.notes === undefined || typeof value.input.notes === 'string')
-    && (value.input.questionCount === 50 || value.input.questionCount === 100)
+    && (value.input.questionCount === undefined || value.input.questionCount === 50 || value.input.questionCount === 100)
     && (value.jobId === undefined || (typeof value.jobId === 'string' && value.jobId.length > 0));
 }
+
+function normalizeGenerationIntent(value: GenerationIntent | LegacyGenerationIntent): GenerationIntent {
+  return {
+    clientRequestId: value.clientRequestId,
+    input: {
+      topic: value.input.topic,
+      ...(value.input.notes === undefined ? {} : { notes: value.input.notes }),
+    },
+    ...(value.jobId === undefined ? {} : { jobId: value.jobId }),
+  };
+}
+
+type LegacyGenerationIntent = Omit<GenerationIntent, 'input'> & {
+  input: GenerationIntent['input'] & { questionCount?: 50 | 100 };
+};
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);

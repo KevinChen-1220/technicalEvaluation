@@ -187,15 +187,13 @@ function newIntent(input: CreateGenerationInput, clientRequestId: string): Gener
     input: {
       topic: input.topic,
       ...(input.notes === undefined ? {} : { notes: input.notes }),
-      questionCount: input.questionCount,
     },
   };
 }
 
 function sameInput(left: GenerationIntent['input'], right: CreateGenerationInput): boolean {
   return left.topic === right.topic
-    && left.notes === right.notes
-    && left.questionCount === right.questionCount;
+    && left.notes === right.notes;
 }
 
 function defaultRequestId(): string {
