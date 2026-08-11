@@ -12,7 +12,7 @@
 - EdgeOne Cloud Function 最大执行时间配置为 120 秒。
 - EdgeOne Makers 内置免费模型只适合技术验证，正式环境继续使用运营方配置的 OpenAI 兼容模型端点。
 - 免费额度耗尽时服务返回明确的 `FREE_TIER_LIMIT`，不得自动升级套餐或产生费用。
-- AppID、AppSecret、模型密钥、会话签名密钥和内容安全凭据只存在于 EdgeOne 环境变量。
+- AppID、AppSecret、模型密钥、会话签名密钥、OpenID 加密密钥和内容安全凭据只存在于 EdgeOne 环境变量。
 - 本地 SQLite/微信存储仍是即时保存来源；远端同步失败不得阻止本地答题。
 
 ## 平台选型
@@ -66,16 +66,16 @@
 2. `POST /api/session` 将 code 发送给 EdgeOne。
 3. 服务端使用 `WECHAT_APP_ID` 和 `WECHAT_APP_SECRET` 调用微信 `jscode2session`。
 4. 服务端只使用返回的 OpenID 作为 owner，忽略客户端传来的 owner 字段。
-5. 服务端返回随机 session token；Blob 会话对象只存 token 的 SHA-256、owner key 和过期时间。
+5. 服务端返回随机 session token；Blob 会话对象只存 token 的 SHA-256、owner key、AES-256-GCM 加密的 OpenID 和过期时间。加密 OpenID 仅用于微信内容安全接口。
 6. 后续请求使用 `Authorization: Bearer <token>`，默认 7 天过期；401 时客户端重新登录一次。
 
-OpenID 不写入日志、错误信息、Blob 路径或返回体。存储键使用 `HMAC(storageKey, openid)` 得到不可逆 owner key。
+OpenID 不以明文写入 Blob，不进入日志、错误信息、Blob 路径或返回体。存储键使用 `HMAC(storageKey, openid)` 得到不可逆 owner key；会话对象中的 OpenID 密文使用独立 `OPENID_ENCRYPTION_KEY` 加密并带认证标签。
 
 ## 存储模型
 
 Blob 元数据路径：
 
-- `sessions/<tokenHash>.json`：owner key、创建时间、过期时间。
+- `sessions/<tokenHash>.json`：owner key、加密 OpenID、创建时间、过期时间。
 - `settings/<ownerKey>.json`：语言、隐私同意版本和显示偏好。
 - `quotas/<ownerKey>/<yyyy-mm-dd>.json`：当日生成次数和最后请求时间。
 - `jobs/<ownerKey>/<clientRequestId>.json`：生成状态、assessmentId、错误码和版本。

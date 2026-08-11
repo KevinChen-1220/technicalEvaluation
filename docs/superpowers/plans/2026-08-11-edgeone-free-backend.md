@@ -196,11 +196,11 @@ Run: `npm run test:edgeone -- --runInBand test/wechatSession.test.ts test/sessio
 
 - [ ] **Step 3: Implement `jscode2session` with strict HTTPS and safe errors**
 
-Require `WECHAT_APP_ID`, `WECHAT_APP_SECRET`, `SESSION_HMAC_KEY`, and `OWNER_HMAC_KEY`. Never log the request URL because it contains the AppSecret.
+Require `WECHAT_APP_ID`, `WECHAT_APP_SECRET`, `SESSION_HMAC_KEY`, `OWNER_HMAC_KEY`, and `OPENID_ENCRYPTION_KEY`. Never log the request URL because it contains the AppSecret.
 
 - [ ] **Step 4: Implement opaque 256-bit sessions**
 
-Store only `sha256(token)`, HMAC owner key, and expiry in Blob at `sessions/<tokenHash>.json`. Use strong-consistency reads, constant-time token checks, and seven-day expiration.
+Store only `sha256(token)`, HMAC owner key, AES-256-GCM encrypted OpenID, and expiry in Blob at `sessions/<tokenHash>.json`. Use strong-consistency reads, constant-time token checks, and seven-day expiration. Decrypt OpenID only for server-side WeChat moderation.
 
 - [ ] **Step 5: Add `/api/session` and authorization middleware**
 
