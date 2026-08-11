@@ -29,6 +29,8 @@
     "test:edgeone": "npm --workspace @dynamic-assessment/edgeone run test",
     "typecheck:edgeone": "npm --workspace @dynamic-assessment/edgeone run typecheck",
     "build:edgeone": "npm --workspace @dynamic-assessment/edgeone run build",
+    "verify:edgeone-release": "node scripts/verify-edgeone-release.mjs",
+    "edgeone:deploy": "node scripts/edgeone-deploy.mjs",
     "scan:secrets:source": "node scripts/scan-secrets.mjs --target source package.json packages apps services scripts docs",
     "scan:secrets:wechat-dist": "node scripts/scan-secrets.mjs --target dist apps/wechat/dist",
     "verify:wechat-release": "node scripts/verify-wechat-release.mjs --profile development",
@@ -57,6 +59,7 @@
   "devDependencies": {
     "@types/jest": "^29.5.14",
     "@types/react": "~19.0.10",
+    "edgeone": "1.6.23",
     "jest": "^29.7.0",
     "miniprogram-ci": "^2.1.31",
     "pngjs": "^7.0.0",

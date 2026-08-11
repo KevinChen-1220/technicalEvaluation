@@ -25,6 +25,10 @@
 - [ ] Blob 命名空间、保留策略和恢复责任人已记录在 release manifest。
 - [ ] 微信公众平台已把同一个 HTTPS origin 加入 `request合法域名`，并完成域名校验。
 - [ ] preview smoke 与 production smoke 均已覆盖隐私 gate、50 题生成、HTML/XML 解析失败、审核阻断、离线答题和历史恢复。
+- [ ] 已核对 EdgeOne Makers 当期免费额度与政策变化；仓库未开启付费套餐或自动扩容，`GENERATION_ENABLED=false` 可立即熔断生成。
+- [ ] 已确认选用 LLM、内容审核和网关的账单可能独立于 EdgeOne 免费额度，并设置供应商侧消费上限。
+- [ ] 已按 `docs/wechat/edgeone-env.production.example` 配齐服务器环境变量，包含 `OPENID_ENCRYPTION_KEY`、`GENERATION_ENABLED` 和 `EDGEONE_DEPLOYMENT_VERSION`；小程序构建仅注入 `TARO_APP_EDGEONE_API_BASE_URL`。
+- [ ] 已制定并演练 API token、微信 AppSecret、HMAC、OpenID 加密和 LLM 密钥轮换，轮换记录不含密钥值。
 
 ## AI 与内容安全
 
@@ -44,6 +48,8 @@
 ```sh
 npm ci
 npm run verify:github-workflows
+npm run verify:edgeone-release -- --check-only
+npm run edgeone:deploy -- --dry-run
 npm run verify:wechat-release
 npm run verify:wechat-release:formal -- --disclosure-file docs/wechat/release-disclosure.production.json
 npm run wechat:ci:dry-run

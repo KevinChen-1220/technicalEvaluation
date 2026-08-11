@@ -15,10 +15,10 @@
 
 1. 创建 EdgeOne project，并准备 preview 与 production deployment。
 2. 在 EdgeOne 中部署 `services/edgeone` 的 Node Functions，启用 Blob 存储。
-3. 在服务端填写微信会话、模型、内容安全和签名所需环境变量；禁止把任何密钥放入 Taro 环境变量、release manifest 或 GitHub issue。
+3. 在服务端填写 `docs/wechat/edgeone-env.production.example` 中的微信会话、OpenID 加密、模型、内容安全、熔断和版本环境变量；禁止把任何密钥放入 Taro 环境变量、release manifest 或 GitHub issue。客户端只接收 `TARO_APP_EDGEONE_API_BASE_URL`。
 4. 记录 project ID、deployment URL、production HTTPS origin、deployment version、Node Functions build SHA 和 Blob namespace。
 
-**验收：** `/api/health`、`/api/session`、`/api/generation`、`/api/assessments`、`/api/settings` 与 `/api/reports` 在 preview 可用，production origin 为无路径的 HTTPS origin。
+**验收：** `/api/health`、`/api/session`、`/api/generation`、`/api/assessments`、`/api/settings` 与 `/api/reports` 在 preview 可用，production origin 为无路径的 HTTPS origin。生产部署须以锁定的 `edgeone@1.6.23` 完成并通过 `/api/health` 版本校验。
 
 ## 阶段 3：微信网络与构建
 
@@ -33,7 +33,7 @@ npm run verify:wechat-release:formal -- --disclosure-file docs/wechat/release-di
 npm run wechat:ci:dry-run
 ```
 
-**验收：** formal verifier、source/dist secret scan、EdgeOne build 和微信构建均通过。
+**验收：** formal verifier、source/dist secret scan、EdgeOne build 和微信构建均通过。先执行 `npm run edgeone:deploy -- --dry-run` 验证本地工件；真实部署由受保护的 `wechat-production` 环境执行，免费额度耗尽或异常时先将 `GENERATION_ENABLED=false` 熔断。
 
 ## 阶段 4：preview 和 production smoke
 
@@ -51,3 +51,10 @@ npm run wechat:ci:dry-run
 4. P1 问题时停止扩量、回退微信稳定版，并重新部署上一版 EdgeOne build。
 
 **验收：** 微信上线状态、manifest、production smoke 和回滚记录完整对应同一 commit SHA。
+
+## 阶段 6：免费额度与密钥维护
+
+1. 每月核对 EdgeOne Makers 免费额度与政策变化。本项目不会自动转为付费套餐或自动扩容。
+2. 模型供应商、内容审核与 API 网关的费用可能独立计费，发布负责人需单独设定预算上限和告警。
+3. 按供应商策略、人员变动和安全事件轮换 EdgeOne token、微信 AppSecret、HMAC、OpenID 加密与 LLM 密钥。先在 preview 验证，再切 production；任何轮换记录只保留版本与时间，不写入密钥值。
+4. 微信后台 `request合法域名` 必须始终与生产 HTTPS origin 相同，变更域名后先完成平台校验再发布。

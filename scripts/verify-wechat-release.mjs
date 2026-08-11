@@ -63,6 +63,7 @@ function verifyReleaseCandidate({ profile, checkOnly, disclosureFile: selectedDi
     ['npm', ['run', 'typecheck:wechat']],
     ['npm', ['run', 'typecheck:edgeone']],
     ['npm', ['run', 'build:edgeone']],
+    ['npm', ['run', 'verify:edgeone-release', '--', '--check-only']],
     ['npm', ['run', 'build:web']],
     ['npm', ['run', 'verify:web']],
     ['npm', ['run', 'verify:assets']],
@@ -170,6 +171,9 @@ function verifyStaticReleaseContracts(profile, options = { inspectDist: true }) 
   }
   if (rootPackage.scripts?.['verify:github-workflows'] !== 'node scripts/verify-github-workflows.mjs') {
     fail(['package.json is missing verify:github-workflows']);
+  }
+  if (rootPackage.scripts?.['verify:edgeone-release'] !== 'node scripts/verify-edgeone-release.mjs') {
+    fail(['package.json is missing verify:edgeone-release']);
   }
 
   const publicConfig = JSON.parse(readFileSync(join(repoRoot, 'apps/wechat/project.config.json'), 'utf8'));

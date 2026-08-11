@@ -1,0 +1,15 @@
+# Keep this file as a name-only checklist. Configure values in the protected EdgeOne production environment.
+# The Mini Program receives only TARO_APP_EDGEONE_API_BASE_URL at build time.
+EDGEONE_API_TOKEN=replace-in-github-wechat-production-only
+EDGEONE_PROJECT_NAME=replace-with-edgeone-project-name
+WECHAT_APP_ID=replace-with-mini-program-appid
+WECHAT_APP_SECRET=replace-in-edgeone-console-only
+SESSION_HMAC_KEY=replace-in-edgeone-console-only
+OWNER_HMAC_KEY=replace-in-edgeone-console-only
+OPENID_ENCRYPTION_KEY=replace-in-edgeone-console-only
+LLM_BASE_URL=replace-with-provider-base-url
+LLM_API_KEY=replace-in-edgeone-console-only
+LLM_MODEL=replace-with-provider-model
+GENERATION_ENABLED=false
+EDGEONE_DEPLOYMENT_VERSION=replace-with-release-version
+TARO_APP_EDGEONE_API_BASE_URL=https://api.example.invalid

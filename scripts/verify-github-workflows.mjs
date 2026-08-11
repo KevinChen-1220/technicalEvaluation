@@ -28,6 +28,7 @@ const releaseCheckStepAllowlist = [
   { name: 'Check WeChat types', run: 'npm run typecheck:wechat' },
   { name: 'Check EdgeOne types', run: 'npm run typecheck:edgeone' },
   { name: 'Build EdgeOne artifacts', run: 'npm run build:edgeone' },
+  { name: 'Run EdgeOne release gate', run: 'npm run verify:edgeone-release -- --check-only' },
   { name: 'Build web app', run: 'npm run build:web' },
   { name: 'Verify web metadata', run: 'npm run verify:web' },
   { name: 'Verify native brand assets', run: 'npm run verify:assets' },
@@ -72,6 +73,35 @@ const uploadStepAllowlist = [
       'umask 077',
       'printf \'%s\' "$WECHAT_PRIVATE_KEY_PEM" > "$RUNNER_TEMP/wechat-upload.key"',
     ].join('\n'),
+  },
+  {
+    name: 'Run formal EdgeOne environment gate',
+    run: 'npm run verify:edgeone-release -- --production --check-only',
+    env: {
+      EDGEONE_API_TOKEN: '${{ secrets.EDGEONE_API_TOKEN }}',
+      EDGEONE_PROJECT_NAME: '${{ secrets.EDGEONE_PROJECT_NAME }}',
+      WECHAT_APP_ID: '${{ secrets.WECHAT_APP_ID }}',
+      WECHAT_APP_SECRET: '${{ secrets.WECHAT_APP_SECRET }}',
+      SESSION_HMAC_KEY: '${{ secrets.SESSION_HMAC_KEY }}',
+      OWNER_HMAC_KEY: '${{ secrets.OWNER_HMAC_KEY }}',
+      OPENID_ENCRYPTION_KEY: '${{ secrets.OPENID_ENCRYPTION_KEY }}',
+      LLM_BASE_URL: '${{ secrets.LLM_BASE_URL }}',
+      LLM_API_KEY: '${{ secrets.LLM_API_KEY }}',
+      LLM_MODEL: '${{ secrets.LLM_MODEL }}',
+      GENERATION_ENABLED: '${{ secrets.GENERATION_ENABLED }}',
+      EDGEONE_DEPLOYMENT_VERSION: '${{ secrets.EDGEONE_DEPLOYMENT_VERSION }}',
+      TARO_APP_EDGEONE_API_BASE_URL: '${{ secrets.TARO_APP_EDGEONE_API_BASE_URL }}',
+    },
+  },
+  {
+    name: 'Deploy EdgeOne production',
+    run: 'npm run edgeone:deploy -- --production --verify-health',
+    env: {
+      EDGEONE_API_TOKEN: '${{ secrets.EDGEONE_API_TOKEN }}',
+      EDGEONE_PROJECT_NAME: '${{ secrets.EDGEONE_PROJECT_NAME }}',
+      EDGEONE_DEPLOYMENT_VERSION: '${{ secrets.EDGEONE_DEPLOYMENT_VERSION }}',
+      TARO_APP_EDGEONE_API_BASE_URL: '${{ secrets.TARO_APP_EDGEONE_API_BASE_URL }}',
+    },
   },
   {
     name: 'Run formal release verification',
@@ -196,6 +226,8 @@ function verifyPackageScripts() {
     'verify:wechat-release',
     'verify:wechat-release:formal',
     'verify:wechat-release:formal-preflight',
+    'verify:edgeone-release',
+    'edgeone:deploy',
     'wechat:ci:dry-run',
     'wechat:ci:upload',
   ];
@@ -247,6 +279,7 @@ function verifyWeChatReleaseWorkflow() {
   const requiredReleaseCheckCommands = [
     'npm run verify:github-workflows',
     'npm run verify:wechat-release -- --check-only',
+    'npm run verify:edgeone-release -- --check-only',
     'npm run wechat:ci:dry-run -- --version "0.0.0-ci" --description "GitHub release dry run"',
   ];
   for (const command of requiredReleaseCheckCommands) {
@@ -271,6 +304,37 @@ function verifyWeChatReleaseWorkflow() {
 
   const uploadSteps = Array.isArray(upload.steps) ? upload.steps : [];
   const protectedStepSpecs = [
+    {
+      label: 'formal EdgeOne environment gate',
+      name: 'Run formal EdgeOne environment gate',
+      command: 'npm run verify:edgeone-release -- --production --check-only',
+      bindings: [
+        ['EDGEONE_API_TOKEN', 'EDGEONE_API_TOKEN'],
+        ['EDGEONE_PROJECT_NAME', 'EDGEONE_PROJECT_NAME'],
+        ['WECHAT_APP_ID', 'WECHAT_APP_ID'],
+        ['WECHAT_APP_SECRET', 'WECHAT_APP_SECRET'],
+        ['SESSION_HMAC_KEY', 'SESSION_HMAC_KEY'],
+        ['OWNER_HMAC_KEY', 'OWNER_HMAC_KEY'],
+        ['OPENID_ENCRYPTION_KEY', 'OPENID_ENCRYPTION_KEY'],
+        ['LLM_BASE_URL', 'LLM_BASE_URL'],
+        ['LLM_API_KEY', 'LLM_API_KEY'],
+        ['LLM_MODEL', 'LLM_MODEL'],
+        ['GENERATION_ENABLED', 'GENERATION_ENABLED'],
+        ['EDGEONE_DEPLOYMENT_VERSION', 'EDGEONE_DEPLOYMENT_VERSION'],
+        ['TARO_APP_EDGEONE_API_BASE_URL', 'TARO_APP_EDGEONE_API_BASE_URL'],
+      ],
+    },
+    {
+      label: 'EdgeOne deployment',
+      name: 'Deploy EdgeOne production',
+      command: 'npm run edgeone:deploy -- --production --verify-health',
+      bindings: [
+        ['EDGEONE_API_TOKEN', 'EDGEONE_API_TOKEN'],
+        ['EDGEONE_PROJECT_NAME', 'EDGEONE_PROJECT_NAME'],
+        ['EDGEONE_DEPLOYMENT_VERSION', 'EDGEONE_DEPLOYMENT_VERSION'],
+        ['TARO_APP_EDGEONE_API_BASE_URL', 'TARO_APP_EDGEONE_API_BASE_URL'],
+      ],
+    },
     {
       label: 'WeChat upload key',
       name: 'Write WeChat upload key',
@@ -310,8 +374,16 @@ function verifyWeChatReleaseWorkflow() {
     if (spec.command) verifyCriticalUploadStep(spec.label, resolved.step, spec.command);
   }
 
+  const environmentGateStep = protectedSteps.get('Run formal EdgeOne environment gate');
+  const deploymentStep = protectedSteps.get('Deploy EdgeOne production');
   const formalStep = protectedSteps.get('Run formal release verification');
   const uploadStep = protectedSteps.get('Upload to WeChat draft');
+  if (environmentGateStep && deploymentStep && environmentGateStep.index >= deploymentStep.index) {
+    fail('formal EdgeOne environment gate must run before deployment');
+  }
+  if (deploymentStep && formalStep && deploymentStep.index >= formalStep.index) {
+    fail('EdgeOne deployment must complete before the production Mini Program build');
+  }
   if (formalStep && uploadStep && formalStep.index >= uploadStep.index) {
     fail('formal release verification must run before upload');
   }

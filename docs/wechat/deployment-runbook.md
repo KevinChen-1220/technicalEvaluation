@@ -7,7 +7,7 @@
 - 真实微信小程序 AppID，写入本机 `apps/wechat/project.private.config.json`，不得提交。
 - EdgeOne project ID、production deployment URL 与 production HTTPS origin；origin 必须是根路径。
 - production disclosure：从 `docs/wechat/release-disclosure.production.template.json` 复制为真实文件并填写服务运营主体、隐私版本、模型披露和小程序备案号。
-- EdgeOne 服务端环境变量：`WECHAT_APP_ID`、`WECHAT_APP_SECRET`、`SESSION_HMAC_KEY`、`OWNER_HMAC_KEY`、`OPENID_ENCRYPTION_KEY`、`LLM_BASE_URL`、`LLM_API_KEY`、`LLM_MODEL`、`CONTENT_SAFETY_URL`、`CONTENT_SAFETY_API_KEY`、`CONTENT_SAFETY_PROVIDER`。
+- EdgeOne 服务端环境变量清单见 `docs/wechat/edgeone-env.production.example`。其中 `GENERATION_ENABLED` 与 `EDGEONE_DEPLOYMENT_VERSION` 是运行时门禁和 health 校验所需配置；`OPENID_ENCRYPTION_KEY`、会话签名、微信与模型凭据必须完整。
 - GitHub environment `wechat-production` 的审批人和上传配置。
 
 ## 1. EdgeOne project 与 Blob
@@ -32,7 +32,7 @@ npm run build:edgeone
 npm run verify:github-workflows
 ```
 
-部署 Node Functions 与 Blob 配置后，先对 preview deployment 运行 smoke，再切换 production deployment。部署记录写入 release manifest；仓库不假设本机已登录 EdgeOne，因此不会伪造部署成功。
+部署 Node Functions 与 Blob 配置后，先对 preview deployment 运行 smoke，再切换 production deployment。CI 使用精确锁定的 `edgeone@1.6.23` 执行 `edgeone makers deploy`，完成 `/api/health` 版本检查后才构建和上传小程序。`npm run edgeone:deploy -- --dry-run` 不读取凭据，只验证部署包；仓库不假设本机已登录 EdgeOne，因此不会伪造部署成功。
 
 ## 3. 小程序 production 配置
 
@@ -70,5 +70,13 @@ TARO_APP_RELEASE_DISCLOSURE_FILE=docs/wechat/release-disclosure.production.json
 - EdgeOne deployment 与 Node Functions 日志：关注 generation、session、同步、审核与 Blob 访问的结构化错误码。
 - 微信后台版本管理：关注审核状态、发布灰度和用户反馈。
 - GitHub Actions：`WeChat Mini Program Release` 的 `release-checks` 不读凭据，`upload` 必须走 `wechat-production` 环境审批。
+
+## 7. 免费套餐与密钥轮换
+
+- 本项目以 EdgeOne Makers 免费套餐为运行边界。上线前在控制台核对当期免费额度和政策变化，当前工程不会自动开通付费套餐，也不会在额度耗尽时自动扩容。
+- 服务端以每日生成次数、滚动 60 秒窗口和 `GENERATION_ENABLED=false` 熔断保护免费额度。触及额度、平台限制或异常峰值时保持关闭生成并返回可识别的限制错误，待运营方人工评估后恢复。
+- EdgeOne 的免费额度不包含所选 LLM 供应商的费用。模型 API、内容审核或第三方网关可能单独计费，运营方须在上线前确认余额、限额与账单归属。
+- 每次正式发布前复核微信 `request合法域名` 与 production HTTPS origin 完全一致。根域名不得包含 `/api`、端口、查询参数或凭据。
+- `EDGEONE_API_TOKEN`、微信 AppSecret、HMAC key、`OPENID_ENCRYPTION_KEY`、LLM key 和内容审核凭据至少按供应商策略及事故后立即轮换。轮换时先在 preview 验证新值，再更新 production，保留旧会话兼容窗口并记录版本，不将值写入日志、截图或 Git。
 
 官方参考：EdgeOne <https://edgeone.ai/>，微信小程序 request 合法域名 <https://developers.weixin.qq.com/miniprogram/dev/framework/ability/network.html>。
