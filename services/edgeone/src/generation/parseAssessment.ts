@@ -14,15 +14,13 @@ export function parseAssessment(
     if (!isRecord(parsed) || !Array.isArray(parsed.questions) || parsed.questions.length !== ASSESSMENT_QUESTION_COUNT) {
       throw invalidModelResponse();
     }
-    const questions = parsed.questions.map((question, index) => (
-      isRecord(question) ? { ...question, id: `q${index + 1}` } : question
-    ));
+    const questions = parsed.questions.map((question, index) => canonicalQuestion(question, index));
     const paper = {
       id: input.assessmentId,
       topic: input.topic,
       questionCount: ASSESSMENT_QUESTION_COUNT,
       generatedAt: input.generatedAt,
-      scoring: parsed.scoring,
+      scoring: canonicalScoring(parsed.scoring),
       questions,
     };
     const validation = validateAssessmentPaper(paper);
@@ -32,6 +30,80 @@ export function parseAssessment(
     if (error instanceof ApiError) throw error;
     throw invalidModelResponse();
   }
+}
+
+function canonicalQuestion(value: unknown, index: number): unknown {
+  if (!isRecord(value)) return value;
+  const question: Record<string, unknown> = {
+    id: `q${index + 1}`,
+    type: value.type,
+    difficulty: value.difficulty,
+    knowledgePoint: value.knowledgePoint,
+    prompt: value.prompt,
+    options: Array.isArray(value.options) ? value.options.map(canonicalOption) : value.options,
+    correctOptionIds: value.correctOptionIds,
+    explanation: value.explanation,
+  };
+  if (Object.prototype.hasOwnProperty.call(value, 'materials')) question.materials = canonicalMaterials(value.materials);
+  return question;
+}
+
+function canonicalOption(value: unknown): unknown {
+  return isRecord(value) ? { id: value.id, text: value.text } : value;
+}
+
+function canonicalMaterials(value: unknown): unknown {
+  if (!Array.isArray(value)) return value;
+  return value.map((material) => {
+    if (!isRecord(material)) return material;
+    if (material.type === 'text') return { type: material.type, text: material.text };
+    if (material.type === 'image') return compact({
+      type: material.type, uri: material.uri, alt: material.alt,
+      caption: material.caption, aspectRatio: material.aspectRatio,
+    });
+    if (material.type === 'table') return compact({
+      type: material.type, caption: material.caption, columns: material.columns, rows: material.rows,
+    });
+    if (material.type === 'bar_chart') return compact({
+      type: material.type, title: material.title, unit: material.unit,
+      items: Array.isArray(material.items) ? material.items.map((item) => (
+        isRecord(item) ? compact({ label: item.label, value: item.value, displayValue: item.displayValue }) : item
+      )) : material.items,
+    });
+    return { type: material.type };
+  });
+}
+
+function canonicalScoring(value: unknown): unknown {
+  if (!isRecord(value) || !isFiniteNumber(value.maxScore) || value.maxScore <= 0 || !Array.isArray(value.levels)) {
+    throw invalidModelResponse();
+  }
+  const levels = value.levels.map((level) => {
+    if (!isRecord(level)
+      || !isFiniteNumber(level.minPercent)
+      || !isFiniteNumber(level.maxPercent)
+      || typeof level.title !== 'string'
+      || level.title.trim().length === 0
+      || typeof level.summary !== 'string'
+      || level.summary.trim().length === 0) {
+      throw invalidModelResponse();
+    }
+    return {
+      minPercent: level.minPercent,
+      maxPercent: level.maxPercent,
+      title: level.title,
+      summary: level.summary,
+    };
+  });
+  return { maxScore: value.maxScore, levels };
+}
+
+function compact(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined));
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value);
 }
 
 function extractJsonObject(raw: string): { candidate: string; external: string } {

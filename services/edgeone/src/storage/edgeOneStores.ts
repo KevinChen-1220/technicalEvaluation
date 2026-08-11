@@ -3,6 +3,7 @@ import type { BlobPort } from './ports';
 import { BlobQuotaRepository } from './quotaRepository';
 import { BlobReportRepository } from './reportRepository';
 import { BlobSettingsRepository } from './settingsRepository';
+import { BlobGenerationJobRepository } from './jobRepository';
 
 export type StoreOptions = { now: () => Date; draftRetentionDays?: number; reportRetentionDays?: number; cleanupLimit?: number };
 
@@ -16,5 +17,6 @@ export function createEdgeOneStores(blob: BlobPort, options: StoreOptions) {
       ...(options.reportRetentionDays === undefined ? {} : { retentionDays: options.reportRetentionDays }),
       ...(options.cleanupLimit === undefined ? {} : { cleanupLimit: options.cleanupLimit }),
     }),
+    jobs: new BlobGenerationJobRepository(blob),
   };
 }

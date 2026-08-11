@@ -179,7 +179,7 @@ git commit -m "feat: scaffold EdgeOne Makers backend"
 **Interfaces:**
 - Produces: `exchangeWeChatCode(code, env, fetch): Promise<{ openId: string }>`.
 - Produces: `issueSession(openId, dependencies): Promise<{ token: string; expiresAt: string }>`.
-- Produces: `requireSession(request, dependencies): Promise<{ ownerKey: string }>`.
+- Produces: `requireSession(request, dependencies): Promise<{ ownerKey: string; openId: string }>`; `openId` remains server-only for moderation.
 - Consumes: `BlobPort` from Task 2.
 
 - [ ] **Step 1: Write failing tests for code exchange, token hashing, expiration, and forged owners**
@@ -416,7 +416,7 @@ git commit -m "feat: connect Mini Program to EdgeOne API"
 
 **Interfaces:**
 - Produces: `npm run verify:edgeone-release` and `npm run edgeone:deploy`.
-- Formal environment allowlist: `EDGEONE_API_TOKEN`, `EDGEONE_PROJECT_NAME`, `WECHAT_APP_ID`, `WECHAT_APP_SECRET`, `SESSION_HMAC_KEY`, `OWNER_HMAC_KEY`, `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`.
+- Formal environment allowlist: `EDGEONE_API_TOKEN`, `EDGEONE_PROJECT_NAME`, `WECHAT_APP_ID`, `WECHAT_APP_SECRET`, `SESSION_HMAC_KEY`, `OWNER_HMAC_KEY`, `OPENID_ENCRYPTION_KEY`, `LLM_BASE_URL`, `LLM_API_KEY`, `LLM_MODEL`.
 
 - [ ] **Step 1: Write failing release tests**
 

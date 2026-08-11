@@ -1,10 +1,10 @@
-import { scoreAssessment, type AssessmentPaper } from '@dynamic-assessment/assessment-core';
+import { scoreAssessment, type AssessmentPaper, type QuestionMaterial } from '@dynamic-assessment/assessment-core';
 import { requireSession, sessionDependenciesFromEnvironment } from '../auth/sessionToken';
 import { success } from '../http/envelope';
 import type { EdgeOneContext } from '../platform/context';
 import type { AssessmentRecord } from '../storage/assessmentRepository';
 import { createEdgeOneStores } from '../storage/edgeOneStores';
-import { invalidRequest, isRecord, nonEmptyString, readJsonObject, routeFailure } from './support';
+import { invalidRequest, isRecord, methodNotAllowed, nonEmptyString, readJsonObject, routeFailure } from './support';
 
 type Stores = ReturnType<typeof createEdgeOneStores>;
 type Dependencies = { stores: Stores; now(): Date };
@@ -36,6 +36,7 @@ export async function createAssessmentsRoute(
         nextCursor: start + pageSize < summaries.length ? page[page.length - 1]?.id ?? null : null,
       });
     }
+    if (segments.length === 0) throw methodNotAllowed();
 
     const assessmentId = segments[0];
     if (assessmentId === undefined) throw invalidRequest();
@@ -63,12 +64,14 @@ export async function createAssessmentsRoute(
       }
       return success({ type: 'updated' as const, revision: result.record.revision });
     }
+    if (segments.length === 1) throw methodNotAllowed();
 
     if (segments.length === 2 && segments[1] === 'complete' && request.method === 'POST') {
       const body = await readJsonObject(request);
       const current = await dependencies.stores.assessments.get(identity.ownerKey, assessmentId);
       if (current === null) return success({ type: 'not_found' as const, errorCode: 'INVALID_REQUEST' as const });
       const answers = parseAnswers(body.answers, current.paper);
+      assertCompleteAnswers(answers, current.paper);
       const expectedRevision = positiveInteger(body.expectedRevision);
       const completedAt = dependencies.now().toISOString();
       const result = await dependencies.stores.assessments.complete({
@@ -87,6 +90,7 @@ export async function createAssessmentsRoute(
       }
       return success({ type: 'completed' as const, assessment: toClientAssessment(result.record) });
     }
+    if (segments.length === 2 && segments[1] === 'complete') throw methodNotAllowed();
     throw invalidRequest();
   } catch (error) {
     return routeFailure(error);
@@ -135,6 +139,11 @@ function parseAnswers(value: unknown, paper: AssessmentPaper): Record<string, st
   return answers;
 }
 
+function assertCompleteAnswers(answers: Record<string, string[]>, paper: AssessmentPaper): void {
+  if (Object.keys(answers).length !== paper.questions.length) throw invalidRequest();
+  if (paper.questions.some((question) => (answers[question.id]?.length ?? 0) === 0)) throw invalidRequest();
+}
+
 function toClientAssessment(record: AssessmentRecord) {
   const base = {
     id: record.id,
@@ -152,9 +161,58 @@ function toClientAssessment(record: AssessmentRecord) {
 
 function answerablePaper(paper: AssessmentPaper) {
   return {
-    ...paper,
-    questions: paper.questions.map(({ correctOptionIds: _correct, explanation: _explanation, ...question }) => question),
+    id: paper.id,
+    topic: paper.topic,
+    questionCount: paper.questionCount,
+    generatedAt: paper.generatedAt,
+    scoring: {
+      maxScore: paper.scoring.maxScore,
+      levels: paper.scoring.levels.map((level) => ({
+        minPercent: level.minPercent, maxPercent: level.maxPercent, title: level.title, summary: level.summary,
+      })),
+    },
+    questions: paper.questions.map((question) => ({
+      id: question.id,
+      type: question.type,
+      difficulty: question.difficulty,
+      knowledgePoint: question.knowledgePoint,
+      prompt: question.prompt,
+      options: question.options.map((option) => ({ id: option.id, text: option.text })),
+      ...(question.materials === undefined ? {} : { materials: answerableMaterials(question.materials) }),
+    })),
   };
+}
+
+function answerableMaterials(materials: QuestionMaterial[]) {
+  return materials.map((material) => {
+    switch (material.type) {
+      case 'text':
+        return { type: material.type, text: material.text };
+      case 'image':
+        return {
+          type: material.type, uri: material.uri, alt: material.alt,
+          ...(material.caption === undefined ? {} : { caption: material.caption }),
+          ...(material.aspectRatio === undefined ? {} : { aspectRatio: material.aspectRatio }),
+        };
+      case 'table':
+        return {
+          type: material.type,
+          ...(material.caption === undefined ? {} : { caption: material.caption }),
+          columns: [...material.columns],
+          rows: material.rows.map((row) => [...row]),
+        };
+      case 'bar_chart':
+        return {
+          type: material.type,
+          ...(material.title === undefined ? {} : { title: material.title }),
+          ...(material.unit === undefined ? {} : { unit: material.unit }),
+          items: material.items.map((item) => ({
+            label: item.label, value: item.value,
+            ...(item.displayValue === undefined ? {} : { displayValue: item.displayValue }),
+          })),
+        };
+    }
+  });
 }
 
 function toClientSummary(record: AssessmentRecord) {

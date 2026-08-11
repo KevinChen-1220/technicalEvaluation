@@ -22,6 +22,7 @@ describe('owner isolation', () => {
       now: () => new Date('2026-08-11T00:00:00.000Z'),
       sessionHmacKey: 'session-hmac-key',
       ownerHmacKey: 'owner-hmac-key',
+      openIdEncryptionKey: Buffer.alloc(32, 9).toString('base64'),
       randomBytes: () => new Uint8Array(32).fill(seed++),
     };
     const alice = await issueSession('alice-openid', dependencies);
@@ -47,6 +48,7 @@ describe('owner isolation', () => {
       now: () => new Date('2026-08-11T00:00:00.000Z'),
       sessionHmacKey: 'session-hmac-key',
       ownerHmacKey: 'owner-hmac-key',
+      openIdEncryptionKey: Buffer.alloc(32, 9).toString('base64'),
       randomBytes: () => new Uint8Array(32).fill(13),
     };
     const issued = await issueSession('alice-openid', dependencies);

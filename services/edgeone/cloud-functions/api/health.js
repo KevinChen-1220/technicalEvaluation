@@ -695,6 +695,28 @@ function isPreconditionFailure(error) {
 function success(data, status = 200) {
   return json({ ok: true, data }, status);
 }
+function failure(code, retryable, status) {
+  return json({ ok: false, error: { code, message: publicMessage(code), retryable } }, status);
+}
+function publicMessage(code) {
+  const messages = {
+    INVALID_REQUEST: "The request is invalid.",
+    METHOD_NOT_ALLOWED: "The HTTP method is not supported.",
+    UNAUTHORIZED: "Authentication is required.",
+    SESSION_EXPIRED: "The session has expired.",
+    PRIVACY_CONSENT_REQUIRED: "Current privacy consent is required.",
+    CONTENT_BLOCKED: "The content did not pass safety review.",
+    FREE_TIER_LIMIT: "The free generation limit has been reached.",
+    GENERATION_DISABLED: "Assessment generation is temporarily disabled.",
+    PROVIDER_ERROR: "The model provider is temporarily unavailable.",
+    INVALID_MODEL_RESPONSE: "The model returned an invalid assessment.",
+    CONFIGURATION_ERROR: "The service is not configured.",
+    REQUEST_TIMEOUT: "The request timed out.",
+    BACKEND_UNAVAILABLE: "The backend is temporarily unavailable.",
+    INTERNAL_ERROR: "An internal error occurred."
+  };
+  return messages[code] ?? "The request could not be completed.";
+}
 function json(body, status) {
   return new Response(JSON.stringify(body), {
     status,
@@ -707,6 +729,7 @@ function json(body, status) {
 
 // src/routes/health.ts
 async function createHealthRoute(_request, context) {
+  if (_request.method !== "GET") return failure("METHOD_NOT_ALLOWED", false, 405);
   return success({
     service: "skillscope-edgeone",
     version: context.env.EDGEONE_DEPLOYMENT_VERSION ?? "unknown",

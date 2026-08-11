@@ -692,7 +692,7 @@ function isPreconditionFailure(error) {
 }
 
 // src/routes/generation.ts
-var import_node_crypto2 = require("node:crypto");
+var import_node_crypto3 = require("node:crypto");
 
 // src/auth/sessionToken.ts
 var import_node_crypto = require("node:crypto");
@@ -729,20 +729,47 @@ async function requireSession(request, dependencies) {
   if (!isValidStoredSession(stored) || new Date(stored.expiresAt).getTime() <= now.getTime()) {
     throw new ApiError("SESSION_EXPIRED", 401);
   }
-  return { ownerKey: stored.ownerKey };
+  let openId;
+  try {
+    openId = decryptOpenId(stored.encryptedOpenId, tokenHash, stored.ownerKey, keys.openIdEncryptionKey);
+  } catch {
+    throw backendUnavailable();
+  }
+  return { ownerKey: stored.ownerKey, openId };
 }
 function sessionDependenciesFromEnvironment(blob, env) {
   return {
     blob,
     sessionHmacKey: env.SESSION_HMAC_KEY,
-    ownerHmacKey: env.OWNER_HMAC_KEY
+    ownerHmacKey: env.OWNER_HMAC_KEY,
+    openIdEncryptionKey: env.OPENID_ENCRYPTION_KEY
   };
 }
 function requireSessionKeys(dependencies) {
-  if (!dependencies.sessionHmacKey || !dependencies.ownerHmacKey) {
+  if (!dependencies.sessionHmacKey || !dependencies.ownerHmacKey || !dependencies.openIdEncryptionKey) {
     throw backendUnavailable();
   }
-  return { sessionHmacKey: dependencies.sessionHmacKey, ownerHmacKey: dependencies.ownerHmacKey };
+  const openIdEncryptionKey = decodeEncryptionKey(dependencies.openIdEncryptionKey);
+  if (openIdEncryptionKey === null) throw backendUnavailable();
+  return { sessionHmacKey: dependencies.sessionHmacKey, ownerHmacKey: dependencies.ownerHmacKey, openIdEncryptionKey };
+}
+function decryptOpenId(encrypted, tokenHash, ownerKey, key) {
+  const iv = Buffer.from(encrypted.iv, "base64url");
+  const tag = Buffer.from(encrypted.tag, "base64url");
+  const ciphertext = Buffer.from(encrypted.ciphertext, "base64url");
+  if (iv.length !== 12 || tag.length !== 16 || ciphertext.length === 0) throw backendUnavailable();
+  const decipher = (0, import_node_crypto.createDecipheriv)("aes-256-gcm", key, iv);
+  decipher.setAAD(aad(tokenHash, ownerKey));
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+}
+function aad(tokenHash, ownerKey) {
+  return Buffer.from(`skillscope-session-v1\0${tokenHash}\0${ownerKey}`, "utf8");
+}
+function decodeEncryptionKey(value) {
+  if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(value)) return null;
+  const key = Buffer.from(value, value.includes("-") || value.includes("_") ? "base64url" : "base64");
+  return key.length === 32 ? key : null;
 }
 function bearerToken(value) {
   const match = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(value ?? "");
@@ -766,7 +793,12 @@ function constantTimeEqual(left, right) {
 function isValidStoredSession(value) {
   if (!value || typeof value !== "object") return false;
   const session = value;
-  return typeof session.tokenHash === "string" && typeof session.tokenProof === "string" && typeof session.ownerKey === "string" && typeof session.createdAt === "string" && typeof session.expiresAt === "string" && Number.isFinite(new Date(session.createdAt).getTime()) && Number.isFinite(new Date(session.expiresAt).getTime());
+  return typeof session.tokenHash === "string" && typeof session.tokenProof === "string" && typeof session.ownerKey === "string" && isEncryptedOpenId(session.encryptedOpenId) && typeof session.createdAt === "string" && typeof session.expiresAt === "string" && Number.isFinite(new Date(session.createdAt).getTime()) && Number.isFinite(new Date(session.expiresAt).getTime());
+}
+function isEncryptedOpenId(value) {
+  if (!value || typeof value !== "object") return false;
+  const encrypted = value;
+  return typeof encrypted.iv === "string" && typeof encrypted.tag === "string" && typeof encrypted.ciphertext === "string";
 }
 function backendUnavailable() {
   return new ApiError("BACKEND_UNAVAILABLE", 503, true);
@@ -1815,13 +1847,13 @@ function parseAssessment(raw, input) {
     if (!isRecord2(parsed) || !Array.isArray(parsed.questions) || parsed.questions.length !== ASSESSMENT_QUESTION_COUNT) {
       throw invalidModelResponse();
     }
-    const questions = parsed.questions.map((question, index) => isRecord2(question) ? { ...question, id: `q${index + 1}` } : question);
+    const questions = parsed.questions.map((question, index) => canonicalQuestion(question, index));
     const paper = {
       id: input.assessmentId,
       topic: input.topic,
       questionCount: ASSESSMENT_QUESTION_COUNT,
       generatedAt: input.generatedAt,
-      scoring: parsed.scoring,
+      scoring: canonicalScoring(parsed.scoring),
       questions
     };
     const validation = validateAssessmentPaper(paper);
@@ -1831,6 +1863,74 @@ function parseAssessment(raw, input) {
     if (error instanceof ApiError) throw error;
     throw invalidModelResponse();
   }
+}
+function canonicalQuestion(value, index) {
+  if (!isRecord2(value)) return value;
+  const question = {
+    id: `q${index + 1}`,
+    type: value.type,
+    difficulty: value.difficulty,
+    knowledgePoint: value.knowledgePoint,
+    prompt: value.prompt,
+    options: Array.isArray(value.options) ? value.options.map(canonicalOption) : value.options,
+    correctOptionIds: value.correctOptionIds,
+    explanation: value.explanation
+  };
+  if (Object.prototype.hasOwnProperty.call(value, "materials")) question.materials = canonicalMaterials(value.materials);
+  return question;
+}
+function canonicalOption(value) {
+  return isRecord2(value) ? { id: value.id, text: value.text } : value;
+}
+function canonicalMaterials(value) {
+  if (!Array.isArray(value)) return value;
+  return value.map((material) => {
+    if (!isRecord2(material)) return material;
+    if (material.type === "text") return { type: material.type, text: material.text };
+    if (material.type === "image") return compact({
+      type: material.type,
+      uri: material.uri,
+      alt: material.alt,
+      caption: material.caption,
+      aspectRatio: material.aspectRatio
+    });
+    if (material.type === "table") return compact({
+      type: material.type,
+      caption: material.caption,
+      columns: material.columns,
+      rows: material.rows
+    });
+    if (material.type === "bar_chart") return compact({
+      type: material.type,
+      title: material.title,
+      unit: material.unit,
+      items: Array.isArray(material.items) ? material.items.map((item) => isRecord2(item) ? compact({ label: item.label, value: item.value, displayValue: item.displayValue }) : item) : material.items
+    });
+    return { type: material.type };
+  });
+}
+function canonicalScoring(value) {
+  if (!isRecord2(value) || !isFiniteNumber(value.maxScore) || value.maxScore <= 0 || !Array.isArray(value.levels)) {
+    throw invalidModelResponse();
+  }
+  const levels = value.levels.map((level) => {
+    if (!isRecord2(level) || !isFiniteNumber(level.minPercent) || !isFiniteNumber(level.maxPercent) || typeof level.title !== "string" || level.title.trim().length === 0 || typeof level.summary !== "string" || level.summary.trim().length === 0) {
+      throw invalidModelResponse();
+    }
+    return {
+      minPercent: level.minPercent,
+      maxPercent: level.maxPercent,
+      title: level.title,
+      summary: level.summary
+    };
+  });
+  return { maxScore: value.maxScore, levels };
+}
+function compact(value) {
+  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== void 0));
+}
+function isFiniteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value);
 }
 function extractJsonObject(raw) {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(raw);
@@ -1854,20 +1954,51 @@ function isRecord2(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+// src/http/deadline.ts
+function createDeadline(durationMs, now = Date.now) {
+  return { expiresAt: now() + durationMs, now };
+}
+function remainingMilliseconds(deadline) {
+  return Math.max(0, deadline.expiresAt - deadline.now());
+}
+function assertWithinDeadline(deadline) {
+  if (remainingMilliseconds(deadline) <= 0) throw requestTimeout();
+}
+async function withinDeadline(operation, deadline) {
+  const remaining = remainingMilliseconds(deadline);
+  if (remaining <= 0) throw requestTimeout();
+  let timeout;
+  const expiry = new Promise((_resolve, reject) => {
+    timeout = setTimeout(() => reject(requestTimeout()), remaining);
+  });
+  try {
+    return await Promise.race([operation, expiry]);
+  } finally {
+    if (timeout !== void 0) clearTimeout(timeout);
+  }
+}
+function requestTimeout() {
+  return new ApiError("REQUEST_TIMEOUT", 504, true);
+}
+
 // src/generation/generateAssessment.ts
-async function generateFiftyQuestionAssessment(input, dependencies) {
+async function generateFiftyQuestionAssessment(input, dependencies, deadline) {
+  if (deadline !== void 0) assertWithinDeadline(deadline);
   await dependencies.checkText(JSON.stringify({
     topic: input.topic,
     ...input.notes === void 0 ? {} : { notes: input.notes }
-  }));
+  }), input.openId, deadline);
+  if (deadline !== void 0) assertWithinDeadline(deadline);
   const raw = await dependencies.complete({
     topic: input.topic,
     ...input.notes === void 0 ? {} : { notes: input.notes }
-  });
+  }, deadline);
+  if (deadline !== void 0) assertWithinDeadline(deadline);
   const generatedAt = dependencies.now().toISOString();
   const paper = parseAssessment(raw, { assessmentId: input.assessmentId, topic: input.topic, generatedAt });
-  await dependencies.checkText(moderationText(paper));
-  return await dependencies.createIfAbsent({
+  await dependencies.checkText(moderationText(paper), input.openId, deadline);
+  if (deadline !== void 0) assertWithinDeadline(deadline);
+  const persistence = dependencies.createIfAbsent({
     id: input.assessmentId,
     ownerKey: input.ownerKey,
     revision: 1,
@@ -1879,18 +2010,10 @@ async function generateFiftyQuestionAssessment(input, dependencies) {
     updatedAt: generatedAt,
     submittedAt: null
   });
+  return deadline === void 0 ? await persistence : await withinDeadline(persistence, deadline);
 }
 function moderationText(paper) {
-  return JSON.stringify({
-    topic: paper.topic,
-    questions: paper.questions.map((question) => ({
-      knowledgePoint: question.knowledgePoint,
-      prompt: question.prompt,
-      options: question.options.map((option) => option.text),
-      explanation: question.explanation,
-      materials: question.materials
-    }))
-  });
+  return JSON.stringify(paper);
 }
 
 // src/generation/openAIClient.ts
@@ -1899,38 +2022,59 @@ var MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 async function requestOpenAICompletion(input, dependencies) {
   const { baseUrl, apiKey, model } = requireConfiguration(dependencies);
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS);
+  const startedAt = Date.now();
+  const globalExpiry = dependencies.deadline?.expiresAt ?? Number.POSITIVE_INFINITY;
+  const providerExpiry = startedAt + PROVIDER_TIMEOUT_MS;
+  const expiresAt = Math.min(globalExpiry, providerExpiry);
+  const timeoutError = globalExpiry <= providerExpiry ? new ApiError("REQUEST_TIMEOUT", 504, true) : new ApiError("PROVIDER_ERROR", 502, true);
+  const timeoutMs = Math.max(0, expiresAt - Date.now());
+  let timedOut = false;
+  let timeout;
+  const expiry = new Promise((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+      reject(timeoutError);
+    }, timeoutMs);
+  });
   try {
-    const response = await (dependencies.fetch ?? fetch)(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${apiKey}`,
-        "content-type": "application/json"
-      },
-      body: JSON.stringify({
-        model,
-        temperature: 0.4,
-        response_format: { type: "json_object" },
-        messages: [
-          {
-            role: "system",
-            content: [
-              "Generate exactly 50 assessment questions in one response.",
-              "Return one JSON object with questions and scoring. Do not return HTML, XML, Markdown, or commentary.",
-              "Write the assessment in the same language as the topic and notes. When language is unclear, default to Chinese.",
-              "Each question must include id, type, difficulty, knowledgePoint, prompt, options, correctOptionIds, and explanation."
-            ].join(" ")
-          },
-          {
-            role: "user",
-            content: JSON.stringify({ topic: input.topic, ...input.notes === void 0 ? {} : { notes: input.notes } })
-          }
-        ]
+    if (timeoutMs <= 0) throw timeoutError;
+    const response = await Promise.race([
+      (dependencies.fetch ?? fetch)(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${apiKey}`,
+          "content-type": "application/json"
+        },
+        body: JSON.stringify({
+          model,
+          temperature: 0.4,
+          response_format: { type: "json_object" },
+          messages: [
+            {
+              role: "system",
+              content: [
+                "Generate exactly 50 assessment questions in one response.",
+                "Return one JSON object with questions and scoring. Do not return HTML, XML, Markdown, or commentary.",
+                "Write the assessment in the same language as the topic and notes. When language is unclear, default to Chinese.",
+                "Each question must include id, type, difficulty, knowledgePoint, prompt, options, correctOptionIds, and explanation."
+              ].join(" ")
+            },
+            {
+              role: "user",
+              content: JSON.stringify({ topic: input.topic, ...input.notes === void 0 ? {} : { notes: input.notes } })
+            }
+          ]
+        }),
+        signal: controller.signal
       }),
-      signal: controller.signal
-    });
-    if (!response.ok) throw new ApiError("PROVIDER_ERROR", 502, true);
-    const raw = await readBoundedBody(response, MAX_RESPONSE_BYTES);
+      expiry
+    ]);
+    if (!response.ok) {
+      await cancelUnreadBody(response);
+      throw new ApiError("PROVIDER_ERROR", 502, true);
+    }
+    const raw = await readBoundedBody(response, MAX_RESPONSE_BYTES, expiresAt, timeoutError);
     let payload;
     try {
       payload = JSON.parse(raw);
@@ -1942,30 +2086,47 @@ async function requestOpenAICompletion(input, dependencies) {
     return content;
   } catch (error) {
     if (error instanceof ApiError) throw error;
+    if (timedOut) throw timeoutError;
     throw new ApiError("PROVIDER_ERROR", 502, true);
   } finally {
-    clearTimeout(timeout);
+    if (timeout !== void 0) clearTimeout(timeout);
   }
 }
-async function readBoundedBody(response, limit) {
+async function readBoundedBody(response, limit, expiresAt, timeoutError) {
   const declaredLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > limit) {
+    await cancelUnreadBody(response);
     throw new ApiError("INVALID_MODEL_RESPONSE", 502, true);
   }
   if (response.body === null) return "";
   const reader = response.body.getReader();
   const chunks = [];
   let total = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    if (value === void 0) continue;
-    total += value.byteLength;
-    if (total > limit) {
-      await reader.cancel();
-      throw new ApiError("INVALID_MODEL_RESPONSE", 502, true);
+  try {
+    while (true) {
+      const remaining = Math.max(0, expiresAt - Date.now());
+      if (remaining <= 0) throw timeoutError;
+      let timer;
+      const expiry = new Promise((_resolve, reject) => {
+        timer = setTimeout(() => reject(timeoutError), remaining);
+      });
+      let result;
+      try {
+        result = await Promise.race([reader.read(), expiry]);
+      } finally {
+        if (timer !== void 0) clearTimeout(timer);
+      }
+      if (result.done) break;
+      if (result.value === void 0) continue;
+      total += result.value.byteLength;
+      if (total > limit) throw new ApiError("INVALID_MODEL_RESPONSE", 502, true);
+      chunks.push(result.value);
     }
-    chunks.push(value);
+  } catch (error) {
+    await reader.cancel().catch(() => void 0);
+    throw error;
+  } finally {
+    reader.releaseLock();
   }
   const joined = new Uint8Array(total);
   let offset = 0;
@@ -1974,6 +2135,9 @@ async function readBoundedBody(response, limit) {
     offset += chunk.byteLength;
   }
   return new TextDecoder().decode(joined);
+}
+async function cancelUnreadBody(response) {
+  if (response.body !== null && !response.body.locked) await response.body.cancel().catch(() => void 0);
 }
 function completionContent(value) {
   if (!isRecord3(value) || !Array.isArray(value.choices)) return null;
@@ -2003,7 +2167,26 @@ function success(data, status = 200) {
   return json({ ok: true, data }, status);
 }
 function failure(code, retryable, status) {
-  return json({ ok: false, error: { code, retryable } }, status);
+  return json({ ok: false, error: { code, message: publicMessage(code), retryable } }, status);
+}
+function publicMessage(code) {
+  const messages = {
+    INVALID_REQUEST: "The request is invalid.",
+    METHOD_NOT_ALLOWED: "The HTTP method is not supported.",
+    UNAUTHORIZED: "Authentication is required.",
+    SESSION_EXPIRED: "The session has expired.",
+    PRIVACY_CONSENT_REQUIRED: "Current privacy consent is required.",
+    CONTENT_BLOCKED: "The content did not pass safety review.",
+    FREE_TIER_LIMIT: "The free generation limit has been reached.",
+    GENERATION_DISABLED: "Assessment generation is temporarily disabled.",
+    PROVIDER_ERROR: "The model provider is temporarily unavailable.",
+    INVALID_MODEL_RESPONSE: "The model returned an invalid assessment.",
+    CONFIGURATION_ERROR: "The service is not configured.",
+    REQUEST_TIMEOUT: "The request timed out.",
+    BACKEND_UNAVAILABLE: "The backend is temporarily unavailable.",
+    INTERNAL_ERROR: "An internal error occurred."
+  };
+  return messages[code] ?? "The request could not be completed.";
 }
 function json(body, status) {
   return new Response(JSON.stringify(body), {
@@ -2311,6 +2494,110 @@ var BlobSettingsRepository = class {
   }
 };
 
+// src/storage/jobRepository.ts
+var MAX_ATTEMPTS = 8;
+var BlobGenerationJobRepository = class {
+  constructor(blob) {
+    this.blob = blob;
+  }
+  async begin(input) {
+    for (let turn = 0; turn < MAX_ATTEMPTS; turn += 1) {
+      const latest = await this.get(input.ownerKey, input.jobId);
+      if (latest !== null && (latest.status !== "failed" || !input.retry)) return { type: "existing", job: latest };
+      const attempt = (latest?.attempt ?? 0) + 1;
+      const claim = {
+        jobId: input.jobId,
+        ownerKey: input.ownerKey,
+        clientRequestIdHash: input.clientRequestIdHash,
+        assessmentId: input.assessmentId,
+        leaseToken: input.leaseToken,
+        attempt,
+        revision: 1,
+        status: "running",
+        errorCode: null,
+        retryable: false,
+        createdAt: input.now,
+        updatedAt: input.now
+      };
+      try {
+        await this.blob.put(this.claimKey(input.ownerKey, input.jobId, attempt), claim, { onlyIfNew: true });
+        return { type: "claimed", job: publicJob(claim) };
+      } catch (error) {
+        if (!(error instanceof BlobPreconditionFailedError)) throw error;
+      }
+    }
+    throw new Error("JOB_CLAIM_CONFLICT");
+  }
+  async get(ownerKey, jobId) {
+    const prefix = `${this.baseKey(ownerKey, jobId)}/attempts/`;
+    const keys = (await this.blob.list(prefix, { consistency: "strong", limit: 64 })).blobs;
+    const attempts = keys.map((key) => Number(/\/attempts\/(\d{4})\/claim\.json$/.exec(key)?.[1])).filter((attempt2) => Number.isInteger(attempt2) && attempt2 > 0);
+    if (attempts.length === 0) return null;
+    const attempt = Math.max(...attempts);
+    const result = await this.blob.get(this.resultKey(ownerKey, jobId, attempt), { consistency: "strong" });
+    if (result !== null) return publicJob(result);
+    const claim = await this.blob.get(this.claimKey(ownerKey, jobId, attempt), { consistency: "strong" });
+    return claim === null ? null : publicJob(claim);
+  }
+  async complete(ownerKey, jobId, attempt, leaseToken, now) {
+    return await this.finish(ownerKey, jobId, attempt, leaseToken, {
+      status: "completed",
+      errorCode: null,
+      retryable: false,
+      now
+    });
+  }
+  async fail(ownerKey, jobId, attempt, leaseToken, errorCode, retryable, now) {
+    return await this.finish(ownerKey, jobId, attempt, leaseToken, { status: "failed", errorCode, retryable, now });
+  }
+  async recoverCompleted(ownerKey, jobId, attempt, now) {
+    const claim = await this.blob.get(this.claimKey(ownerKey, jobId, attempt), { consistency: "strong" });
+    if (claim === null) throw new Error("JOB_CLAIM_MISSING");
+    return await this.finish(ownerKey, jobId, attempt, claim.leaseToken, {
+      status: "completed",
+      errorCode: null,
+      retryable: false,
+      now
+    });
+  }
+  async finish(ownerKey, jobId, attempt, leaseToken, result) {
+    const existing = await this.blob.get(this.resultKey(ownerKey, jobId, attempt), { consistency: "strong" });
+    if (existing !== null) return publicJob(existing);
+    const claim = await this.blob.get(this.claimKey(ownerKey, jobId, attempt), { consistency: "strong" });
+    if (claim === null || claim.leaseToken !== leaseToken) throw new Error("JOB_LEASE_CONFLICT");
+    const finished = {
+      ...publicJob(claim),
+      revision: 2,
+      status: result.status,
+      errorCode: result.errorCode,
+      retryable: result.retryable,
+      updatedAt: result.now
+    };
+    try {
+      await this.blob.put(this.resultKey(ownerKey, jobId, attempt), finished, { onlyIfNew: true });
+      return finished;
+    } catch (error) {
+      if (!(error instanceof BlobPreconditionFailedError)) throw error;
+      const winner = await this.blob.get(this.resultKey(ownerKey, jobId, attempt), { consistency: "strong" });
+      if (winner === null) throw new Error("JOB_RESULT_CONFLICT");
+      return winner;
+    }
+  }
+  baseKey(ownerKey, jobId) {
+    return `jobs/${encodeURIComponent(ownerKey)}/${encodeURIComponent(jobId)}`;
+  }
+  claimKey(ownerKey, jobId, attempt) {
+    return `${this.baseKey(ownerKey, jobId)}/attempts/${String(attempt).padStart(4, "0")}/claim.json`;
+  }
+  resultKey(ownerKey, jobId, attempt) {
+    return `${this.baseKey(ownerKey, jobId)}/attempts/${String(attempt).padStart(4, "0")}/result.json`;
+  }
+};
+function publicJob(record) {
+  const { jobId, ownerKey, clientRequestIdHash, assessmentId, attempt, revision, status, errorCode, retryable, createdAt, updatedAt } = record;
+  return { jobId, ownerKey, clientRequestIdHash, assessmentId, attempt, revision, status, errorCode, retryable, createdAt, updatedAt };
+}
+
 // src/storage/edgeOneStores.ts
 function createEdgeOneStores(blob, options) {
   return {
@@ -2321,57 +2608,153 @@ function createEdgeOneStores(blob, options) {
       now: options.now,
       ...options.reportRetentionDays === void 0 ? {} : { retentionDays: options.reportRetentionDays },
       ...options.cleanupLimit === void 0 ? {} : { cleanupLimit: options.cleanupLimit }
-    })
+    }),
+    jobs: new BlobGenerationJobRepository(blob)
   };
 }
 
 // src/moderation/wechatAccessToken.ts
-var TOKEN_KEY = "moderation/wechat-access-token.json";
+var import_node_crypto2 = require("node:crypto");
 var TOKEN_EXPIRY_MARGIN_MS = 5 * 60 * 1e3;
 var TOKEN_REQUEST_TIMEOUT_MS = 1e4;
-async function getWeChatAccessToken(dependencies) {
+var refreshFlights = /* @__PURE__ */ new Map();
+async function getWeChatAccessToken(dependencies, deadline) {
   if (!dependencies.appId || !dependencies.appSecret) throw new ApiError("CONFIGURATION_ERROR", 503, false);
+  const appId = dependencies.appId;
+  const appSecret = dependencies.appSecret;
+  const cacheKey = tokenCacheKey(appId);
   let cached;
   try {
-    cached = await dependencies.blob.get(TOKEN_KEY, { consistency: "strong" });
+    cached = await awaitInfrastructure(
+      dependencies.blob.get(cacheKey, { consistency: "strong" }),
+      deadline
+    );
   } catch {
-    throw new ApiError("CONTENT_BLOCKED", 503, false);
+    throw backendUnavailable2();
   }
   if (isUsable(cached, dependencies.now())) return cached.accessToken;
+  const flightKey = appId;
+  const existingFlight = refreshFlights.get(flightKey);
+  if (existingFlight !== void 0) return await awaitInfrastructure(existingFlight, deadline);
+  const flight = refreshAccessToken(dependencies, cacheKey, appId, appSecret, deadline);
+  refreshFlights.set(flightKey, flight);
+  try {
+    return await awaitInfrastructure(flight, deadline);
+  } finally {
+    if (refreshFlights.get(flightKey) === flight) refreshFlights.delete(flightKey);
+  }
+}
+async function refreshAccessToken(dependencies, cacheKey, appId, appSecret, deadline) {
   let response;
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TOKEN_REQUEST_TIMEOUT_MS);
+  const timeoutMs = operationTimeout(deadline, TOKEN_REQUEST_TIMEOUT_MS);
+  if (timeoutMs <= 0) throw backendUnavailable2();
+  let timeout;
+  const expiry = new Promise((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort();
+      reject(backendUnavailable2());
+    }, timeoutMs);
+  });
   try {
     const url = new URL("https://api.weixin.qq.com/cgi-bin/token");
     url.searchParams.set("grant_type", "client_credential");
-    url.searchParams.set("appid", dependencies.appId);
-    url.searchParams.set("secret", dependencies.appSecret);
-    response = await dependencies.fetch(url.toString(), { signal: controller.signal });
+    url.searchParams.set("appid", appId);
+    url.searchParams.set("secret", appSecret);
+    response = await Promise.race([
+      dependencies.fetch(url.toString(), { signal: controller.signal }),
+      expiry
+    ]);
   } catch {
-    throw new ApiError("CONTENT_BLOCKED", 503, false);
+    throw backendUnavailable2();
   } finally {
-    clearTimeout(timeout);
+    if (timeout !== void 0) clearTimeout(timeout);
   }
-  if (!response.ok) throw new ApiError("CONTENT_BLOCKED", 503, false);
+  if (!response.ok) {
+    await cancelUnreadBody2(response);
+    throw backendUnavailable2();
+  }
   let payload;
   try {
-    payload = await response.json();
+    payload = await readJsonResponse(response, deadline, TOKEN_REQUEST_TIMEOUT_MS);
   } catch {
-    throw new ApiError("CONTENT_BLOCKED", 503, false);
+    throw backendUnavailable2();
   }
-  if (!isRecord4(payload) || typeof payload.access_token !== "string" || typeof payload.expires_in !== "number") {
-    throw new ApiError("CONTENT_BLOCKED", 503, false);
+  if (!isRecord4(payload) || typeof payload.access_token !== "string" || payload.access_token.length === 0 || typeof payload.expires_in !== "number" || !Number.isFinite(payload.expires_in) || payload.expires_in <= 0) {
+    throw backendUnavailable2();
   }
-  const expiresAt = new Date(dependencies.now().getTime() + Math.max(0, payload.expires_in * 1e3 - TOKEN_EXPIRY_MARGIN_MS));
+  const expiresAt = new Date(dependencies.now().getTime() + payload.expires_in * 1e3);
   try {
-    await dependencies.blob.put(TOKEN_KEY, { accessToken: payload.access_token, expiresAt: expiresAt.toISOString() });
+    await awaitInfrastructure(
+      dependencies.blob.put(cacheKey, { accessToken: payload.access_token, expiresAt: expiresAt.toISOString() }),
+      deadline
+    );
   } catch {
-    throw new ApiError("CONTENT_BLOCKED", 503, false);
+    throw backendUnavailable2();
   }
   return payload.access_token;
 }
 function isUsable(value, now) {
-  return value !== null && typeof value.accessToken === "string" && Number.isFinite(new Date(value.expiresAt).getTime()) && new Date(value.expiresAt).getTime() > now.getTime();
+  return value !== null && typeof value.accessToken === "string" && Number.isFinite(new Date(value.expiresAt).getTime()) && new Date(value.expiresAt).getTime() - now.getTime() > TOKEN_EXPIRY_MARGIN_MS;
+}
+function tokenCacheKey(appId) {
+  const digest = (0, import_node_crypto2.createHash)("sha256").update(appId, "utf8").digest("hex").slice(0, 24);
+  return `moderation/wechat-access-token/${digest}.json`;
+}
+function operationTimeout(deadline, maximum) {
+  return deadline === void 0 ? maximum : Math.min(maximum, remainingMilliseconds(deadline));
+}
+async function awaitInfrastructure(operation, deadline) {
+  try {
+    return deadline === void 0 ? await operation : await withinDeadline(operation, deadline);
+  } catch {
+    throw backendUnavailable2();
+  }
+}
+async function cancelUnreadBody2(response) {
+  if (response.body !== null && !response.body.locked) await response.body.cancel().catch(() => void 0);
+}
+async function readJsonResponse(response, deadline, maximumMs) {
+  if (response.body === null) throw backendUnavailable2();
+  const reader = response.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const timeoutMs = operationTimeout(deadline, maximumMs);
+      if (timeoutMs <= 0) throw backendUnavailable2();
+      let timer;
+      const expiry = new Promise((_resolve, reject) => {
+        timer = setTimeout(() => reject(backendUnavailable2()), timeoutMs);
+      });
+      let result;
+      try {
+        result = await Promise.race([reader.read(), expiry]);
+      } finally {
+        if (timer !== void 0) clearTimeout(timer);
+      }
+      if (result.done) break;
+      if (result.value === void 0) continue;
+      total += result.value.byteLength;
+      if (total > 64 * 1024) throw backendUnavailable2();
+      chunks.push(result.value);
+    }
+  } catch (error) {
+    await reader.cancel().catch(() => void 0);
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+  const body = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    body.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return JSON.parse(new TextDecoder().decode(body));
+}
+function backendUnavailable2() {
+  return new ApiError("BACKEND_UNAVAILABLE", 503, true);
 }
 function isRecord4(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -2382,38 +2765,69 @@ var MAX_CHUNK_BYTES = 2500;
 var MODERATION_TIMEOUT_MS = 1e4;
 function createWeChatTextSecurity(dependencies) {
   return {
-    async checkText(content) {
+    async checkText(content, openId, deadline) {
       if (typeof content !== "string" || content.trim().length === 0) throw blocked();
-      const token = await getWeChatAccessToken(dependencies);
-      for (const chunk of splitUtf8(content, MAX_CHUNK_BYTES)) {
-        await moderateChunk(chunk, token, dependencies.fetch);
-      }
+      if (typeof openId !== "string" || openId.length === 0) throw backendUnavailable3();
+      const token = await getWeChatAccessToken(dependencies, deadline);
+      const chunks = splitUtf8(content, MAX_CHUNK_BYTES);
+      let cursor = 0;
+      const results = await Promise.allSettled(Array.from({ length: Math.min(3, chunks.length) }, async () => {
+        while (cursor < chunks.length) {
+          const chunk = chunks[cursor++];
+          if (chunk !== void 0) await moderateChunk(chunk, openId, token, dependencies.fetch, deadline);
+        }
+      }));
+      const rejected = results.find((result) => result.status === "rejected");
+      if (rejected !== void 0) throw rejected.reason;
     }
   };
 }
-async function moderateChunk(content, token, fetchPort) {
+async function moderateChunk(content, openId, token, fetchPort, deadline) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), MODERATION_TIMEOUT_MS);
+  const timeoutMs = deadline === void 0 ? MODERATION_TIMEOUT_MS : Math.min(MODERATION_TIMEOUT_MS, remainingMilliseconds(deadline));
+  if (timeoutMs <= 0) throw backendUnavailable3();
+  let timeout;
+  const expiry = new Promise((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort();
+      reject(backendUnavailable3());
+    }, timeoutMs);
+  });
   try {
     const url = new URL("https://api.weixin.qq.com/wxa/msg_sec_check");
     url.searchParams.set("access_token", token);
-    const response = await fetchPort(url.toString(), {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ content, version: 2, scene: 2 }),
-      signal: controller.signal
-    });
-    if (!response.ok) throw blocked();
-    const payload = await response.json();
-    if (!isRecord5(payload) || payload.errcode !== 0 || !isRecord5(payload.result) || payload.result.suggest !== "pass") {
-      throw blocked();
+    const response = await Promise.race([
+      fetchPort(url.toString(), {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content, version: 2, scene: 2, openid: openId }),
+        signal: controller.signal
+      }),
+      expiry
+    ]);
+    if (!response.ok) {
+      await cancelUnreadBody3(response);
+      throw backendUnavailable3();
     }
+    let payload;
+    try {
+      payload = await readJsonResponse(response, deadline, MODERATION_TIMEOUT_MS);
+    } catch {
+      throw backendUnavailable3();
+    }
+    if (!isRecord5(payload) || payload.errcode !== 0 || !isRecord5(payload.result) || typeof payload.result.suggest !== "string") {
+      throw backendUnavailable3();
+    }
+    if (payload.result.suggest !== "pass") throw blocked();
   } catch (error) {
     if (error instanceof ApiError) throw error;
-    throw blocked();
+    throw backendUnavailable3();
   } finally {
-    clearTimeout(timeout);
+    if (timeout !== void 0) clearTimeout(timeout);
   }
+}
+async function cancelUnreadBody3(response) {
+  if (response.body !== null && !response.body.locked) await response.body.cancel().catch(() => void 0);
 }
 function splitUtf8(value, maxBytes) {
   const chunks = [];
@@ -2435,19 +2849,23 @@ function splitUtf8(value, maxBytes) {
 function blocked() {
   return new ApiError("CONTENT_BLOCKED", 422, false);
 }
+function backendUnavailable3() {
+  return new ApiError("BACKEND_UNAVAILABLE", 503, true);
+}
 function isRecord5(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 // src/routes/support.ts
 var MAX_REQUEST_BYTES = 64 * 1024;
-async function readJsonObject(request) {
+async function readJsonObject(request, deadline) {
   const declaredLength = Number(request.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > MAX_REQUEST_BYTES) throw invalidRequest();
   let text;
   try {
-    text = await request.text();
-  } catch {
+    text = deadline === void 0 ? await request.text() : await readRequestBody(request, deadline);
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
     throw invalidRequest();
   }
   if (Buffer.byteLength(text, "utf8") > MAX_REQUEST_BYTES) throw invalidRequest();
@@ -2460,12 +2878,54 @@ async function readJsonObject(request) {
     throw invalidRequest();
   }
 }
+async function readRequestBody(request, deadline) {
+  if (request.body === null) return "";
+  const reader = request.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const remaining = remainingMilliseconds(deadline);
+      if (remaining <= 0) throw requestTimeout();
+      let timeout;
+      const expiry = new Promise((_resolve, reject) => {
+        timeout = setTimeout(() => reject(requestTimeout()), remaining);
+      });
+      let result;
+      try {
+        result = await Promise.race([reader.read(), expiry]);
+      } finally {
+        if (timeout !== void 0) clearTimeout(timeout);
+      }
+      if (result.done) break;
+      if (result.value === void 0) continue;
+      total += result.value.byteLength;
+      if (total > MAX_REQUEST_BYTES) throw invalidRequest();
+      chunks.push(result.value);
+    }
+    const joined = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      joined.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return new TextDecoder().decode(joined);
+  } catch (error) {
+    await reader.cancel().catch(() => void 0);
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+}
 function routeFailure(error) {
   if (error instanceof ApiError) return failure(error.code, error.retryable, error.status);
   return failure("INTERNAL_ERROR", true, 500);
 }
 function invalidRequest() {
   return new ApiError("INVALID_REQUEST", 400, false);
+}
+function methodNotAllowed() {
+  return new ApiError("METHOD_NOT_ALLOWED", 405, false);
 }
 function nonEmptyString(value, maximum = 1e4) {
   if (typeof value !== "string") throw invalidRequest();
@@ -2479,44 +2939,106 @@ function isRecord6(value) {
 
 // src/routes/generation.ts
 async function createGenerationRoute(request, context, injected) {
+  const deadline = createDeadline(115e3);
   try {
-    if (request.method !== "POST") throw invalidRequest();
-    const identity = await requireSession(request, sessionDependenciesFromEnvironment(context.blob, context.env));
+    const identity = await withinDeadline(
+      requireSession(request, sessionDependenciesFromEnvironment(context.blob, context.env)),
+      deadline
+    );
+    if (request.method !== "POST") throw methodNotAllowed();
     const dependencies = injected ?? defaultDependencies(context);
-    const body = await readJsonObject(request);
+    const body = await readJsonObject(request, deadline);
     const topic = nonEmptyString(body.topic, 500);
     const notes = body.notes === void 0 ? void 0 : nonEmptyString(body.notes, 4e3);
     const clientRequestId = body.clientRequestId === void 0 ? void 0 : nonEmptyString(body.clientRequestId, 128);
+    if (body.retry !== void 0 && typeof body.retry !== "boolean") throw invalidRequest();
+    const retry = body.retry === true;
     const policyVersion = context.env.PRIVACY_POLICY_VERSION ?? "2026-08-10";
-    const settings = await dependencies.stores.settings.get(identity.ownerKey);
+    const settings = await withinDeadline(dependencies.stores.settings.get(identity.ownerKey), deadline);
     if (settings?.privacyPolicyVersion !== policyVersion || typeof settings.privacyConsentAt !== "string") {
       return routeFailure(new ApiError("PRIVACY_CONSENT_REQUIRED", 403, false));
     }
-    const identityKey = clientRequestId ?? (0, import_node_crypto2.randomUUID)();
-    const digest = (0, import_node_crypto2.createHash)("sha256").update(`${identity.ownerKey}\0${identityKey}`, "utf8").digest("hex").slice(0, 32);
+    const identityKey = clientRequestId ?? (0, import_node_crypto3.randomUUID)();
+    const digest = (0, import_node_crypto3.createHash)("sha256").update(`${identity.ownerKey}\0${identityKey}`, "utf8").digest("hex").slice(0, 32);
     const assessmentId = `assessment-${digest}`;
     const jobId = `job-${digest}`;
-    if (clientRequestId !== void 0) {
-      const existing = await dependencies.stores.assessments.get(identity.ownerKey, assessmentId);
-      if (existing !== null) return success(completedJob(jobId, assessmentId));
+    const leaseToken = (0, import_node_crypto3.randomUUID)();
+    const begun = await withinDeadline(dependencies.stores.jobs.begin({
+      ownerKey: identity.ownerKey,
+      jobId,
+      clientRequestIdHash: (0, import_node_crypto3.createHash)("sha256").update(identityKey, "utf8").digest("hex"),
+      assessmentId,
+      leaseToken,
+      now: dependencies.now().toISOString(),
+      retry
+    }), deadline);
+    if (begun.type === "existing") {
+      if (begun.job.status === "running") {
+        const assessment = await withinDeadline(dependencies.stores.assessments.get(identity.ownerKey, assessmentId), deadline);
+        if (assessment !== null) {
+          const recovered = await withinDeadline(dependencies.stores.jobs.recoverCompleted(
+            identity.ownerKey,
+            jobId,
+            begun.job.attempt,
+            dependencies.now().toISOString()
+          ), deadline);
+          return success(jobEnvelope(recovered));
+        }
+      }
+      return success(jobEnvelope(begun.job), begun.job.status === "running" ? 202 : 200);
     }
-    const quota = await dependencies.stores.quota.reserve(
+    const quota = await withinDeadline(dependencies.stores.quota.reserve(
       identity.ownerKey,
       dependencies.now(),
       context.env.GENERATION_ENABLED === "true"
-    );
+    ), deadline);
     const quotaCode = quotaErrorCode(quota);
     if (quotaCode !== null) {
       const status = quotaCode === "FREE_TIER_LIMIT" ? 429 : 503;
-      return routeFailure(new ApiError(quotaCode, status, quotaCode === "FREE_TIER_LIMIT"));
+      const error = new ApiError(quotaCode, status, quotaCode === "FREE_TIER_LIMIT");
+      await withinDeadline(dependencies.stores.jobs.fail(
+        identity.ownerKey,
+        jobId,
+        begun.job.attempt,
+        leaseToken,
+        error.code,
+        error.retryable,
+        dependencies.now().toISOString()
+      ), deadline);
+      return routeFailure(error);
     }
-    await dependencies.generate({
-      ownerKey: identity.ownerKey,
-      assessmentId,
-      topic,
-      ...notes === void 0 ? {} : { notes }
-    });
-    return success(completedJob(jobId, assessmentId), 201);
+    try {
+      await withinDeadline(dependencies.generate({
+        ownerKey: identity.ownerKey,
+        openId: identity.openId,
+        assessmentId,
+        topic,
+        ...notes === void 0 ? {} : { notes }
+      }, deadline), deadline);
+      const completed = await withinDeadline(dependencies.stores.jobs.complete(
+        identity.ownerKey,
+        jobId,
+        begun.job.attempt,
+        leaseToken,
+        dependencies.now().toISOString()
+      ), deadline);
+      return success(jobEnvelope(completed), 201);
+    } catch (error) {
+      const apiError = error instanceof ApiError ? error : new ApiError("INTERNAL_ERROR", 500, true);
+      try {
+        await withinDeadline(dependencies.stores.jobs.fail(
+          identity.ownerKey,
+          jobId,
+          begun.job.attempt,
+          leaseToken,
+          apiError.code,
+          apiError.retryable,
+          dependencies.now().toISOString()
+        ), deadline);
+      } catch {
+      }
+      throw apiError;
+    }
   } catch (error) {
     return routeFailure(error);
   }
@@ -2534,20 +3056,29 @@ function defaultDependencies(context) {
   return {
     stores,
     now,
-    generate: async (input) => await generateFiftyQuestionAssessment(input, {
-      complete: async (completionInput) => await requestOpenAICompletion(completionInput, {
+    generate: async (input, deadline) => await generateFiftyQuestionAssessment(input, {
+      complete: async (completionInput, operationDeadline) => await requestOpenAICompletion(completionInput, {
         baseUrl: context.env.LLM_BASE_URL,
         apiKey: context.env.LLM_API_KEY,
-        model: context.env.LLM_MODEL
+        model: context.env.LLM_MODEL,
+        ...operationDeadline === void 0 ? {} : { deadline: operationDeadline }
       }),
       checkText: security.checkText,
       createIfAbsent: async (record) => await stores.assessments.createIfAbsent(record),
       now
-    })
+    }, deadline)
   };
 }
-function completedJob(jobId, assessmentId) {
-  return { jobId, status: "completed", progress: 100, retryable: false, assessmentId };
+function jobEnvelope(job) {
+  return {
+    jobId: job.jobId,
+    status: job.status,
+    progress: job.status === "completed" ? 100 : job.status === "running" ? 10 : 0,
+    retryable: job.retryable,
+    assessmentId: job.assessmentId,
+    attempt: job.attempt,
+    ...job.errorCode === null ? {} : { errorCode: job.errorCode }
+  };
 }
 
 // node-functions/api/generation.ts

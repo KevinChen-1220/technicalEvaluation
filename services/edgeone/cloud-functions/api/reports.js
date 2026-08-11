@@ -729,20 +729,47 @@ async function requireSession(request, dependencies) {
   if (!isValidStoredSession(stored) || new Date(stored.expiresAt).getTime() <= now.getTime()) {
     throw new ApiError("SESSION_EXPIRED", 401);
   }
-  return { ownerKey: stored.ownerKey };
+  let openId;
+  try {
+    openId = decryptOpenId(stored.encryptedOpenId, tokenHash, stored.ownerKey, keys.openIdEncryptionKey);
+  } catch {
+    throw backendUnavailable();
+  }
+  return { ownerKey: stored.ownerKey, openId };
 }
 function sessionDependenciesFromEnvironment(blob, env) {
   return {
     blob,
     sessionHmacKey: env.SESSION_HMAC_KEY,
-    ownerHmacKey: env.OWNER_HMAC_KEY
+    ownerHmacKey: env.OWNER_HMAC_KEY,
+    openIdEncryptionKey: env.OPENID_ENCRYPTION_KEY
   };
 }
 function requireSessionKeys(dependencies) {
-  if (!dependencies.sessionHmacKey || !dependencies.ownerHmacKey) {
+  if (!dependencies.sessionHmacKey || !dependencies.ownerHmacKey || !dependencies.openIdEncryptionKey) {
     throw backendUnavailable();
   }
-  return { sessionHmacKey: dependencies.sessionHmacKey, ownerHmacKey: dependencies.ownerHmacKey };
+  const openIdEncryptionKey = decodeEncryptionKey(dependencies.openIdEncryptionKey);
+  if (openIdEncryptionKey === null) throw backendUnavailable();
+  return { sessionHmacKey: dependencies.sessionHmacKey, ownerHmacKey: dependencies.ownerHmacKey, openIdEncryptionKey };
+}
+function decryptOpenId(encrypted, tokenHash, ownerKey, key) {
+  const iv = Buffer.from(encrypted.iv, "base64url");
+  const tag = Buffer.from(encrypted.tag, "base64url");
+  const ciphertext = Buffer.from(encrypted.ciphertext, "base64url");
+  if (iv.length !== 12 || tag.length !== 16 || ciphertext.length === 0) throw backendUnavailable();
+  const decipher = (0, import_node_crypto.createDecipheriv)("aes-256-gcm", key, iv);
+  decipher.setAAD(aad(tokenHash, ownerKey));
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+}
+function aad(tokenHash, ownerKey) {
+  return Buffer.from(`skillscope-session-v1\0${tokenHash}\0${ownerKey}`, "utf8");
+}
+function decodeEncryptionKey(value) {
+  if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(value)) return null;
+  const key = Buffer.from(value, value.includes("-") || value.includes("_") ? "base64url" : "base64");
+  return key.length === 32 ? key : null;
 }
 function bearerToken(value) {
   const match = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(value ?? "");
@@ -766,7 +793,12 @@ function constantTimeEqual(left, right) {
 function isValidStoredSession(value) {
   if (!value || typeof value !== "object") return false;
   const session = value;
-  return typeof session.tokenHash === "string" && typeof session.tokenProof === "string" && typeof session.ownerKey === "string" && typeof session.createdAt === "string" && typeof session.expiresAt === "string" && Number.isFinite(new Date(session.createdAt).getTime()) && Number.isFinite(new Date(session.expiresAt).getTime());
+  return typeof session.tokenHash === "string" && typeof session.tokenProof === "string" && typeof session.ownerKey === "string" && isEncryptedOpenId(session.encryptedOpenId) && typeof session.createdAt === "string" && typeof session.expiresAt === "string" && Number.isFinite(new Date(session.createdAt).getTime()) && Number.isFinite(new Date(session.expiresAt).getTime());
+}
+function isEncryptedOpenId(value) {
+  if (!value || typeof value !== "object") return false;
+  const encrypted = value;
+  return typeof encrypted.iv === "string" && typeof encrypted.tag === "string" && typeof encrypted.ciphertext === "string";
 }
 function backendUnavailable() {
   return new ApiError("BACKEND_UNAVAILABLE", 503, true);
@@ -777,7 +809,26 @@ function success(data, status = 200) {
   return json({ ok: true, data }, status);
 }
 function failure(code, retryable, status) {
-  return json({ ok: false, error: { code, retryable } }, status);
+  return json({ ok: false, error: { code, message: publicMessage(code), retryable } }, status);
+}
+function publicMessage(code) {
+  const messages = {
+    INVALID_REQUEST: "The request is invalid.",
+    METHOD_NOT_ALLOWED: "The HTTP method is not supported.",
+    UNAUTHORIZED: "Authentication is required.",
+    SESSION_EXPIRED: "The session has expired.",
+    PRIVACY_CONSENT_REQUIRED: "Current privacy consent is required.",
+    CONTENT_BLOCKED: "The content did not pass safety review.",
+    FREE_TIER_LIMIT: "The free generation limit has been reached.",
+    GENERATION_DISABLED: "Assessment generation is temporarily disabled.",
+    PROVIDER_ERROR: "The model provider is temporarily unavailable.",
+    INVALID_MODEL_RESPONSE: "The model returned an invalid assessment.",
+    CONFIGURATION_ERROR: "The service is not configured.",
+    REQUEST_TIMEOUT: "The request timed out.",
+    BACKEND_UNAVAILABLE: "The backend is temporarily unavailable.",
+    INTERNAL_ERROR: "An internal error occurred."
+  };
+  return messages[code] ?? "The request could not be completed.";
 }
 function json(body, status) {
   return new Response(JSON.stringify(body), {
@@ -1081,6 +1132,110 @@ var BlobSettingsRepository = class {
   }
 };
 
+// src/storage/jobRepository.ts
+var MAX_ATTEMPTS = 8;
+var BlobGenerationJobRepository = class {
+  constructor(blob) {
+    this.blob = blob;
+  }
+  async begin(input) {
+    for (let turn = 0; turn < MAX_ATTEMPTS; turn += 1) {
+      const latest = await this.get(input.ownerKey, input.jobId);
+      if (latest !== null && (latest.status !== "failed" || !input.retry)) return { type: "existing", job: latest };
+      const attempt = (latest?.attempt ?? 0) + 1;
+      const claim = {
+        jobId: input.jobId,
+        ownerKey: input.ownerKey,
+        clientRequestIdHash: input.clientRequestIdHash,
+        assessmentId: input.assessmentId,
+        leaseToken: input.leaseToken,
+        attempt,
+        revision: 1,
+        status: "running",
+        errorCode: null,
+        retryable: false,
+        createdAt: input.now,
+        updatedAt: input.now
+      };
+      try {
+        await this.blob.put(this.claimKey(input.ownerKey, input.jobId, attempt), claim, { onlyIfNew: true });
+        return { type: "claimed", job: publicJob(claim) };
+      } catch (error) {
+        if (!(error instanceof BlobPreconditionFailedError)) throw error;
+      }
+    }
+    throw new Error("JOB_CLAIM_CONFLICT");
+  }
+  async get(ownerKey, jobId) {
+    const prefix = `${this.baseKey(ownerKey, jobId)}/attempts/`;
+    const keys = (await this.blob.list(prefix, { consistency: "strong", limit: 64 })).blobs;
+    const attempts = keys.map((key) => Number(/\/attempts\/(\d{4})\/claim\.json$/.exec(key)?.[1])).filter((attempt2) => Number.isInteger(attempt2) && attempt2 > 0);
+    if (attempts.length === 0) return null;
+    const attempt = Math.max(...attempts);
+    const result = await this.blob.get(this.resultKey(ownerKey, jobId, attempt), { consistency: "strong" });
+    if (result !== null) return publicJob(result);
+    const claim = await this.blob.get(this.claimKey(ownerKey, jobId, attempt), { consistency: "strong" });
+    return claim === null ? null : publicJob(claim);
+  }
+  async complete(ownerKey, jobId, attempt, leaseToken, now) {
+    return await this.finish(ownerKey, jobId, attempt, leaseToken, {
+      status: "completed",
+      errorCode: null,
+      retryable: false,
+      now
+    });
+  }
+  async fail(ownerKey, jobId, attempt, leaseToken, errorCode, retryable, now) {
+    return await this.finish(ownerKey, jobId, attempt, leaseToken, { status: "failed", errorCode, retryable, now });
+  }
+  async recoverCompleted(ownerKey, jobId, attempt, now) {
+    const claim = await this.blob.get(this.claimKey(ownerKey, jobId, attempt), { consistency: "strong" });
+    if (claim === null) throw new Error("JOB_CLAIM_MISSING");
+    return await this.finish(ownerKey, jobId, attempt, claim.leaseToken, {
+      status: "completed",
+      errorCode: null,
+      retryable: false,
+      now
+    });
+  }
+  async finish(ownerKey, jobId, attempt, leaseToken, result) {
+    const existing = await this.blob.get(this.resultKey(ownerKey, jobId, attempt), { consistency: "strong" });
+    if (existing !== null) return publicJob(existing);
+    const claim = await this.blob.get(this.claimKey(ownerKey, jobId, attempt), { consistency: "strong" });
+    if (claim === null || claim.leaseToken !== leaseToken) throw new Error("JOB_LEASE_CONFLICT");
+    const finished = {
+      ...publicJob(claim),
+      revision: 2,
+      status: result.status,
+      errorCode: result.errorCode,
+      retryable: result.retryable,
+      updatedAt: result.now
+    };
+    try {
+      await this.blob.put(this.resultKey(ownerKey, jobId, attempt), finished, { onlyIfNew: true });
+      return finished;
+    } catch (error) {
+      if (!(error instanceof BlobPreconditionFailedError)) throw error;
+      const winner = await this.blob.get(this.resultKey(ownerKey, jobId, attempt), { consistency: "strong" });
+      if (winner === null) throw new Error("JOB_RESULT_CONFLICT");
+      return winner;
+    }
+  }
+  baseKey(ownerKey, jobId) {
+    return `jobs/${encodeURIComponent(ownerKey)}/${encodeURIComponent(jobId)}`;
+  }
+  claimKey(ownerKey, jobId, attempt) {
+    return `${this.baseKey(ownerKey, jobId)}/attempts/${String(attempt).padStart(4, "0")}/claim.json`;
+  }
+  resultKey(ownerKey, jobId, attempt) {
+    return `${this.baseKey(ownerKey, jobId)}/attempts/${String(attempt).padStart(4, "0")}/result.json`;
+  }
+};
+function publicJob(record) {
+  const { jobId, ownerKey, clientRequestIdHash, assessmentId, attempt, revision, status, errorCode, retryable, createdAt, updatedAt } = record;
+  return { jobId, ownerKey, clientRequestIdHash, assessmentId, attempt, revision, status, errorCode, retryable, createdAt, updatedAt };
+}
+
 // src/storage/edgeOneStores.ts
 function createEdgeOneStores(blob, options) {
   return {
@@ -1091,19 +1246,29 @@ function createEdgeOneStores(blob, options) {
       now: options.now,
       ...options.reportRetentionDays === void 0 ? {} : { retentionDays: options.reportRetentionDays },
       ...options.cleanupLimit === void 0 ? {} : { cleanupLimit: options.cleanupLimit }
-    })
+    }),
+    jobs: new BlobGenerationJobRepository(blob)
   };
+}
+
+// src/http/deadline.ts
+function remainingMilliseconds(deadline) {
+  return Math.max(0, deadline.expiresAt - deadline.now());
+}
+function requestTimeout() {
+  return new ApiError("REQUEST_TIMEOUT", 504, true);
 }
 
 // src/routes/support.ts
 var MAX_REQUEST_BYTES = 64 * 1024;
-async function readJsonObject(request) {
+async function readJsonObject(request, deadline) {
   const declaredLength = Number(request.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > MAX_REQUEST_BYTES) throw invalidRequest();
   let text;
   try {
-    text = await request.text();
-  } catch {
+    text = deadline === void 0 ? await request.text() : await readRequestBody(request, deadline);
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
     throw invalidRequest();
   }
   if (Buffer.byteLength(text, "utf8") > MAX_REQUEST_BYTES) throw invalidRequest();
@@ -1116,12 +1281,54 @@ async function readJsonObject(request) {
     throw invalidRequest();
   }
 }
+async function readRequestBody(request, deadline) {
+  if (request.body === null) return "";
+  const reader = request.body.getReader();
+  const chunks = [];
+  let total = 0;
+  try {
+    while (true) {
+      const remaining = remainingMilliseconds(deadline);
+      if (remaining <= 0) throw requestTimeout();
+      let timeout;
+      const expiry = new Promise((_resolve, reject) => {
+        timeout = setTimeout(() => reject(requestTimeout()), remaining);
+      });
+      let result;
+      try {
+        result = await Promise.race([reader.read(), expiry]);
+      } finally {
+        if (timeout !== void 0) clearTimeout(timeout);
+      }
+      if (result.done) break;
+      if (result.value === void 0) continue;
+      total += result.value.byteLength;
+      if (total > MAX_REQUEST_BYTES) throw invalidRequest();
+      chunks.push(result.value);
+    }
+    const joined = new Uint8Array(total);
+    let offset = 0;
+    for (const chunk of chunks) {
+      joined.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    return new TextDecoder().decode(joined);
+  } catch (error) {
+    await reader.cancel().catch(() => void 0);
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+}
 function routeFailure(error) {
   if (error instanceof ApiError) return failure(error.code, error.retryable, error.status);
   return failure("INTERNAL_ERROR", true, 500);
 }
 function invalidRequest() {
   return new ApiError("INVALID_REQUEST", 400, false);
+}
+function methodNotAllowed() {
+  return new ApiError("METHOD_NOT_ALLOWED", 405, false);
 }
 function nonEmptyString(value, maximum = 1e4) {
   if (typeof value !== "string") throw invalidRequest();
@@ -1139,7 +1346,7 @@ async function createReportsRoute(request, context, injected) {
   try {
     const identity = await requireSession(request, sessionDependenciesFromEnvironment(context.blob, context.env));
     const dependencies = injected ?? defaultDependencies(context);
-    if (request.method !== "POST") throw invalidRequest();
+    if (request.method !== "POST") throw methodNotAllowed();
     const body = await readJsonObject(request);
     const reason = nonEmptyString(body.reason, 40);
     if (!REASONS.has(reason)) throw invalidRequest();

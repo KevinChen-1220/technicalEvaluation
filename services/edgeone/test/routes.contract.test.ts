@@ -5,7 +5,9 @@ import { createAssessmentsRoute } from '../src/routes/assessments';
 import { createGenerationRoute } from '../src/routes/generation';
 import { createReportsRoute } from '../src/routes/reports';
 import { createSettingsRoute } from '../src/routes/settings';
-import { createMemoryStores, MemoryBlobPort } from '../src/storage/memoryStores';
+import { MemoryBlobPort } from '../src/storage/memoryStores';
+import { createEdgeOneStores } from '../src/storage/edgeOneStores';
+import { ApiError } from '../src/http/errors';
 
 const now = () => new Date('2026-08-11T08:00:00.000Z');
 
@@ -17,7 +19,9 @@ describe('EdgeOne REST contracts', () => {
       topic: 'TypeScript', ownerKey: 'forged-owner', clientRequestId: 'request-1',
     }), fixture.context, { stores: fixture.stores, generate: generated, now });
     expect(noConsent.status).toBe(403);
-    expect(await noConsent.json()).toEqual({ ok: false, error: { code: 'PRIVACY_CONSENT_REQUIRED', retryable: false } });
+    expect(await noConsent.json()).toEqual({ ok: false, error: {
+      code: 'PRIVACY_CONSENT_REQUIRED', message: expect.any(String), retryable: false,
+    } });
     expect(generated).not.toHaveBeenCalled();
 
     await fixture.stores.settings.set(fixture.ownerKey, {
@@ -28,7 +32,9 @@ describe('EdgeOne REST contracts', () => {
       topic: 'TypeScript', ownerKey: 'forged-owner', clientRequestId: 'request-2',
     }), fixture.context, { stores: fixture.stores, generate: generated, now });
     expect(limited.status).toBe(429);
-    expect(await limited.json()).toEqual({ ok: false, error: { code: 'FREE_TIER_LIMIT', retryable: true } });
+    expect(await limited.json()).toEqual({ ok: false, error: {
+      code: 'FREE_TIER_LIMIT', message: expect.any(String), retryable: true,
+    } });
   });
 
   test('generation is idempotent by owner and clientRequestId and returns a completed job envelope', async () => {
@@ -36,8 +42,9 @@ describe('EdgeOne REST contracts', () => {
     await fixture.stores.settings.set(fixture.ownerKey, {
       privacyPolicyVersion: '2026-08-10', privacyConsentAt: now().toISOString(),
     });
-    const generate = jest.fn(async (input: { ownerKey: string; assessmentId: string; topic: string }) => {
+    const generate = jest.fn(async (input: { ownerKey: string; openId: string; assessmentId: string; topic: string }) => {
       expect(input.ownerKey).toBe(fixture.ownerKey);
+      expect(input.openId).toBe('private-open-id');
       const record = assessmentRecord(input.ownerKey, input.assessmentId, input.topic);
       await fixture.stores.assessments.createIfAbsent(record);
       return record;
@@ -53,12 +60,96 @@ describe('EdgeOne REST contracts', () => {
     expect(first.status).toBe(201);
     expect(firstBody).toEqual({ ok: true, data: {
       jobId: expect.any(String), status: 'completed', progress: 100, retryable: false,
-      assessmentId: expect.any(String),
+      assessmentId: expect.any(String), attempt: 1,
     } });
     expect(await second.json()).toEqual({ ok: true, data: expect.objectContaining({
       status: 'completed', assessmentId: firstBody.data.assessmentId,
     }) });
     expect(generate).toHaveBeenCalledTimes(1);
+  });
+
+  test('persists an in-flight job so concurrent duplicate requests invoke the LLM once', async () => {
+    const fixture = await routeFixture();
+    await fixture.stores.settings.set(fixture.ownerKey, {
+      privacyPolicyVersion: '2026-08-10', privacyConsentAt: now().toISOString(),
+    });
+    let release!: () => void;
+    const barrier = new Promise<void>((resolve) => { release = resolve; });
+    let started!: () => void;
+    const didStart = new Promise<void>((resolve) => { started = resolve; });
+    const generate = jest.fn(async (input: { ownerKey: string; assessmentId: string; topic: string }) => {
+      started();
+      await barrier;
+      const record = assessmentRecord(input.ownerKey, input.assessmentId, input.topic);
+      await fixture.stores.assessments.createIfAbsent(record);
+      return record;
+    });
+    const body = { topic: 'TypeScript', clientRequestId: 'concurrent-request' };
+    const first = createGenerationRoute(fixture.request('/api/generation', 'POST', body), fixture.context, {
+      stores: fixture.stores, generate, now,
+    });
+    await didStart;
+    const duplicate = await createGenerationRoute(fixture.request('/api/generation', 'POST', body), fixture.context, {
+      stores: fixture.stores, generate, now,
+    });
+    expect(await duplicate.json()).toEqual({ ok: true, data: expect.objectContaining({ status: 'running', attempt: 1 }) });
+    expect(generate).toHaveBeenCalledTimes(1);
+    release();
+    await first;
+  });
+
+  test('creates a 115-second deadline at route entry and passes it into generation', async () => {
+    const fixture = await routeFixture();
+    await fixture.stores.settings.set(fixture.ownerKey, {
+      privacyPolicyVersion: '2026-08-10', privacyConsentAt: now().toISOString(),
+    });
+    jest.spyOn(fixture.stores.quota, 'reserve').mockResolvedValue('allowed');
+    const startedAt = Date.now();
+    const generate = jest.fn(async (input: { ownerKey: string; assessmentId: string; topic: string }, deadline?: { expiresAt: number }) => {
+      expect(deadline).toBeDefined();
+      expect(deadline!.expiresAt - startedAt).toBeLessThanOrEqual(115_000);
+      expect(deadline!.expiresAt - startedAt).toBeGreaterThan(110_000);
+      const record = assessmentRecord(input.ownerKey, input.assessmentId, input.topic);
+      await fixture.stores.assessments.createIfAbsent(record);
+      return record;
+    });
+    await createGenerationRoute(fixture.request('/api/generation', 'POST', {
+      topic: 'TypeScript', clientRequestId: 'deadline-request',
+    }), fixture.context, { stores: fixture.stores, generate, now });
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+
+  test('keeps failed status stable until an explicit retry opens the next attempt', async () => {
+    const fixture = await routeFixture();
+    await fixture.stores.settings.set(fixture.ownerKey, {
+      privacyPolicyVersion: '2026-08-10', privacyConsentAt: now().toISOString(),
+    });
+    jest.spyOn(fixture.stores.quota, 'reserve').mockResolvedValue('allowed');
+    const generate = jest.fn()
+      .mockRejectedValueOnce(new ApiError('PROVIDER_ERROR', 502, true))
+      .mockImplementationOnce(async (input: { ownerKey: string; assessmentId: string; topic: string }) => {
+        const record = assessmentRecord(input.ownerKey, input.assessmentId, input.topic);
+        await fixture.stores.assessments.createIfAbsent(record);
+        return record;
+      });
+    const body = { topic: 'TypeScript', clientRequestId: 'retry-request' };
+    const failed = await createGenerationRoute(fixture.request('/api/generation', 'POST', body), fixture.context, {
+      stores: fixture.stores, generate, now,
+    });
+    expect(failed.status).toBe(502);
+
+    const stable = await createGenerationRoute(fixture.request('/api/generation', 'POST', body), fixture.context, {
+      stores: fixture.stores, generate, now,
+    });
+    expect(await stable.json()).toEqual({ ok: true, data: expect.objectContaining({
+      status: 'failed', attempt: 1, errorCode: 'PROVIDER_ERROR', retryable: true,
+    }) });
+
+    const retried = await createGenerationRoute(fixture.request('/api/generation', 'POST', { ...body, retry: true }), fixture.context, {
+      stores: fixture.stores, generate, now,
+    });
+    expect(await retried.json()).toEqual({ ok: true, data: expect.objectContaining({ status: 'completed', attempt: 2 }) });
+    expect(generate).toHaveBeenCalledTimes(2);
   });
 
   test('lists, gets, updates, and completes only the authenticated owner assessment', async () => {
@@ -83,8 +174,18 @@ describe('EdgeOne REST contracts', () => {
     }), fixture.context, { stores: fixture.stores, now });
     expect(await conflict.json()).toEqual({ ok: true, data: expect.objectContaining({ type: 'conflict' }) });
 
-    const completed = await createAssessmentsRoute(fixture.request('/api/assessments/assessment-a/complete', 'POST', {
+    const incomplete = await createAssessmentsRoute(fixture.request('/api/assessments/assessment-a/complete', 'POST', {
       answers: { q1: ['a'] }, expectedRevision: 2,
+    }), fixture.context, { stores: fixture.stores, now });
+    expect(incomplete.status).toBe(400);
+    expect(await incomplete.json()).toEqual({
+      ok: false,
+      error: expect.objectContaining({ code: 'INVALID_REQUEST', retryable: false }),
+    });
+
+    const answers = Object.fromEntries(Array.from({ length: 50 }, (_, index) => [`q${index + 1}`, ['a']]));
+    const completed = await createAssessmentsRoute(fixture.request('/api/assessments/assessment-a/complete', 'POST', {
+      answers, expectedRevision: 2,
     }), fixture.context, { stores: fixture.stores, now });
     expect(await completed.json()).toEqual({ ok: true, data: expect.objectContaining({
       type: 'completed', assessment: expect.objectContaining({ status: 'completed', completedAt: now().toISOString() }),
@@ -125,15 +226,94 @@ describe('EdgeOne REST contracts', () => {
       reason: 'question_error', assessmentId: 'foreign-assessment', policyVersion: '2026-08-10',
     }), fixture.context, { stores: fixture.stores, now, reportId: () => 'report-a' });
     expect(response.status).toBe(400);
-    expect(await response.json()).toEqual({ ok: false, error: { code: 'INVALID_REQUEST', retryable: false } });
+    expect(await response.json()).toEqual({ ok: false, error: {
+      code: 'INVALID_REQUEST', message: expect.any(String), retryable: false,
+    } });
     expect(await fixture.stores.reports.list(fixture.ownerKey)).toEqual([]);
+  });
+
+  test('never leaks unknown answer aliases from a draft response', async () => {
+    const fixture = await routeFixture();
+    const record = assessmentRecord(fixture.ownerKey, 'assessment-leak', 'TypeScript');
+    Object.assign(record.paper.questions[0]!, {
+      answer: ['b'], correctAnswer: 'b', rationale: 'hidden answer alias',
+    });
+    Object.assign(record.paper.questions[0]!.options[0]!, { isCorrect: true });
+    record.paper.questions[0]!.materials = [Object.assign(
+      { type: 'text' as const, text: 'Reference material' },
+      { answer: 'material-secret', explanation: 'material-rationale' },
+    )];
+    await fixture.stores.assessments.createIfAbsent(record);
+    const response = await createAssessmentsRoute(
+      fixture.request('/api/assessments/assessment-leak'), fixture.context, { stores: fixture.stores, now },
+    );
+    const serialized = JSON.stringify(await response.json());
+    expect(serialized).not.toContain('correctOptionIds');
+    expect(serialized).not.toContain('explanation');
+    expect(serialized).not.toContain('correctAnswer');
+    expect(serialized).not.toContain('isCorrect');
+    expect(serialized).not.toContain('hidden answer alias');
+    expect(serialized).not.toContain('material-secret');
+    expect(serialized).not.toContain('material-rationale');
+  });
+
+  test.each([
+    ['generation', '/api/generation', 'GET'],
+    ['assessments', '/api/assessments', 'POST'],
+    ['settings', '/api/settings', 'POST'],
+    ['reports', '/api/reports', 'GET'],
+  ])('returns a stable 405 envelope for unsupported %s methods', async (route, path, method) => {
+    const fixture = await routeFixture();
+    const handlers = {
+      generation: () => createGenerationRoute(fixture.request(path, method), fixture.context, { stores: fixture.stores, generate: jest.fn(), now }),
+      assessments: () => createAssessmentsRoute(fixture.request(path, method), fixture.context, { stores: fixture.stores, now }),
+      settings: () => createSettingsRoute(fixture.request(path, method), fixture.context, { stores: fixture.stores, now }),
+      reports: () => createReportsRoute(fixture.request(path, method), fixture.context, { stores: fixture.stores, now, reportId: () => 'report-a' }),
+    };
+    const response = await handlers[route as keyof typeof handlers]();
+    expect(response.status).toBe(405);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: { code: 'METHOD_NOT_ALLOWED', message: expect.any(String), retryable: false },
+    });
+  });
+
+  test.each([
+    ['generation', '/api/generation', 'POST', { topic: 'TypeScript', clientRequestId: 'unauthorized' }],
+    ['assessments', '/api/assessments', 'GET', undefined],
+    ['settings', '/api/settings', 'GET', undefined],
+    ['reports', '/api/reports', 'POST', { reason: 'other', detail: 'feedback' }],
+  ])('requires a session for the %s business route', async (route, path, method, body) => {
+    const fixture = await routeFixture();
+    const request = new Request(`https://example.test${path}`, {
+      method,
+      ...(body === undefined ? {} : {
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      }),
+    });
+    const handlers = {
+      generation: () => createGenerationRoute(request, fixture.context, { stores: fixture.stores, generate: jest.fn(), now }),
+      assessments: () => createAssessmentsRoute(request, fixture.context, { stores: fixture.stores, now }),
+      settings: () => createSettingsRoute(request, fixture.context, { stores: fixture.stores, now }),
+      reports: () => createReportsRoute(request, fixture.context, { stores: fixture.stores, now, reportId: () => 'report-a' }),
+    };
+
+    const response = await handlers[route as keyof typeof handlers]();
+
+    expect(response.status).toBe(401);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: { code: 'UNAUTHORIZED', message: expect.any(String), retryable: false },
+    });
   });
 });
 
 async function routeFixture() {
   const blob = new MemoryBlobPort();
   const sessionDependencies = {
-    blob, sessionHmacKey: 'session-runtime-key', ownerHmacKey: 'owner-runtime-key', now,
+    blob, sessionHmacKey: 'session-runtime-key', ownerHmacKey: 'owner-runtime-key',
+    openIdEncryptionKey: Buffer.alloc(32, 9).toString('base64'), now,
     randomBytes: () => new Uint8Array(32).fill(7),
   };
   const session = await issueSession('private-open-id', sessionDependencies);
@@ -145,6 +325,7 @@ async function routeFixture() {
     request: new Request('https://example.test'),
     env: {
       SESSION_HMAC_KEY: 'session-runtime-key', OWNER_HMAC_KEY: 'owner-runtime-key',
+      OPENID_ENCRYPTION_KEY: Buffer.alloc(32, 9).toString('base64'),
       PRIVACY_POLICY_VERSION: '2026-08-10', GENERATION_ENABLED: 'true',
     },
     blob,
@@ -152,12 +333,7 @@ async function routeFixture() {
   return {
     context,
     ownerKey: identity.ownerKey,
-    stores: {
-      assessments: new (await import('../src/storage/assessmentRepository')).BlobAssessmentRepository(blob, { now }),
-      settings: new (await import('../src/storage/settingsRepository')).BlobSettingsRepository<Record<string, unknown>>(blob),
-      quota: new (await import('../src/storage/quotaRepository')).BlobQuotaRepository(blob),
-      reports: new (await import('../src/storage/reportRepository')).BlobReportRepository(blob, { now }),
-    },
+    stores: createEdgeOneStores(blob, { now }),
     request(path: string, method = 'GET', body?: unknown) {
       return new Request(`https://example.test${path}`, {
         method,

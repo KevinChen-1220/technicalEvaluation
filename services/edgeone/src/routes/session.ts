@@ -1,7 +1,7 @@
 import { ApiError } from '../http/errors';
 import { failure, success } from '../http/envelope';
 import { exchangeWeChatCode, type WeChatFetch } from '../auth/wechatSession';
-import { issueSession, sessionDependenciesFromEnvironment } from '../auth/sessionToken';
+import { isValidOpenIdEncryptionKey, issueSession, sessionDependenciesFromEnvironment } from '../auth/sessionToken';
 import type { EdgeOneContext } from '../platform/context';
 
 export async function createSessionRoute(
@@ -24,7 +24,8 @@ export async function createSessionRoute(
 }
 
 function assertSessionEnvironment(env: EdgeOneContext['env']): void {
-  if (!env.WECHAT_APP_ID || !env.WECHAT_APP_SECRET || !env.SESSION_HMAC_KEY || !env.OWNER_HMAC_KEY) {
+  if (!env.WECHAT_APP_ID || !env.WECHAT_APP_SECRET || !env.SESSION_HMAC_KEY || !env.OWNER_HMAC_KEY
+    || !isValidOpenIdEncryptionKey(env.OPENID_ENCRYPTION_KEY)) {
     throw new ApiError('BACKEND_UNAVAILABLE', 503, true);
   }
 }

@@ -49,4 +49,20 @@ describe('EdgeOne health route', () => {
       },
     });
   });
+
+  test('returns the standard error envelope for unsupported methods', async () => {
+    const context: EdgeOneContext = {
+      request: new Request('https://example.test/api/health', { method: 'POST' }),
+      env: {},
+      blob: { get: jest.fn(), put: jest.fn(), delete: jest.fn(), list: jest.fn() },
+    };
+
+    const response = await createHealthRoute(context.request, context);
+
+    expect(response.status).toBe(405);
+    expect(await response.json()).toEqual({
+      ok: false,
+      error: { code: 'METHOD_NOT_ALLOWED', message: expect.any(String), retryable: false },
+    });
+  });
 });

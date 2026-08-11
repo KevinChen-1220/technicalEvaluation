@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { ApiError } from '../http/errors';
 import type { BlobPort } from '../storage/ports';
 import { deriveOwnerKey } from './ownerKey';
@@ -9,21 +9,23 @@ interface StoredSession {
   tokenHash: string;
   tokenProof: string;
   ownerKey: string;
+  encryptedOpenId: EncryptedOpenId;
   createdAt: string;
   expiresAt: string;
 }
+
+type EncryptedOpenId = { iv: string; tag: string; ciphertext: string };
 
 export interface SessionDependencies {
   blob: BlobPort;
   sessionHmacKey: string | undefined;
   ownerHmacKey: string | undefined;
+  openIdEncryptionKey: string | undefined;
   now?: () => Date;
   randomBytes?: () => Uint8Array;
 }
 
-export interface SessionIdentity {
-  ownerKey: string;
-}
+export interface SessionIdentity { ownerKey: string; openId: string }
 
 export async function issueSession(
   openId: string,
@@ -34,12 +36,14 @@ export async function issueSession(
 
   const token = Buffer.from((dependencies.randomBytes ?? randomBytes)(32)).toString('base64url');
   const tokenHash = hashToken(token);
+  const ownerKey = deriveOwnerKey(openId, keys.ownerHmacKey);
   const now = (dependencies.now ?? (() => new Date()))();
   const expiresAt = new Date(now.getTime() + SESSION_LIFETIME_MS).toISOString();
   const stored: StoredSession = {
     tokenHash,
     tokenProof: tokenProof(token, keys.sessionHmacKey),
-    ownerKey: deriveOwnerKey(openId, keys.ownerHmacKey),
+    ownerKey,
+    encryptedOpenId: encryptOpenId(openId, tokenHash, ownerKey, keys.openIdEncryptionKey, dependencies.randomBytes),
     createdAt: now.toISOString(),
     expiresAt,
   };
@@ -73,7 +77,13 @@ export async function requireSession(request: Request, dependencies: SessionDepe
   if (!isValidStoredSession(stored) || new Date(stored.expiresAt).getTime() <= now.getTime()) {
     throw new ApiError('SESSION_EXPIRED', 401);
   }
-  return { ownerKey: stored.ownerKey };
+  let openId: string;
+  try {
+    openId = decryptOpenId(stored.encryptedOpenId, tokenHash, stored.ownerKey, keys.openIdEncryptionKey);
+  } catch {
+    throw backendUnavailable();
+  }
+  return { ownerKey: stored.ownerKey, openId };
 }
 
 export function sessionDependenciesFromEnvironment(blob: BlobPort, env: Record<string, string | undefined>): SessionDependencies {
@@ -81,14 +91,61 @@ export function sessionDependenciesFromEnvironment(blob: BlobPort, env: Record<s
     blob,
     sessionHmacKey: env.SESSION_HMAC_KEY,
     ownerHmacKey: env.OWNER_HMAC_KEY,
+    openIdEncryptionKey: env.OPENID_ENCRYPTION_KEY,
   };
 }
 
-function requireSessionKeys(dependencies: SessionDependencies): { sessionHmacKey: string; ownerHmacKey: string } {
-  if (!dependencies.sessionHmacKey || !dependencies.ownerHmacKey) {
+export function isValidOpenIdEncryptionKey(value: string | undefined): boolean {
+  return value !== undefined && decodeEncryptionKey(value) !== null;
+}
+
+function requireSessionKeys(dependencies: SessionDependencies): { sessionHmacKey: string; ownerHmacKey: string; openIdEncryptionKey: Buffer } {
+  if (!dependencies.sessionHmacKey || !dependencies.ownerHmacKey || !dependencies.openIdEncryptionKey) {
     throw backendUnavailable();
   }
-  return { sessionHmacKey: dependencies.sessionHmacKey, ownerHmacKey: dependencies.ownerHmacKey };
+  const openIdEncryptionKey = decodeEncryptionKey(dependencies.openIdEncryptionKey);
+  if (openIdEncryptionKey === null) throw backendUnavailable();
+  return { sessionHmacKey: dependencies.sessionHmacKey, ownerHmacKey: dependencies.ownerHmacKey, openIdEncryptionKey };
+}
+
+function encryptOpenId(
+  openId: string,
+  tokenHash: string,
+  ownerKey: string,
+  key: Buffer,
+  random?: () => Uint8Array,
+): EncryptedOpenId {
+  const iv = Buffer.from((random ?? (() => randomBytes(12)))()).subarray(0, 12);
+  if (iv.length !== 12) throw backendUnavailable();
+  const cipher = createCipheriv('aes-256-gcm', key, iv);
+  cipher.setAAD(aad(tokenHash, ownerKey));
+  const ciphertext = Buffer.concat([cipher.update(openId, 'utf8'), cipher.final()]);
+  return {
+    iv: iv.toString('base64url'),
+    tag: cipher.getAuthTag().toString('base64url'),
+    ciphertext: ciphertext.toString('base64url'),
+  };
+}
+
+function decryptOpenId(encrypted: EncryptedOpenId, tokenHash: string, ownerKey: string, key: Buffer): string {
+  const iv = Buffer.from(encrypted.iv, 'base64url');
+  const tag = Buffer.from(encrypted.tag, 'base64url');
+  const ciphertext = Buffer.from(encrypted.ciphertext, 'base64url');
+  if (iv.length !== 12 || tag.length !== 16 || ciphertext.length === 0) throw backendUnavailable();
+  const decipher = createDecipheriv('aes-256-gcm', key, iv);
+  decipher.setAAD(aad(tokenHash, ownerKey));
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf8');
+}
+
+function aad(tokenHash: string, ownerKey: string): Buffer {
+  return Buffer.from(`skillscope-session-v1\0${tokenHash}\0${ownerKey}`, 'utf8');
+}
+
+function decodeEncryptionKey(value: string): Buffer | null {
+  if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(value)) return null;
+  const key = Buffer.from(value, value.includes('-') || value.includes('_') ? 'base64url' : 'base64');
+  return key.length === 32 ? key : null;
 }
 
 function bearerToken(value: string | null): string {
@@ -121,10 +178,17 @@ function isValidStoredSession(value: unknown): value is StoredSession {
   return typeof session.tokenHash === 'string'
     && typeof session.tokenProof === 'string'
     && typeof session.ownerKey === 'string'
+    && isEncryptedOpenId(session.encryptedOpenId)
     && typeof session.createdAt === 'string'
     && typeof session.expiresAt === 'string'
     && Number.isFinite(new Date(session.createdAt).getTime())
     && Number.isFinite(new Date(session.expiresAt).getTime());
+}
+
+function isEncryptedOpenId(value: unknown): value is EncryptedOpenId {
+  if (!value || typeof value !== 'object') return false;
+  const encrypted = value as Partial<EncryptedOpenId>;
+  return typeof encrypted.iv === 'string' && typeof encrypted.tag === 'string' && typeof encrypted.ciphertext === 'string';
 }
 
 function backendUnavailable(): ApiError {

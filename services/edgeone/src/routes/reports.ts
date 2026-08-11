@@ -3,7 +3,7 @@ import { requireSession, sessionDependenciesFromEnvironment } from '../auth/sess
 import { success } from '../http/envelope';
 import type { EdgeOneContext } from '../platform/context';
 import { createEdgeOneStores } from '../storage/edgeOneStores';
-import { invalidRequest, nonEmptyString, readJsonObject, routeFailure } from './support';
+import { invalidRequest, methodNotAllowed, nonEmptyString, readJsonObject, routeFailure } from './support';
 
 type Stores = ReturnType<typeof createEdgeOneStores>;
 type Dependencies = { stores: Stores; now(): Date; reportId(): string };
@@ -17,7 +17,7 @@ export async function createReportsRoute(
   try {
     const identity = await requireSession(request, sessionDependenciesFromEnvironment(context.blob, context.env));
     const dependencies = injected ?? defaultDependencies(context);
-    if (request.method !== 'POST') throw invalidRequest();
+    if (request.method !== 'POST') throw methodNotAllowed();
     const body = await readJsonObject(request);
     const reason = nonEmptyString(body.reason, 40);
     if (!REASONS.has(reason)) throw invalidRequest();

@@ -707,7 +707,26 @@ function success(data, status = 200) {
   return json({ ok: true, data }, status);
 }
 function failure(code, retryable, status) {
-  return json({ ok: false, error: { code, retryable } }, status);
+  return json({ ok: false, error: { code, message: publicMessage(code), retryable } }, status);
+}
+function publicMessage(code) {
+  const messages = {
+    INVALID_REQUEST: "The request is invalid.",
+    METHOD_NOT_ALLOWED: "The HTTP method is not supported.",
+    UNAUTHORIZED: "Authentication is required.",
+    SESSION_EXPIRED: "The session has expired.",
+    PRIVACY_CONSENT_REQUIRED: "Current privacy consent is required.",
+    CONTENT_BLOCKED: "The content did not pass safety review.",
+    FREE_TIER_LIMIT: "The free generation limit has been reached.",
+    GENERATION_DISABLED: "Assessment generation is temporarily disabled.",
+    PROVIDER_ERROR: "The model provider is temporarily unavailable.",
+    INVALID_MODEL_RESPONSE: "The model returned an invalid assessment.",
+    CONFIGURATION_ERROR: "The service is not configured.",
+    REQUEST_TIMEOUT: "The request timed out.",
+    BACKEND_UNAVAILABLE: "The backend is temporarily unavailable.",
+    INTERNAL_ERROR: "An internal error occurred."
+  };
+  return messages[code] ?? "The request could not be completed.";
 }
 function json(body, status) {
   return new Response(JSON.stringify(body), {
@@ -771,12 +790,14 @@ async function issueSession(openId, dependencies) {
   if (!openId) throw new ApiError("INVALID_REQUEST", 400);
   const token = Buffer.from((dependencies.randomBytes ?? import_node_crypto2.randomBytes)(32)).toString("base64url");
   const tokenHash = hashToken(token);
+  const ownerKey = deriveOwnerKey(openId, keys.ownerHmacKey);
   const now = (dependencies.now ?? (() => /* @__PURE__ */ new Date()))();
   const expiresAt = new Date(now.getTime() + SESSION_LIFETIME_MS).toISOString();
   const stored = {
     tokenHash,
     tokenProof: tokenProof(token, keys.sessionHmacKey),
-    ownerKey: deriveOwnerKey(openId, keys.ownerHmacKey),
+    ownerKey,
+    encryptedOpenId: encryptOpenId(openId, tokenHash, ownerKey, keys.openIdEncryptionKey, dependencies.randomBytes),
     createdAt: now.toISOString(),
     expiresAt
   };
@@ -791,14 +812,40 @@ function sessionDependenciesFromEnvironment(blob, env) {
   return {
     blob,
     sessionHmacKey: env.SESSION_HMAC_KEY,
-    ownerHmacKey: env.OWNER_HMAC_KEY
+    ownerHmacKey: env.OWNER_HMAC_KEY,
+    openIdEncryptionKey: env.OPENID_ENCRYPTION_KEY
   };
 }
+function isValidOpenIdEncryptionKey(value) {
+  return value !== void 0 && decodeEncryptionKey(value) !== null;
+}
 function requireSessionKeys(dependencies) {
-  if (!dependencies.sessionHmacKey || !dependencies.ownerHmacKey) {
+  if (!dependencies.sessionHmacKey || !dependencies.ownerHmacKey || !dependencies.openIdEncryptionKey) {
     throw backendUnavailable();
   }
-  return { sessionHmacKey: dependencies.sessionHmacKey, ownerHmacKey: dependencies.ownerHmacKey };
+  const openIdEncryptionKey = decodeEncryptionKey(dependencies.openIdEncryptionKey);
+  if (openIdEncryptionKey === null) throw backendUnavailable();
+  return { sessionHmacKey: dependencies.sessionHmacKey, ownerHmacKey: dependencies.ownerHmacKey, openIdEncryptionKey };
+}
+function encryptOpenId(openId, tokenHash, ownerKey, key, random) {
+  const iv = Buffer.from((random ?? (() => (0, import_node_crypto2.randomBytes)(12)))()).subarray(0, 12);
+  if (iv.length !== 12) throw backendUnavailable();
+  const cipher = (0, import_node_crypto2.createCipheriv)("aes-256-gcm", key, iv);
+  cipher.setAAD(aad(tokenHash, ownerKey));
+  const ciphertext = Buffer.concat([cipher.update(openId, "utf8"), cipher.final()]);
+  return {
+    iv: iv.toString("base64url"),
+    tag: cipher.getAuthTag().toString("base64url"),
+    ciphertext: ciphertext.toString("base64url")
+  };
+}
+function aad(tokenHash, ownerKey) {
+  return Buffer.from(`skillscope-session-v1\0${tokenHash}\0${ownerKey}`, "utf8");
+}
+function decodeEncryptionKey(value) {
+  if (!/^[A-Za-z0-9+/_-]+={0,2}$/.test(value)) return null;
+  const key = Buffer.from(value, value.includes("-") || value.includes("_") ? "base64url" : "base64");
+  return key.length === 32 ? key : null;
 }
 function hashToken(token) {
   return (0, import_node_crypto2.createHash)("sha256").update(token, "utf8").digest("hex");
@@ -829,7 +876,7 @@ async function createSessionRoute(request, context, fetch2) {
   }
 }
 function assertSessionEnvironment(env) {
-  if (!env.WECHAT_APP_ID || !env.WECHAT_APP_SECRET || !env.SESSION_HMAC_KEY || !env.OWNER_HMAC_KEY) {
+  if (!env.WECHAT_APP_ID || !env.WECHAT_APP_SECRET || !env.SESSION_HMAC_KEY || !env.OWNER_HMAC_KEY || !isValidOpenIdEncryptionKey(env.OPENID_ENCRYPTION_KEY)) {
     throw new ApiError("BACKEND_UNAVAILABLE", 503, true);
   }
 }

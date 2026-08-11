@@ -2,7 +2,7 @@ import { requireSession, sessionDependenciesFromEnvironment } from '../auth/sess
 import { success } from '../http/envelope';
 import type { EdgeOneContext } from '../platform/context';
 import { createEdgeOneStores } from '../storage/edgeOneStores';
-import { invalidRequest, nonEmptyString, readJsonObject, routeFailure } from './support';
+import { invalidRequest, methodNotAllowed, nonEmptyString, readJsonObject, routeFailure } from './support';
 
 type Stores = ReturnType<typeof createEdgeOneStores>;
 type Dependencies = { stores: Stores; now(): Date };
@@ -34,7 +34,7 @@ export async function createSettingsRoute(
       await dependencies.stores.settings.set(identity.ownerKey, stored);
       return success({ type: 'accepted' as const, settings: publicSettings(stored, currentVersion) });
     }
-    throw invalidRequest();
+    throw methodNotAllowed();
   } catch (error) {
     return routeFailure(error);
   }

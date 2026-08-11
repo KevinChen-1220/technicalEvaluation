@@ -2,6 +2,7 @@ import type { AssessmentQuestion } from '@dynamic-assessment/assessment-core';
 import { ApiError } from '../src/http/errors';
 import { requestOpenAICompletion } from '../src/generation/openAIClient';
 import { generateFiftyQuestionAssessment } from '../src/generation/generateAssessment';
+import { parseAssessment } from '../src/generation/parseAssessment';
 
 const fixedNow = new Date('2026-08-11T08:00:00.000Z');
 
@@ -10,16 +11,26 @@ describe('single-call assessment generation', () => {
     const questions = makeQuestions(50).map((question, index) => ({ ...question, id: `model-${index}` }));
     const raw = `Model preface\n\`\`\`json\n${JSON.stringify({ questions, scoring: scoring() }).replace(/}$/, ',}')}\n\`\`\`\nDone`;
     const complete = jest.fn(async () => raw);
-    const checkText = jest.fn(async () => undefined);
+    const checkText = jest.fn(async (_content: string, _openId: string) => undefined);
     const createIfAbsent = jest.fn(async (record) => record);
 
     const assessment = await generateFiftyQuestionAssessment({
-      ownerKey: 'owner-a', assessmentId: 'assessment-a', topic: 'TypeScript 类型系统', notes: '重点考察泛型',
+      ownerKey: 'owner-a', openId: 'private-open-id', assessmentId: 'assessment-a', topic: 'TypeScript 类型系统', notes: '重点考察泛型',
     }, { complete, checkText, createIfAbsent, now: () => fixedNow });
 
     expect(complete).toHaveBeenCalledTimes(1);
-    expect(complete).toHaveBeenCalledWith(expect.objectContaining({ topic: 'TypeScript 类型系统', notes: '重点考察泛型' }));
+    expect(complete).toHaveBeenCalledWith(
+      expect.objectContaining({ topic: 'TypeScript 类型系统', notes: '重点考察泛型' }),
+      undefined,
+    );
     expect(checkText).toHaveBeenCalledTimes(2);
+    const moderatedOutput = String(checkText.mock.calls[1]?.[0]);
+    expect(moderatedOutput).toContain('"scoring"');
+    expect(moderatedOutput).toContain('"levels"');
+    expect(moderatedOutput).toContain('"type":"single_choice"');
+    expect(moderatedOutput).toContain('"difficulty":"easy"');
+    expect(moderatedOutput).toContain('"correctOptionIds"');
+    expect(moderatedOutput).toContain('"explanation"');
     expect(assessment.paper.questionCount).toBe(50);
     expect(assessment.paper.questions).toHaveLength(50);
     expect(assessment.paper.questions.map((question) => question.id)).toEqual(
@@ -37,7 +48,7 @@ describe('single-call assessment generation', () => {
   ])('rejects %s without persisting a partial assessment', async (_label, raw) => {
     const createIfAbsent = jest.fn();
     await expect(generateFiftyQuestionAssessment({
-      ownerKey: 'owner-a', assessmentId: 'assessment-a', topic: 'JavaScript',
+      ownerKey: 'owner-a', openId: 'private-open-id', assessmentId: 'assessment-a', topic: 'JavaScript',
     }, {
       complete: async () => raw,
       checkText: async () => undefined,
@@ -51,7 +62,7 @@ describe('single-call assessment generation', () => {
     let checks = 0;
     const createIfAbsent = jest.fn();
     await expect(generateFiftyQuestionAssessment({
-      ownerKey: 'owner-a', assessmentId: 'assessment-a', topic: 'JavaScript', notes: 'closures',
+      ownerKey: 'owner-a', openId: 'private-open-id', assessmentId: 'assessment-a', topic: 'JavaScript', notes: 'closures',
     }, {
       complete: async () => JSON.stringify({ questions: makeQuestions(50), scoring: scoring() }),
       checkText: async () => {
@@ -64,6 +75,51 @@ describe('single-call assessment generation', () => {
       now: () => fixedNow,
     })).rejects.toMatchObject({ code: 'CONTENT_BLOCKED' });
     expect(createIfAbsent).not.toHaveBeenCalled();
+  });
+});
+
+describe('canonical model parsing', () => {
+  test('copies only allowed question fields and removes unknown answer aliases', () => {
+    const questions = makeQuestions(50).map((question) => ({
+      ...question,
+      answer: ['b'],
+      correctAnswer: 'b',
+      rationale: 'leaked alias',
+      options: question.options.map((option) => ({ ...option, isCorrect: option.id === 'b' })),
+    }));
+    const paper = parseAssessment(JSON.stringify({ questions, scoring: scoring(), answerKey: ['b'] }), {
+      assessmentId: 'assessment-a', topic: 'TypeScript', generatedAt: fixedNow.toISOString(),
+    });
+
+    expect(paper.questions[0]).toEqual({
+      id: 'q1', type: 'single_choice', difficulty: 'easy', knowledgePoint: 'Fundamentals', prompt: 'Question 1',
+      options: [{ id: 'a', text: 'Option A' }, { id: 'b', text: 'Option B' }],
+      correctOptionIds: ['a'], explanation: 'Option A is correct.',
+    });
+    expect(JSON.stringify(paper)).not.toContain('correctAnswer');
+    expect(JSON.stringify(paper)).not.toContain('isCorrect');
+    expect(JSON.stringify(paper)).not.toContain('answerKey');
+  });
+
+  test.each([
+    ['string maxScore', { ...scoring(), maxScore: '50' }],
+    ['string level bound', { maxScore: 50, levels: [{ minPercent: '0', maxPercent: 100, title: 'A', summary: 'B' }] }],
+  ])('rejects malformed scoring: %s', (_label, malformedScoring) => {
+    expect(() => parseAssessment(JSON.stringify({ questions: makeQuestions(50), scoring: malformedScoring }), {
+      assessmentId: 'assessment-a', topic: 'TypeScript', generatedAt: fixedNow.toISOString(),
+    })).toThrow(expect.objectContaining({ code: 'INVALID_MODEL_RESPONSE' }));
+  });
+
+  test.each([
+    ['中文主题', '这是一道中文题目'],
+    ['English topic', 'This is an English question'],
+  ])('preserves generated language for %s', (topic, prompt) => {
+    const questions = makeQuestions(50).map((question) => ({ ...question, prompt }));
+    const paper = parseAssessment(JSON.stringify({ questions, scoring: scoring() }), {
+      assessmentId: 'assessment-a', topic, generatedAt: fixedNow.toISOString(),
+    });
+    expect(paper.topic).toBe(topic);
+    expect(paper.questions[0]?.prompt).toBe(prompt);
   });
 });
 
@@ -84,12 +140,48 @@ describe('OpenAI-compatible completion boundary', () => {
     expect(init?.signal).toBeInstanceOf(AbortSignal);
   });
 
+  test.each([
+    ['中文默认主题', undefined],
+    ['English topic', 'Write every question in English'],
+  ])('sends the original input language without forcing Chinese: %s', async (topic, notes) => {
+    const bodies: Array<{ messages: Array<{ content: string }> }> = [];
+    await requestOpenAICompletion({ topic, ...(notes === undefined ? {} : { notes }) }, {
+      baseUrl: 'https://llm.example.test/v1', apiKey: 'runtime-key', model: 'provider/model',
+      fetch: async (_url, init) => {
+        bodies.push(JSON.parse(String(init?.body)) as { messages: Array<{ content: string }> });
+        return new Response(JSON.stringify({ choices: [{ message: { content: '{}' } }] }));
+      },
+    });
+    const prompt = bodies[0]!.messages.map((message) => message.content).join(' ');
+    expect(prompt).toContain(topic);
+    expect(prompt).toContain('same language as the topic and notes');
+    expect(prompt).toContain('default to Chinese');
+  });
+
   test('rejects a provider response larger than 2 MiB', async () => {
     const oversized = 'x'.repeat(2 * 1024 * 1024 + 1);
     await expect(requestOpenAICompletion({ topic: 'JavaScript' }, {
       baseUrl: 'https://llm.example.test/v1', apiKey: 'runtime-key', model: 'provider/model',
       fetch: async () => new Response(oversized),
     })).rejects.toMatchObject({ code: 'INVALID_MODEL_RESPONSE' });
+  });
+
+  test.each([
+    ['HTTP error', new Response(new ReadableStream<Uint8Array>({}), { status: 503 })],
+    ['declared oversized body', new Response(new ReadableStream<Uint8Array>({}), {
+      headers: { 'content-length': String(2 * 1024 * 1024 + 1) },
+    })],
+  ])('cancels an unread provider body for %s', async (_label, sourceResponse) => {
+    let cancelled = false;
+    const response = new Response(new ReadableStream<Uint8Array>({
+      cancel() { cancelled = true; },
+    }), { status: sourceResponse.status, headers: sourceResponse.headers });
+
+    await expect(requestOpenAICompletion({ topic: 'JavaScript' }, {
+      baseUrl: 'https://llm.example.test/v1', apiKey: 'runtime-key', model: 'provider/model',
+      fetch: async () => response,
+    })).rejects.toMatchObject({ code: expect.stringMatching(/PROVIDER_ERROR|INVALID_MODEL_RESPONSE/) });
+    expect(cancelled).toBe(true);
   });
 
   test('aborts the provider after 105 seconds', async () => {
@@ -100,6 +192,21 @@ describe('OpenAI-compatible completion boundary', () => {
         fetch: async (_url, init) => await new Promise<Response>((_resolve, reject) => {
           init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
         }),
+      });
+      const rejection = expect(operation).rejects.toMatchObject({ code: 'PROVIDER_ERROR', retryable: true });
+      await jest.advanceTimersByTimeAsync(105_000);
+      await rejection;
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('enforces the provider timeout when fetch ignores abort', async () => {
+    jest.useFakeTimers();
+    try {
+      const operation = requestOpenAICompletion({ topic: 'JavaScript' }, {
+        baseUrl: 'https://llm.example.test/v1', apiKey: 'runtime-key', model: 'provider/model',
+        fetch: async () => await new Promise<Response>(() => undefined),
       });
       const rejection = expect(operation).rejects.toMatchObject({ code: 'PROVIDER_ERROR', retryable: true });
       await jest.advanceTimersByTimeAsync(105_000);
