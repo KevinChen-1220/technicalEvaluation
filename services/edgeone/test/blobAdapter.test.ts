@@ -12,6 +12,7 @@ describe('EdgeOne Blob adapter', () => {
       })),
     };
     const blob = createBlobPort(store);
+    expect(createBlobPort(store).coordinationKey).toBe(blob.coordinationKey);
 
     await expect(blob.get<{ enabled: boolean }>('settings/user.json', { consistency: 'strong' }))
       .resolves.toEqual({ enabled: true });

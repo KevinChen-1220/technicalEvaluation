@@ -174,13 +174,20 @@ describe('OpenAI-compatible completion boundary', () => {
   ])('cancels an unread provider body for %s', async (_label, sourceResponse) => {
     let cancelled = false;
     const response = new Response(new ReadableStream<Uint8Array>({
-      cancel() { cancelled = true; },
+      cancel() {
+        cancelled = true;
+        return new Promise<void>(() => undefined);
+      },
     }), { status: sourceResponse.status, headers: sourceResponse.headers });
 
-    await expect(requestOpenAICompletion({ topic: 'JavaScript' }, {
+    const operation = requestOpenAICompletion({ topic: 'JavaScript' }, {
       baseUrl: 'https://llm.example.test/v1', apiKey: 'runtime-key', model: 'provider/model',
       fetch: async () => response,
-    })).rejects.toMatchObject({ code: expect.stringMatching(/PROVIDER_ERROR|INVALID_MODEL_RESPONSE/) });
+    });
+    const outcome = await settlesWithin(operation, 100);
+    expect(outcome).toEqual({ type: 'rejected', error: expect.objectContaining({
+      code: expect.stringMatching(/PROVIDER_ERROR|INVALID_MODEL_RESPONSE/),
+    }) });
     expect(cancelled).toBe(true);
   });
 
@@ -238,4 +245,21 @@ function scoring() {
       { minPercent: 60, maxPercent: 100, title: 'Ready', summary: 'Good foundation.' },
     ],
   };
+}
+
+async function settlesWithin(operation: Promise<unknown>, milliseconds: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation.then(
+        (value) => ({ type: 'resolved' as const, value }),
+        (error: unknown) => ({ type: 'rejected' as const, error }),
+      ),
+      new Promise<{ type: 'timeout' }>((resolve) => {
+        timer = setTimeout(() => resolve({ type: 'timeout' }), milliseconds);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }

@@ -20,6 +20,7 @@ function publicMessage(code: string): string {
     INVALID_MODEL_RESPONSE: 'The model returned an invalid assessment.',
     CONFIGURATION_ERROR: 'The service is not configured.',
     REQUEST_TIMEOUT: 'The request timed out.',
+    JOB_ATTEMPT_LIMIT: 'The generation retry limit has been reached.',
     BACKEND_UNAVAILABLE: 'The backend is temporarily unavailable.',
     INTERNAL_ERROR: 'An internal error occurred.',
   };

@@ -53,7 +53,7 @@ async function moderateChunk(content: string, openId: string, token: string, fet
       expiry,
     ]);
     if (!response.ok) {
-      await cancelUnreadBody(response);
+      cancelUnreadBody(response);
       throw backendUnavailable();
     }
     let payload: unknown;
@@ -70,8 +70,8 @@ async function moderateChunk(content: string, openId: string, token: string, fet
   }
 }
 
-async function cancelUnreadBody(response: Response): Promise<void> {
-  if (response.body !== null && !response.body.locked) await response.body.cancel().catch(() => undefined);
+function cancelUnreadBody(response: Response): void {
+  if (response.body !== null && !response.body.locked) void response.body.cancel().catch(() => undefined);
 }
 
 function splitUtf8(value: string, maxBytes: number): string[] {

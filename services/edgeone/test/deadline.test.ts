@@ -4,22 +4,22 @@ import { requestOpenAICompletion } from '../src/generation/openAIClient';
 
 describe('global request deadline and bounded readers', () => {
   test('times out and cancels a stalled request body reader', async () => {
-    jest.useFakeTimers();
     let cancelled = false;
-    try {
-      const stream = new ReadableStream<Uint8Array>({ cancel() { cancelled = true; } });
-      const request = new Request('https://example.test/api/generation', {
-        method: 'POST', body: stream,
-        duplex: 'half',
-      } as RequestInit & { duplex: 'half' });
-      const operation = readJsonObject(request, createDeadline(50));
-      const rejection = expect(operation).rejects.toMatchObject({ code: 'REQUEST_TIMEOUT', status: 504, retryable: true });
-      await jest.advanceTimersByTimeAsync(50);
-      await rejection;
-      expect(cancelled).toBe(true);
-    } finally {
-      jest.useRealTimers();
-    }
+    const stream = new ReadableStream<Uint8Array>({
+      cancel() {
+        cancelled = true;
+        return new Promise<void>(() => undefined);
+      },
+    });
+    const request = new Request('https://example.test/api/generation', {
+      method: 'POST', body: stream,
+      duplex: 'half',
+    } as RequestInit & { duplex: 'half' });
+    const outcome = await settlesWithin(readJsonObject(request, createDeadline(10)), 100);
+    expect(outcome).toEqual({ type: 'rejected', error: expect.objectContaining({
+      code: 'REQUEST_TIMEOUT', status: 504, retryable: true,
+    }) });
+    expect(cancelled).toBe(true);
   });
 
   test('cancels a multi-chunk provider body immediately after crossing 2 MiB', async () => {
@@ -30,13 +30,18 @@ describe('global request deadline and bounded readers', () => {
         controller.enqueue(chunk);
         controller.enqueue(chunk);
       },
-      cancel() { cancelled = true; },
+      cancel() {
+        cancelled = true;
+        return new Promise<void>(() => undefined);
+      },
     });
-    await expect(requestOpenAICompletion({ topic: 'JavaScript' }, {
+    const operation = requestOpenAICompletion({ topic: 'JavaScript' }, {
       baseUrl: 'https://llm.example.test/v1', apiKey: 'runtime-key', model: 'provider/model',
       fetch: async () => new Response(body),
       deadline: createDeadline(115_000),
-    })).rejects.toMatchObject({ code: 'INVALID_MODEL_RESPONSE' });
+    });
+    const outcome = await settlesWithin(operation, 100);
+    expect(outcome).toEqual({ type: 'rejected', error: expect.objectContaining({ code: 'INVALID_MODEL_RESPONSE' }) });
     expect(cancelled).toBe(true);
   });
 
@@ -58,3 +63,20 @@ describe('global request deadline and bounded readers', () => {
     }
   });
 });
+
+async function settlesWithin(operation: Promise<unknown>, milliseconds: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation.then(
+        (value) => ({ type: 'resolved' as const, value }),
+        (error: unknown) => ({ type: 'rejected' as const, error }),
+      ),
+      new Promise<{ type: 'timeout' }>((resolve) => {
+        timer = setTimeout(() => resolve({ type: 'timeout' }), milliseconds);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
+}

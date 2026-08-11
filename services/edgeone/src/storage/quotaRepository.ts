@@ -10,10 +10,11 @@ export function quotaErrorCode(decision: QuotaDecision): 'FREE_TIER_LIMIT' | 'GE
 export class BlobQuotaRepository {
   constructor(private readonly blob: BlobPort) {}
 
-  async reserve(ownerKey: string, now: Date, generationEnabled: boolean): Promise<QuotaDecision> {
+  async reserve(ownerKey: string, now: Date, generationEnabled: boolean, reservationId?: string): Promise<QuotaDecision> {
     if (!generationEnabled) return 'generation_disabled';
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const latest = await this.readLatest(ownerKey);
+      if (reservationId !== undefined && latest?.reservationId === reservationId) return 'allowed';
       if (latest !== null && now.getTime() - new Date(latest.lastRequestAt).getTime() < 60_000) return 'rate_limited';
       const utcDay = now.toISOString().slice(0, 10);
       const dailyCount = latest?.utcDay === utcDay ? latest.dailyCount : 0;
@@ -23,6 +24,7 @@ export class BlobQuotaRepository {
         lastRequestAt: now.toISOString(),
         utcDay,
         dailyCount: dailyCount + 1,
+        ...(reservationId === undefined ? {} : { reservationId }),
       };
       try {
         await this.blob.put(this.key(ownerKey, next.revision), next, { onlyIfNew: true });
@@ -54,4 +56,4 @@ export class BlobQuotaRepository {
   }
 }
 
-type QuotaReservation = { revision: number; lastRequestAt: string; utcDay: string; dailyCount: number };
+type QuotaReservation = { revision: number; lastRequestAt: string; utcDay: string; dailyCount: number; reservationId?: string };

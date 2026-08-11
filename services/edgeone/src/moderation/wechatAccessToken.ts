@@ -1,15 +1,21 @@
 import { ApiError } from '../http/errors';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Deadline } from '../http/deadline';
-import { remainingMilliseconds, withinDeadline } from '../http/deadline';
-import type { BlobPort } from '../storage/ports';
+import { createDeadline, remainingMilliseconds, withinDeadline } from '../http/deadline';
+import { BlobPreconditionFailedError, type BlobPort } from '../storage/ports';
 import type { FetchPort } from '../generation/openAIClient';
 
 const TOKEN_EXPIRY_MARGIN_MS = 5 * 60 * 1000;
 const TOKEN_REQUEST_TIMEOUT_MS = 10_000;
+const TOKEN_REFRESH_BUDGET_MS = 15_000;
+const REFRESH_LOCK_LEASE_MS = 12_000;
+const REFRESH_POLL_MS = 50;
+const MAX_LOCK_REVISION = 999_999_999_999;
 
 type StoredAccessToken = { accessToken: string; expiresAt: string };
-const refreshFlights = new Map<string, Promise<string>>();
+type StoredRefreshLock = { revision: number; ownerToken: string; leaseUntil: string; updatedAt: string };
+type RefreshLockState = { key: string; lock: StoredRefreshLock };
+const refreshFlightsByScope = new WeakMap<object, Map<string, Promise<string>>>();
 
 export interface WeChatAccessTokenDependencies {
   blob: BlobPort;
@@ -36,15 +42,82 @@ export async function getWeChatAccessToken(dependencies: WeChatAccessTokenDepend
   if (isUsable(cached, dependencies.now())) return cached.accessToken;
 
   const flightKey = appId;
+  const refreshFlights = flightsFor(dependencies.blob);
   const existingFlight = refreshFlights.get(flightKey);
   if (existingFlight !== undefined) return await awaitInfrastructure(existingFlight, deadline);
-  const flight = refreshAccessToken(dependencies, cacheKey, appId, appSecret, deadline);
+  const internalDeadline = createDeadline(TOKEN_REFRESH_BUDGET_MS);
+  const refresh = refreshAcrossInstances(dependencies, cacheKey, appId, appSecret, internalDeadline);
+  let flight: Promise<string>;
+  flight = refresh.then(
+    (value) => {
+      if (refreshFlights.get(flightKey) === flight) refreshFlights.delete(flightKey);
+      return value;
+    },
+    (error: unknown) => {
+      if (refreshFlights.get(flightKey) === flight) refreshFlights.delete(flightKey);
+      throw error;
+    },
+  );
   refreshFlights.set(flightKey, flight);
-  try {
-    return await awaitInfrastructure(flight, deadline);
-  } finally {
-    if (refreshFlights.get(flightKey) === flight) refreshFlights.delete(flightKey);
+  return await awaitInfrastructure(flight, deadline);
+}
+
+function flightsFor(blob: BlobPort): Map<string, Promise<string>> {
+  const scope = blob.coordinationKey ?? blob;
+  const existing = refreshFlightsByScope.get(scope);
+  if (existing !== undefined) return existing;
+  const created = new Map<string, Promise<string>>();
+  refreshFlightsByScope.set(scope, created);
+  return created;
+}
+
+async function refreshAcrossInstances(
+  dependencies: WeChatAccessTokenDependencies,
+  cacheKey: string,
+  appId: string,
+  appSecret: string,
+  deadline: Deadline,
+): Promise<string> {
+  while (remainingMilliseconds(deadline) > 0) {
+    const cached = await awaitInfrastructure(
+      dependencies.blob.get<StoredAccessToken>(cacheKey, { consistency: 'strong' }), deadline,
+    );
+    if (isUsable(cached, dependencies.now())) return cached.accessToken;
+
+    const currentLock = await readLatestRefreshLock(dependencies.blob, appId, deadline);
+    if (currentLock !== null && isActiveLock(currentLock.lock, dependencies.now())) {
+      await waitForRefresh(deadline);
+      continue;
+    }
+
+    const now = dependencies.now();
+    const revision = (currentLock?.lock.revision ?? 0) + 1;
+    if (revision > MAX_LOCK_REVISION) throw backendUnavailable();
+    const lockKey = refreshLockKey(appId, revision);
+    const ownerToken = randomUUID();
+    try {
+      await awaitInfrastructure(dependencies.blob.put(lockKey, {
+        revision,
+        ownerToken,
+        leaseUntil: new Date(now.getTime() + REFRESH_LOCK_LEASE_MS).toISOString(),
+        updatedAt: now.toISOString(),
+      }, { onlyIfNew: true }), deadline);
+    } catch (error) {
+      if (isPreconditionFailure(error)) {
+        await waitForRefresh(deadline);
+        continue;
+      }
+      throw error;
+    }
+    if (currentLock !== null) void dependencies.blob.delete(currentLock.key).catch(() => undefined);
+
+    const afterClaim = await awaitInfrastructure(
+      dependencies.blob.get<StoredAccessToken>(cacheKey, { consistency: 'strong' }), deadline,
+    );
+    if (isUsable(afterClaim, dependencies.now())) return afterClaim.accessToken;
+    return await refreshAccessToken(dependencies, cacheKey, appId, appSecret, deadline);
   }
+  throw backendUnavailable();
 }
 
 async function refreshAccessToken(
@@ -80,7 +153,7 @@ async function refreshAccessToken(
     if (timeout !== undefined) clearTimeout(timeout);
   }
   if (!response.ok) {
-    await cancelUnreadBody(response);
+    cancelUnreadBody(response);
     throw backendUnavailable();
   }
   let payload: unknown;
@@ -121,6 +194,44 @@ function tokenCacheKey(appId: string): string {
   return `moderation/wechat-access-token/${digest}.json`;
 }
 
+function refreshLockPrefix(appId: string): string {
+  const digest = createHash('sha256').update(appId, 'utf8').digest('hex').slice(0, 24);
+  return `moderation/wechat-access-token/${digest}.refresh-locks/`;
+}
+
+function refreshLockKey(appId: string, revision: number): string {
+  const inverse = MAX_LOCK_REVISION - revision;
+  return `${refreshLockPrefix(appId)}${String(inverse).padStart(12, '0')}.json`;
+}
+
+async function readLatestRefreshLock(
+  blob: BlobPort,
+  appId: string,
+  deadline: Deadline,
+): Promise<RefreshLockState | null> {
+  const prefix = refreshLockPrefix(appId);
+  const keys = await awaitInfrastructure(blob.list(prefix, { consistency: 'strong', limit: 1 }), deadline);
+  const key = keys.blobs[0];
+  if (key === undefined) return null;
+  const lock = await awaitInfrastructure(blob.get<StoredRefreshLock>(key, { consistency: 'strong' }), deadline);
+  if (lock === null || !Number.isInteger(lock.revision) || lock.revision <= 0) throw backendUnavailable();
+  return { key, lock };
+}
+
+function isActiveLock(value: StoredRefreshLock | null, now: Date): value is StoredRefreshLock {
+  return value !== null
+    && typeof value.ownerToken === 'string'
+    && typeof value.leaseUntil === 'string'
+    && Number.isFinite(new Date(value.leaseUntil).getTime())
+    && new Date(value.leaseUntil).getTime() > now.getTime();
+}
+
+async function waitForRefresh(deadline: Deadline): Promise<void> {
+  const delay = Math.min(REFRESH_POLL_MS, remainingMilliseconds(deadline));
+  if (delay <= 0) throw backendUnavailable();
+  await awaitInfrastructure(new Promise<void>((resolve) => setTimeout(resolve, delay)), deadline);
+}
+
 function operationTimeout(deadline: Deadline | undefined, maximum: number): number {
   return deadline === undefined ? maximum : Math.min(maximum, remainingMilliseconds(deadline));
 }
@@ -128,13 +239,14 @@ function operationTimeout(deadline: Deadline | undefined, maximum: number): numb
 async function awaitInfrastructure<T>(operation: Promise<T>, deadline?: Deadline): Promise<T> {
   try {
     return deadline === undefined ? await operation : await withinDeadline(operation, deadline);
-  } catch {
+  } catch (error) {
+    if (isPreconditionFailure(error)) throw error;
     throw backendUnavailable();
   }
 }
 
-async function cancelUnreadBody(response: Response): Promise<void> {
-  if (response.body !== null && !response.body.locked) await response.body.cancel().catch(() => undefined);
+function cancelUnreadBody(response: Response): void {
+  if (response.body !== null && !response.body.locked) void response.body.cancel().catch(() => undefined);
 }
 
 export async function readJsonResponse(response: Response, deadline: Deadline | undefined, maximumMs: number): Promise<unknown> {
@@ -163,7 +275,7 @@ export async function readJsonResponse(response: Response, deadline: Deadline | 
       chunks.push(result.value);
     }
   } catch (error) {
-    await reader.cancel().catch(() => undefined);
+    void reader.cancel().catch(() => undefined);
     throw error;
   } finally {
     reader.releaseLock();
@@ -180,4 +292,9 @@ function backendUnavailable(): ApiError {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isPreconditionFailure(error: unknown): boolean {
+  return error instanceof BlobPreconditionFailedError
+    || (isRecord(error) && error.code === 'BLOB_PRECONDITION_FAILED');
 }

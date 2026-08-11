@@ -647,6 +647,7 @@ var BlobPreconditionFailedError = class extends Error {
 };
 
 // src/platform/context.ts
+var EDGEONE_BLOB_COORDINATION_KEY = {};
 function createEdgeOneContext(request, env) {
   return {
     request,
@@ -656,6 +657,7 @@ function createEdgeOneContext(request, env) {
 }
 function createBlobPort(store) {
   return {
+    coordinationKey: EDGEONE_BLOB_COORDINATION_KEY,
     async get(key, options) {
       return await store.get(key, {
         type: "json",
@@ -723,6 +725,7 @@ function publicMessage(code) {
     INVALID_MODEL_RESPONSE: "The model returned an invalid assessment.",
     CONFIGURATION_ERROR: "The service is not configured.",
     REQUEST_TIMEOUT: "The request timed out.",
+    JOB_ATTEMPT_LIMIT: "The generation retry limit has been reached.",
     BACKEND_UNAVAILABLE: "The backend is temporarily unavailable.",
     INTERNAL_ERROR: "An internal error occurred."
   };

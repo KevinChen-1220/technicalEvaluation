@@ -28,6 +28,7 @@ export interface BlobListOptions {
 }
 
 export interface BlobPort {
+  readonly coordinationKey?: object;
   get<T>(key: string, options?: BlobReadOptions): Promise<T | null>;
   put<T>(key: string, value: T, options?: BlobWriteOptions): Promise<void>;
   delete(key: string): Promise<void>;

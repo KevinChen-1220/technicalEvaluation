@@ -71,23 +71,23 @@ export async function createGenerationRoute(
       return success(jobEnvelope(begun.job), begun.job.status === 'running' ? 202 : 200);
     }
 
-    const quota = await withinDeadline(dependencies.stores.quota.reserve(
-      identity.ownerKey,
-      dependencies.now(),
-      context.env.GENERATION_ENABLED === 'true',
-    ), deadline);
-    const quotaCode = quotaErrorCode(quota);
-    if (quotaCode !== null) {
-      const status = quotaCode === 'FREE_TIER_LIMIT' ? 429 : 503;
-      const error = new ApiError(quotaCode, status, quotaCode === 'FREE_TIER_LIMIT');
-      await withinDeadline(dependencies.stores.jobs.fail(
-        identity.ownerKey, jobId, begun.job.attempt, leaseToken,
-        error.code, error.retryable, dependencies.now().toISOString(),
-      ), deadline);
-      return routeFailure(error);
-    }
-
     try {
+      if (!begun.job.quotaReserved) {
+        const quota = await withinDeadline(dependencies.stores.quota.reserve(
+          identity.ownerKey,
+          dependencies.now(),
+          context.env.GENERATION_ENABLED === 'true',
+          jobId,
+        ), deadline);
+        const quotaCode = quotaErrorCode(quota);
+        if (quotaCode !== null) {
+          const status = quotaCode === 'FREE_TIER_LIMIT' ? 429 : 503;
+          throw new ApiError(quotaCode, status, quotaCode === 'FREE_TIER_LIMIT');
+        }
+        await withinDeadline(dependencies.stores.jobs.markQuotaReserved(
+          identity.ownerKey, jobId, begun.job.attempt, leaseToken, dependencies.now().toISOString(),
+        ), deadline);
+      }
       await withinDeadline(dependencies.generate({
         ownerKey: identity.ownerKey,
         openId: identity.openId,
@@ -101,18 +101,30 @@ export async function createGenerationRoute(
       return success(jobEnvelope(completed), 201);
     } catch (error) {
       const apiError = error instanceof ApiError ? error : new ApiError('INTERNAL_ERROR', 500, true);
-      try {
-        await withinDeadline(dependencies.stores.jobs.fail(
-          identity.ownerKey, jobId, begun.job.attempt, leaseToken,
-          apiError.code, apiError.retryable, dependencies.now().toISOString(),
-        ), deadline);
-      } catch {
-        // The public response must preserve the original safe failure even if the deadline prevents status persistence.
-      }
+      await bestEffortFail(dependencies, identity.ownerKey, jobId, begun.job.attempt, leaseToken, apiError);
       throw apiError;
     }
   } catch (error) {
     return routeFailure(error);
+  }
+}
+
+async function bestEffortFail(
+  dependencies: GenerationRouteDependencies,
+  ownerKey: string,
+  jobId: string,
+  attempt: number,
+  leaseToken: string,
+  error: ApiError,
+): Promise<void> {
+  const failureDeadline = createDeadline(2_000);
+  try {
+    await withinDeadline(dependencies.stores.jobs.fail(
+      ownerKey, jobId, attempt, leaseToken,
+      error.code, error.retryable, dependencies.now().toISOString(),
+    ), failureDeadline);
+  } catch {
+    // The lease permits a later request to recover when this bounded durability attempt fails.
   }
 }
 

@@ -647,6 +647,7 @@ var BlobPreconditionFailedError = class extends Error {
 };
 
 // src/platform/context.ts
+var EDGEONE_BLOB_COORDINATION_KEY = {};
 function createEdgeOneContext(request, env) {
   return {
     request,
@@ -656,6 +657,7 @@ function createEdgeOneContext(request, env) {
 }
 function createBlobPort(store) {
   return {
+    coordinationKey: EDGEONE_BLOB_COORDINATION_KEY,
     async get(key, options) {
       return await store.get(key, {
         type: "json",
@@ -822,6 +824,7 @@ function publicMessage(code) {
     INVALID_MODEL_RESPONSE: "The model returned an invalid assessment.",
     CONFIGURATION_ERROR: "The service is not configured.",
     REQUEST_TIMEOUT: "The request timed out.",
+    JOB_ATTEMPT_LIMIT: "The generation retry limit has been reached.",
     BACKEND_UNAVAILABLE: "The backend is temporarily unavailable.",
     INTERNAL_ERROR: "An internal error occurred."
   };
@@ -1034,10 +1037,11 @@ var BlobQuotaRepository = class {
   constructor(blob) {
     this.blob = blob;
   }
-  async reserve(ownerKey, now, generationEnabled) {
+  async reserve(ownerKey, now, generationEnabled, reservationId) {
     if (!generationEnabled) return "generation_disabled";
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const latest = await this.readLatest(ownerKey);
+      if (reservationId !== void 0 && latest?.reservationId === reservationId) return "allowed";
       if (latest !== null && now.getTime() - new Date(latest.lastRequestAt).getTime() < 6e4) return "rate_limited";
       const utcDay = now.toISOString().slice(0, 10);
       const dailyCount = latest?.utcDay === utcDay ? latest.dailyCount : 0;
@@ -1046,7 +1050,8 @@ var BlobQuotaRepository = class {
         revision: (latest?.revision ?? 0) + 1,
         lastRequestAt: now.toISOString(),
         utcDay,
-        dailyCount: dailyCount + 1
+        dailyCount: dailyCount + 1,
+        ...reservationId === void 0 ? {} : { reservationId }
       };
       try {
         await this.blob.put(this.key(ownerKey, next.revision), next, { onlyIfNew: true });
@@ -1130,16 +1135,36 @@ var BlobSettingsRepository = class {
 };
 
 // src/storage/jobRepository.ts
-var MAX_ATTEMPTS = 8;
+var MAX_CLAIM_RETRIES = 8;
+var MAX_JOB_ATTEMPTS = 3;
+var JOB_LEASE_MS = 2 * 60 * 1e3;
 var BlobGenerationJobRepository = class {
   constructor(blob) {
     this.blob = blob;
   }
   async begin(input) {
-    for (let turn = 0; turn < MAX_ATTEMPTS; turn += 1) {
-      const latest = await this.get(input.ownerKey, input.jobId);
-      if (latest !== null && (latest.status !== "failed" || !input.retry)) return { type: "existing", job: latest };
-      const attempt = (latest?.attempt ?? 0) + 1;
+    for (let turn = 0; turn < MAX_CLAIM_RETRIES; turn += 1) {
+      const latest = await this.readLatestState(input.ownerKey, input.jobId);
+      if (latest !== null) {
+        if (latest.job.status === "completed") return { type: "existing", job: latest.job };
+        if (latest.job.status === "running" && (!input.retry || !leaseExpired(latest.job, input.now))) {
+          return { type: "existing", job: latest.job };
+        }
+        if (latest.job.status === "failed" && !input.retry) return { type: "existing", job: latest.job };
+        if (latest.job.attempt >= MAX_JOB_ATTEMPTS) {
+          if (latest.job.status === "running") {
+            const exhausted = await this.finish(input.ownerKey, input.jobId, latest.job.attempt, latest.claim.leaseToken, {
+              status: "failed",
+              errorCode: "JOB_ATTEMPT_LIMIT",
+              retryable: false,
+              now: input.now
+            });
+            return { type: "existing", job: exhausted };
+          }
+          return { type: "existing", job: latest.job };
+        }
+      }
+      const attempt = (latest?.job.attempt ?? 0) + 1;
       const claim = {
         jobId: input.jobId,
         ownerKey: input.ownerKey,
@@ -1151,6 +1176,8 @@ var BlobGenerationJobRepository = class {
         status: "running",
         errorCode: null,
         retryable: false,
+        quotaReserved: latest?.job.quotaReserved ?? false,
+        leaseUntil: new Date(new Date(input.now).getTime() + JOB_LEASE_MS).toISOString(),
         createdAt: input.now,
         updatedAt: input.now
       };
@@ -1164,15 +1191,22 @@ var BlobGenerationJobRepository = class {
     throw new Error("JOB_CLAIM_CONFLICT");
   }
   async get(ownerKey, jobId) {
-    const prefix = `${this.baseKey(ownerKey, jobId)}/attempts/`;
-    const keys = (await this.blob.list(prefix, { consistency: "strong", limit: 64 })).blobs;
-    const attempts = keys.map((key) => Number(/\/attempts\/(\d{4})\/claim\.json$/.exec(key)?.[1])).filter((attempt2) => Number.isInteger(attempt2) && attempt2 > 0);
-    if (attempts.length === 0) return null;
-    const attempt = Math.max(...attempts);
-    const result = await this.blob.get(this.resultKey(ownerKey, jobId, attempt), { consistency: "strong" });
-    if (result !== null) return publicJob(result);
-    const claim = await this.blob.get(this.claimKey(ownerKey, jobId, attempt), { consistency: "strong" });
-    return claim === null ? null : publicJob(claim);
+    return (await this.readLatestState(ownerKey, jobId))?.job ?? null;
+  }
+  async markQuotaReserved(ownerKey, jobId, attempt, leaseToken, now) {
+    const existing = await this.blob.get(this.quotaMarkerKey(ownerKey, jobId), { consistency: "strong" });
+    if (existing === null) {
+      const latest = await this.readLatestState(ownerKey, jobId);
+      if (latest === null || latest.job.attempt !== attempt || latest.job.status !== "running" || latest.claim.leaseToken !== leaseToken) throw new Error("JOB_LEASE_CONFLICT");
+      try {
+        await this.blob.put(this.quotaMarkerKey(ownerKey, jobId), { jobId, attempt, reservedAt: now }, { onlyIfNew: true });
+      } catch (error) {
+        if (!(error instanceof BlobPreconditionFailedError)) throw error;
+      }
+    }
+    const updated = await this.get(ownerKey, jobId);
+    if (updated === null) throw new Error("JOB_CLAIM_MISSING");
+    return updated;
   }
   async complete(ownerKey, jobId, attempt, leaseToken, now) {
     return await this.finish(ownerKey, jobId, attempt, leaseToken, {
@@ -1183,7 +1217,12 @@ var BlobGenerationJobRepository = class {
     });
   }
   async fail(ownerKey, jobId, attempt, leaseToken, errorCode, retryable, now) {
-    return await this.finish(ownerKey, jobId, attempt, leaseToken, { status: "failed", errorCode, retryable, now });
+    return await this.finish(ownerKey, jobId, attempt, leaseToken, {
+      status: "failed",
+      errorCode,
+      retryable: retryable && attempt < MAX_JOB_ATTEMPTS,
+      now
+    });
   }
   async recoverCompleted(ownerKey, jobId, attempt, now) {
     const claim = await this.blob.get(this.claimKey(ownerKey, jobId, attempt), { consistency: "strong" });
@@ -1197,7 +1236,7 @@ var BlobGenerationJobRepository = class {
   }
   async finish(ownerKey, jobId, attempt, leaseToken, result) {
     const existing = await this.blob.get(this.resultKey(ownerKey, jobId, attempt), { consistency: "strong" });
-    if (existing !== null) return publicJob(existing);
+    if (existing !== null) return await this.withQuota(ownerKey, jobId, existing);
     const claim = await this.blob.get(this.claimKey(ownerKey, jobId, attempt), { consistency: "strong" });
     if (claim === null || claim.leaseToken !== leaseToken) throw new Error("JOB_LEASE_CONFLICT");
     const finished = {
@@ -1206,17 +1245,33 @@ var BlobGenerationJobRepository = class {
       status: result.status,
       errorCode: result.errorCode,
       retryable: result.retryable,
+      leaseUntil: null,
       updatedAt: result.now
     };
     try {
       await this.blob.put(this.resultKey(ownerKey, jobId, attempt), finished, { onlyIfNew: true });
-      return finished;
+      return await this.withQuota(ownerKey, jobId, finished);
     } catch (error) {
       if (!(error instanceof BlobPreconditionFailedError)) throw error;
       const winner = await this.blob.get(this.resultKey(ownerKey, jobId, attempt), { consistency: "strong" });
       if (winner === null) throw new Error("JOB_RESULT_CONFLICT");
-      return winner;
+      return await this.withQuota(ownerKey, jobId, winner);
     }
+  }
+  async readLatestState(ownerKey, jobId) {
+    const prefix = `${this.baseKey(ownerKey, jobId)}/attempts/`;
+    const keys = (await this.blob.list(prefix, { consistency: "strong", limit: 64 })).blobs;
+    const attempts = keys.map((key) => Number(/\/attempts\/(\d{4})\/claim\.json$/.exec(key)?.[1])).filter((attempt2) => Number.isInteger(attempt2) && attempt2 > 0);
+    if (attempts.length === 0) return null;
+    const attempt = Math.max(...attempts);
+    const claim = await this.blob.get(this.claimKey(ownerKey, jobId, attempt), { consistency: "strong" });
+    if (claim === null) return null;
+    const result = await this.blob.get(this.resultKey(ownerKey, jobId, attempt), { consistency: "strong" });
+    return { job: await this.withQuota(ownerKey, jobId, result ?? claim), claim };
+  }
+  async withQuota(ownerKey, jobId, record) {
+    const marker = await this.blob.get(this.quotaMarkerKey(ownerKey, jobId), { consistency: "strong" });
+    return publicJob(record, marker !== null);
   }
   baseKey(ownerKey, jobId) {
     return `jobs/${encodeURIComponent(ownerKey)}/${encodeURIComponent(jobId)}`;
@@ -1227,10 +1282,44 @@ var BlobGenerationJobRepository = class {
   resultKey(ownerKey, jobId, attempt) {
     return `${this.baseKey(ownerKey, jobId)}/attempts/${String(attempt).padStart(4, "0")}/result.json`;
   }
+  quotaMarkerKey(ownerKey, jobId) {
+    return `${this.baseKey(ownerKey, jobId)}/quota-reserved.json`;
+  }
 };
-function publicJob(record) {
-  const { jobId, ownerKey, clientRequestIdHash, assessmentId, attempt, revision, status, errorCode, retryable, createdAt, updatedAt } = record;
-  return { jobId, ownerKey, clientRequestIdHash, assessmentId, attempt, revision, status, errorCode, retryable, createdAt, updatedAt };
+function leaseExpired(job, now) {
+  const leaseUntil = job.leaseUntil ?? job.updatedAt;
+  return new Date(leaseUntil).getTime() <= new Date(now).getTime();
+}
+function publicJob(record, quotaReserved = record.quotaReserved === true) {
+  const {
+    jobId,
+    ownerKey,
+    clientRequestIdHash,
+    assessmentId,
+    attempt,
+    revision,
+    status,
+    errorCode,
+    retryable,
+    createdAt,
+    updatedAt
+  } = record;
+  const leaseUntil = status === "running" && typeof record.leaseUntil === "string" ? record.leaseUntil : null;
+  return {
+    jobId,
+    ownerKey,
+    clientRequestIdHash,
+    assessmentId,
+    attempt,
+    revision,
+    status,
+    errorCode,
+    retryable,
+    quotaReserved,
+    leaseUntil,
+    createdAt,
+    updatedAt
+  };
 }
 
 // src/storage/edgeOneStores.ts
@@ -1311,7 +1400,7 @@ async function readRequestBody(request, deadline) {
     }
     return new TextDecoder().decode(joined);
   } catch (error) {
-    await reader.cancel().catch(() => void 0);
+    void reader.cancel().catch(() => void 0);
     throw error;
   } finally {
     reader.releaseLock();

@@ -72,7 +72,7 @@ export async function requestOpenAICompletion(
       expiry,
     ]);
     if (!response.ok) {
-      await cancelUnreadBody(response);
+      cancelUnreadBody(response);
       throw new ApiError('PROVIDER_ERROR', 502, true);
     }
     const raw = await readBoundedBody(response, MAX_RESPONSE_BYTES, expiresAt, timeoutError);
@@ -97,7 +97,7 @@ export async function requestOpenAICompletion(
 async function readBoundedBody(response: Response, limit: number, expiresAt: number, timeoutError: ApiError): Promise<string> {
   const declaredLength = Number(response.headers.get('content-length'));
   if (Number.isFinite(declaredLength) && declaredLength > limit) {
-    await cancelUnreadBody(response);
+    cancelUnreadBody(response);
     throw new ApiError('INVALID_MODEL_RESPONSE', 502, true);
   }
   if (response.body === null) return '';
@@ -125,7 +125,7 @@ async function readBoundedBody(response: Response, limit: number, expiresAt: num
       chunks.push(result.value);
     }
   } catch (error) {
-    await reader.cancel().catch(() => undefined);
+    void reader.cancel().catch(() => undefined);
     throw error;
   } finally {
     reader.releaseLock();
@@ -139,8 +139,8 @@ async function readBoundedBody(response: Response, limit: number, expiresAt: num
   return new TextDecoder().decode(joined);
 }
 
-async function cancelUnreadBody(response: Response): Promise<void> {
-  if (response.body !== null && !response.body.locked) await response.body.cancel().catch(() => undefined);
+function cancelUnreadBody(response: Response): void {
+  if (response.body !== null && !response.body.locked) void response.body.cancel().catch(() => undefined);
 }
 
 function completionContent(value: unknown): string | null {

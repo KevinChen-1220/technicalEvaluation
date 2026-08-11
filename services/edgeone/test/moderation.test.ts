@@ -2,6 +2,7 @@ import { MemoryBlobPort } from '../src/storage/memoryStores';
 import { createWeChatTextSecurity } from '../src/moderation/wechatTextSecurity';
 import { getWeChatAccessToken } from '../src/moderation/wechatAccessToken';
 import { createDeadline } from '../src/http/deadline';
+import { createHash } from 'node:crypto';
 
 describe('WeChat text security', () => {
   test('caches access tokens in Blob using strong reads and moderates bounded chunks', async () => {
@@ -67,7 +68,9 @@ describe('WeChat text security', () => {
     const base = { blob, appSecret: 'runtime-secret', fetch, now: () => new Date('2026-08-11T08:00:00.000Z') };
     await getWeChatAccessToken({ ...base, appId: 'wx-app-a' });
     await getWeChatAccessToken({ ...base, appId: 'wx-app-b' });
-    const keys = [...blob.records.keys()].filter((key) => key.startsWith('moderation/wechat-access-token/'));
+    const keys = [...blob.records.keys()].filter((key) => (
+      key.startsWith('moderation/wechat-access-token/') && !key.includes('.refresh-locks/')
+    ));
     expect(keys).toHaveLength(2);
     await blob.put(keys[0]!, {
       accessToken: 'cached-token', expiresAt: '2026-08-11T09:00:00.000Z',
@@ -141,24 +144,27 @@ describe('WeChat text security', () => {
   });
 
   test('cancels a stalled moderation response body at the global deadline', async () => {
-    jest.useFakeTimers();
     let cancelled = false;
-    try {
-      const blob = new MemoryBlobPort();
-      await seedToken(blob);
-      const security = createWeChatTextSecurity({
-        blob, appId: 'wx-runtime-app', appSecret: 'runtime-secret',
-        fetch: async () => new Response(new ReadableStream<Uint8Array>({ cancel() { cancelled = true; } })),
-        now: () => new Date('2026-08-11T08:00:00.000Z'),
-      });
-      const operation = security.checkText('content', 'private-open-id', createDeadline(50));
-      const rejection = expect(operation).rejects.toMatchObject({ code: 'BACKEND_UNAVAILABLE', retryable: true });
-      await jest.advanceTimersByTimeAsync(50);
-      await rejection;
-      expect(cancelled).toBe(true);
-    } finally {
-      jest.useRealTimers();
-    }
+    const blob = new MemoryBlobPort();
+    await seedToken(blob);
+    const security = createWeChatTextSecurity({
+      blob, appId: 'wx-runtime-app', appSecret: 'runtime-secret',
+      fetch: async () => new Response(new ReadableStream<Uint8Array>({
+        cancel() {
+          cancelled = true;
+          return new Promise<void>(() => undefined);
+        },
+      })),
+      now: () => new Date('2026-08-11T08:00:00.000Z'),
+    });
+    const outcome = await settlesWithin(
+      security.checkText('content', 'private-open-id', createDeadline(10)),
+      100,
+    );
+    expect(outcome).toEqual({ type: 'rejected', error: expect.objectContaining({
+      code: 'BACKEND_UNAVAILABLE', retryable: true,
+    }) });
+    expect(cancelled).toBe(true);
   });
 
   test('stops waiting for Blob token reads and writes at the global deadline', async () => {
@@ -216,6 +222,128 @@ describe('WeChat text security', () => {
     }
   });
 
+  test('does not let the first short waiter cancel a longer single-flight waiter', async () => {
+    jest.useFakeTimers();
+    let release!: () => void;
+    let started!: () => void;
+    const barrier = new Promise<void>((resolve) => { release = resolve; });
+    const didStart = new Promise<void>((resolve) => { started = resolve; });
+    try {
+      const dependencies = {
+        blob: new MemoryBlobPort(), appId: 'wx-short-owner', appSecret: 'runtime-secret',
+        fetch: async () => {
+          started();
+          await barrier;
+          return new Response(JSON.stringify({ access_token: 'shared-token', expires_in: 7200 }));
+        },
+        now: () => new Date(Date.now()),
+      };
+      const shortWaiter = getWeChatAccessToken(dependencies, createDeadline(50));
+      const shortRejection = expect(shortWaiter).rejects.toMatchObject({ code: 'BACKEND_UNAVAILABLE', retryable: true });
+      await didStart;
+      const longWaiter = getWeChatAccessToken(dependencies, createDeadline(1_000));
+      await jest.advanceTimersByTimeAsync(50);
+      await shortRejection;
+      release();
+      await expect(longWaiter).resolves.toBe('shared-token');
+    } finally {
+      release?.();
+      jest.useRealTimers();
+    }
+  });
+
+  test('coordinates token refresh across isolated instances through a Blob lease', async () => {
+    let getFromInstanceA!: typeof getWeChatAccessToken;
+    let getFromInstanceB!: typeof getWeChatAccessToken;
+    await jest.isolateModulesAsync(async () => {
+      getFromInstanceA = (await import('../src/moderation/wechatAccessToken')).getWeChatAccessToken;
+    });
+    await jest.isolateModulesAsync(async () => {
+      getFromInstanceB = (await import('../src/moderation/wechatAccessToken')).getWeChatAccessToken;
+    });
+    const blob = new MemoryBlobPort();
+    let release!: () => void;
+    let started!: () => void;
+    const barrier = new Promise<void>((resolve) => { release = resolve; });
+    const didStart = new Promise<void>((resolve) => { started = resolve; });
+    const fetch = jest.fn(async () => {
+      started();
+      await barrier;
+      return new Response(JSON.stringify({ access_token: 'cross-instance-token', expires_in: 7200 }));
+    });
+    const dependencies = {
+      blob, appId: 'wx-cross-instance', appSecret: 'runtime-secret', fetch,
+      now: () => new Date(Date.now()),
+    };
+
+    const left = getFromInstanceA(dependencies, createDeadline(2_000));
+    const right = getFromInstanceB(dependencies, createDeadline(2_000));
+    await didStart;
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    expect(fetch).toHaveBeenCalledTimes(1);
+    release();
+
+    await expect(Promise.all([left, right])).resolves.toEqual(['cross-instance-token', 'cross-instance-token']);
+  });
+
+  test('allows only one isolated instance to take over an expired refresh lock', async () => {
+    let getFromInstanceA!: typeof getWeChatAccessToken;
+    let getFromInstanceB!: typeof getWeChatAccessToken;
+    await jest.isolateModulesAsync(async () => {
+      getFromInstanceA = (await import('../src/moderation/wechatAccessToken')).getWeChatAccessToken;
+    });
+    await jest.isolateModulesAsync(async () => {
+      getFromInstanceB = (await import('../src/moderation/wechatAccessToken')).getWeChatAccessToken;
+    });
+    const blob = new MemoryBlobPort();
+    const appId = 'wx-racing-takeover';
+    await blob.put(refreshLockKeyForTest(appId, 1), {
+      revision: 1,
+      ownerToken: 'abandoned-owner',
+      leaseUntil: '2026-08-11T07:59:00.000Z',
+      updatedAt: '2026-08-11T07:58:00.000Z',
+    }, { onlyIfNew: true });
+    const fetch = jest.fn(async () => new Response(JSON.stringify({ access_token: 'takeover-token', expires_in: 7200 })));
+    const dependencies = {
+      blob, appId, appSecret: 'runtime-secret', fetch,
+      now: () => new Date('2026-08-11T08:00:00.000Z'),
+    };
+
+    await expect(Promise.all([
+      getFromInstanceA(dependencies, createDeadline(2_000)),
+      getFromInstanceB(dependencies, createDeadline(2_000)),
+    ])).resolves.toEqual(['takeover-token', 'takeover-token']);
+    expect(fetch).toHaveBeenCalledTimes(1);
+  });
+
+  test('waits for an active refresh lock and takes over after its lease expires', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-08-11T08:00:00.000Z'));
+    try {
+      const blob = new MemoryBlobPort();
+      const appId = 'wx-expired-lock';
+      await blob.put(refreshLockKeyForTest(appId, 1), {
+        revision: 1,
+        ownerToken: 'abandoned-owner',
+        leaseUntil: '2026-08-11T08:00:01.000Z',
+        updatedAt: '2026-08-11T08:00:00.000Z',
+      }, { onlyIfNew: true });
+      const fetch = jest.fn(async () => new Response(JSON.stringify({ access_token: 'recovered-token', expires_in: 7200 })));
+
+      const operation = getWeChatAccessToken({
+        blob, appId, appSecret: 'runtime-secret', fetch, now: () => new Date(Date.now()),
+      }, createDeadline(5_000));
+      await jest.advanceTimersByTimeAsync(0);
+      expect(fetch).not.toHaveBeenCalled();
+      await jest.advanceTimersByTimeAsync(1_000);
+
+      await expect(operation).resolves.toBe('recovered-token');
+      expect(fetch).toHaveBeenCalledTimes(1);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   test.each(['token', 'moderation'] as const)('enforces the global deadline when the %s fetch ignores abort', async (stage) => {
     jest.useFakeTimers();
     try {
@@ -239,7 +367,10 @@ describe('WeChat text security', () => {
   test.each(['token', 'moderation'] as const)('cancels an unread %s error response body', async (stage) => {
     let cancelled = false;
     const errorResponse = () => new Response(new ReadableStream<Uint8Array>({
-      cancel() { cancelled = true; },
+      cancel() {
+        cancelled = true;
+        return new Promise<void>(() => undefined);
+      },
     }), { status: 503 });
     const blob = new MemoryBlobPort();
     if (stage === 'moderation') await seedToken(blob);
@@ -252,7 +383,10 @@ describe('WeChat text security', () => {
       ? getWeChatAccessToken(dependencies)
       : createWeChatTextSecurity(dependencies).checkText('content', 'private-open-id');
 
-    await expect(operation).rejects.toMatchObject({ code: 'BACKEND_UNAVAILABLE', retryable: true });
+    const outcome = await settlesWithin(operation, 100);
+    expect(outcome).toEqual({ type: 'rejected', error: expect.objectContaining({
+      code: 'BACKEND_UNAVAILABLE', retryable: true,
+    }) });
     expect(cancelled).toBe(true);
   });
 
@@ -297,5 +431,30 @@ async function seedToken(blob: MemoryBlobPort): Promise<string> {
     fetch: async () => new Response(JSON.stringify({ access_token: 'cached-token', expires_in: 7200 })),
     now: () => new Date('2026-08-11T08:00:00.000Z'),
   });
-  return [...blob.records.keys()].find((key) => key.startsWith('moderation/wechat-access-token/'))!;
+  return [...blob.records.keys()].find((key) => (
+    key.startsWith('moderation/wechat-access-token/') && !key.includes('.refresh-locks/')
+  ))!;
+}
+
+function refreshLockKeyForTest(appId: string, revision: number): string {
+  const digest = createHash('sha256').update(appId, 'utf8').digest('hex').slice(0, 24);
+  const inverse = 999_999_999_999 - revision;
+  return `moderation/wechat-access-token/${digest}.refresh-locks/${String(inverse).padStart(12, '0')}.json`;
+}
+
+async function settlesWithin(operation: Promise<unknown>, milliseconds: number) {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      operation.then(
+        (value) => ({ type: 'resolved' as const, value }),
+        (error: unknown) => ({ type: 'rejected' as const, error }),
+      ),
+      new Promise<{ type: 'timeout' }>((resolve) => {
+        timer = setTimeout(() => resolve({ type: 'timeout' }), milliseconds);
+      }),
+    ]);
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+  }
 }

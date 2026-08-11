@@ -152,6 +152,99 @@ describe('EdgeOne REST contracts', () => {
     expect(generate).toHaveBeenCalledTimes(2);
   });
 
+  test('reuses one real quota reservation when a failed generation is retried immediately', async () => {
+    const fixture = await routeFixture();
+    await fixture.stores.settings.set(fixture.ownerKey, {
+      privacyPolicyVersion: '2026-08-10', privacyConsentAt: now().toISOString(),
+    });
+    const generate = jest.fn()
+      .mockRejectedValueOnce(new ApiError('PROVIDER_ERROR', 502, true))
+      .mockImplementationOnce(async (input: { ownerKey: string; assessmentId: string; topic: string }) => {
+        const record = assessmentRecord(input.ownerKey, input.assessmentId, input.topic);
+        await fixture.stores.assessments.createIfAbsent(record);
+        return record;
+      });
+    const body = { topic: 'TypeScript', clientRequestId: 'real-quota-retry' };
+
+    const failed = await createGenerationRoute(fixture.request('/api/generation', 'POST', body), fixture.context, {
+      stores: fixture.stores, generate, now,
+    });
+    const retried = await createGenerationRoute(fixture.request('/api/generation', 'POST', { ...body, retry: true }), fixture.context, {
+      stores: fixture.stores, generate, now,
+    });
+
+    expect(failed.status).toBe(502);
+    expect(retried.status).toBe(201);
+    expect(generate).toHaveBeenCalledTimes(2);
+    const quotaRecords = [...fixture.blob.records.entries()]
+      .filter(([key]) => key.startsWith(`quotas/${encodeURIComponent(fixture.ownerKey)}/ledger/`));
+    expect(quotaRecords).toHaveLength(1);
+    expect(quotaRecords[0]?.[1]).toEqual(expect.objectContaining({ dailyCount: 1 }));
+  });
+
+  test('durably fails a claimed job when quota reservation throws', async () => {
+    const fixture = await routeFixture();
+    await fixture.stores.settings.set(fixture.ownerKey, {
+      privacyPolicyVersion: '2026-08-10', privacyConsentAt: now().toISOString(),
+    });
+    jest.spyOn(fixture.stores.quota, 'reserve').mockRejectedValue(new Error('Blob unavailable'));
+    const body = { topic: 'TypeScript', clientRequestId: 'quota-error' };
+
+    const failed = await createGenerationRoute(fixture.request('/api/generation', 'POST', body), fixture.context, {
+      stores: fixture.stores, generate: jest.fn(), now,
+    });
+    const replay = await createGenerationRoute(fixture.request('/api/generation', 'POST', body), fixture.context, {
+      stores: fixture.stores, generate: jest.fn(), now,
+    });
+
+    expect(failed.status).toBe(500);
+    expect(await replay.json()).toEqual({ ok: true, data: expect.objectContaining({
+      status: 'failed', attempt: 1, errorCode: 'INTERNAL_ERROR', retryable: true,
+    }) });
+  });
+
+  test('uses a fresh short budget to persist failure after the global deadline expires', async () => {
+    const fixture = await routeFixture();
+    await fixture.stores.settings.set(fixture.ownerKey, {
+      privacyPolicyVersion: '2026-08-10', privacyConsentAt: now().toISOString(),
+    });
+    let generationStarted!: () => void;
+    const didStart = new Promise<void>((resolve) => { generationStarted = resolve; });
+    const originalFail = fixture.stores.jobs.fail.bind(fixture.stores.jobs);
+    jest.spyOn(fixture.stores.jobs, 'fail').mockImplementation(async (...args) => {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      return await originalFail(...args);
+    });
+    jest.useFakeTimers();
+    try {
+      let settled = false;
+      const body = { topic: 'TypeScript', clientRequestId: 'deadline-durable-failure' };
+      const operation = createGenerationRoute(fixture.request('/api/generation', 'POST', body), fixture.context, {
+        stores: fixture.stores,
+        generate: async () => {
+          generationStarted();
+          return await new Promise(() => undefined);
+        },
+        now,
+      }).finally(() => { settled = true; });
+      await didStart;
+      await jest.advanceTimersByTimeAsync(115_000);
+      await Promise.resolve();
+      expect(settled).toBe(false);
+      await jest.advanceTimersByTimeAsync(100);
+      expect((await operation).status).toBe(504);
+
+      const replay = await createGenerationRoute(fixture.request('/api/generation', 'POST', body), fixture.context, {
+        stores: fixture.stores, generate: jest.fn(), now,
+      });
+      expect(await replay.json()).toEqual({ ok: true, data: expect.objectContaining({
+        status: 'failed', errorCode: 'REQUEST_TIMEOUT', attempt: 1,
+      }) });
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   test('lists, gets, updates, and completes only the authenticated owner assessment', async () => {
     const fixture = await routeFixture();
     await fixture.stores.assessments.createIfAbsent(assessmentRecord(fixture.ownerKey, 'assessment-a', 'TypeScript'));
@@ -332,6 +425,7 @@ async function routeFixture() {
   };
   return {
     context,
+    blob,
     ownerKey: identity.ownerKey,
     stores: createEdgeOneStores(blob, { now }),
     request(path: string, method = 'GET', body?: unknown) {

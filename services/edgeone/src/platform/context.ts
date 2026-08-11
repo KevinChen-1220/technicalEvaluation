@@ -19,6 +19,8 @@ interface EdgeOneBlobStore {
   }>;
 }
 
+const EDGEONE_BLOB_COORDINATION_KEY = {};
+
 export function createEdgeOneContext(request: Request, env: EdgeOneEnvironment): EdgeOneContext {
   return {
     request,
@@ -29,6 +31,7 @@ export function createEdgeOneContext(request: Request, env: EdgeOneEnvironment):
 
 export function createBlobPort(store: EdgeOneBlobStore): BlobPort {
   return {
+    coordinationKey: EDGEONE_BLOB_COORDINATION_KEY,
     async get<T>(key: string, options?: { consistency?: 'eventual' | 'strong' }) {
       return await store.get(key, {
         type: 'json',

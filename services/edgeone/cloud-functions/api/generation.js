@@ -647,6 +647,7 @@ var BlobPreconditionFailedError = class extends Error {
 };
 
 // src/platform/context.ts
+var EDGEONE_BLOB_COORDINATION_KEY = {};
 function createEdgeOneContext(request, env) {
   return {
     request,
@@ -656,6 +657,7 @@ function createEdgeOneContext(request, env) {
 }
 function createBlobPort(store) {
   return {
+    coordinationKey: EDGEONE_BLOB_COORDINATION_KEY,
     async get(key, options) {
       return await store.get(key, {
         type: "json",
@@ -2071,7 +2073,7 @@ async function requestOpenAICompletion(input, dependencies) {
       expiry
     ]);
     if (!response.ok) {
-      await cancelUnreadBody(response);
+      cancelUnreadBody(response);
       throw new ApiError("PROVIDER_ERROR", 502, true);
     }
     const raw = await readBoundedBody(response, MAX_RESPONSE_BYTES, expiresAt, timeoutError);
@@ -2095,7 +2097,7 @@ async function requestOpenAICompletion(input, dependencies) {
 async function readBoundedBody(response, limit, expiresAt, timeoutError) {
   const declaredLength = Number(response.headers.get("content-length"));
   if (Number.isFinite(declaredLength) && declaredLength > limit) {
-    await cancelUnreadBody(response);
+    cancelUnreadBody(response);
     throw new ApiError("INVALID_MODEL_RESPONSE", 502, true);
   }
   if (response.body === null) return "";
@@ -2123,7 +2125,7 @@ async function readBoundedBody(response, limit, expiresAt, timeoutError) {
       chunks.push(result.value);
     }
   } catch (error) {
-    await reader.cancel().catch(() => void 0);
+    void reader.cancel().catch(() => void 0);
     throw error;
   } finally {
     reader.releaseLock();
@@ -2136,8 +2138,8 @@ async function readBoundedBody(response, limit, expiresAt, timeoutError) {
   }
   return new TextDecoder().decode(joined);
 }
-async function cancelUnreadBody(response) {
-  if (response.body !== null && !response.body.locked) await response.body.cancel().catch(() => void 0);
+function cancelUnreadBody(response) {
+  if (response.body !== null && !response.body.locked) void response.body.cancel().catch(() => void 0);
 }
 function completionContent(value) {
   if (!isRecord3(value) || !Array.isArray(value.choices)) return null;
@@ -2183,6 +2185,7 @@ function publicMessage(code) {
     INVALID_MODEL_RESPONSE: "The model returned an invalid assessment.",
     CONFIGURATION_ERROR: "The service is not configured.",
     REQUEST_TIMEOUT: "The request timed out.",
+    JOB_ATTEMPT_LIMIT: "The generation retry limit has been reached.",
     BACKEND_UNAVAILABLE: "The backend is temporarily unavailable.",
     INTERNAL_ERROR: "An internal error occurred."
   };
@@ -2399,10 +2402,11 @@ var BlobQuotaRepository = class {
   constructor(blob) {
     this.blob = blob;
   }
-  async reserve(ownerKey, now, generationEnabled) {
+  async reserve(ownerKey, now, generationEnabled, reservationId) {
     if (!generationEnabled) return "generation_disabled";
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const latest = await this.readLatest(ownerKey);
+      if (reservationId !== void 0 && latest?.reservationId === reservationId) return "allowed";
       if (latest !== null && now.getTime() - new Date(latest.lastRequestAt).getTime() < 6e4) return "rate_limited";
       const utcDay = now.toISOString().slice(0, 10);
       const dailyCount = latest?.utcDay === utcDay ? latest.dailyCount : 0;
@@ -2411,7 +2415,8 @@ var BlobQuotaRepository = class {
         revision: (latest?.revision ?? 0) + 1,
         lastRequestAt: now.toISOString(),
         utcDay,
-        dailyCount: dailyCount + 1
+        dailyCount: dailyCount + 1,
+        ...reservationId === void 0 ? {} : { reservationId }
       };
       try {
         await this.blob.put(this.key(ownerKey, next.revision), next, { onlyIfNew: true });
@@ -2495,16 +2500,36 @@ var BlobSettingsRepository = class {
 };
 
 // src/storage/jobRepository.ts
-var MAX_ATTEMPTS = 8;
+var MAX_CLAIM_RETRIES = 8;
+var MAX_JOB_ATTEMPTS = 3;
+var JOB_LEASE_MS = 2 * 60 * 1e3;
 var BlobGenerationJobRepository = class {
   constructor(blob) {
     this.blob = blob;
   }
   async begin(input) {
-    for (let turn = 0; turn < MAX_ATTEMPTS; turn += 1) {
-      const latest = await this.get(input.ownerKey, input.jobId);
-      if (latest !== null && (latest.status !== "failed" || !input.retry)) return { type: "existing", job: latest };
-      const attempt = (latest?.attempt ?? 0) + 1;
+    for (let turn = 0; turn < MAX_CLAIM_RETRIES; turn += 1) {
+      const latest = await this.readLatestState(input.ownerKey, input.jobId);
+      if (latest !== null) {
+        if (latest.job.status === "completed") return { type: "existing", job: latest.job };
+        if (latest.job.status === "running" && (!input.retry || !leaseExpired(latest.job, input.now))) {
+          return { type: "existing", job: latest.job };
+        }
+        if (latest.job.status === "failed" && !input.retry) return { type: "existing", job: latest.job };
+        if (latest.job.attempt >= MAX_JOB_ATTEMPTS) {
+          if (latest.job.status === "running") {
+            const exhausted = await this.finish(input.ownerKey, input.jobId, latest.job.attempt, latest.claim.leaseToken, {
+              status: "failed",
+              errorCode: "JOB_ATTEMPT_LIMIT",
+              retryable: false,
+              now: input.now
+            });
+            return { type: "existing", job: exhausted };
+          }
+          return { type: "existing", job: latest.job };
+        }
+      }
+      const attempt = (latest?.job.attempt ?? 0) + 1;
       const claim = {
         jobId: input.jobId,
         ownerKey: input.ownerKey,
@@ -2516,6 +2541,8 @@ var BlobGenerationJobRepository = class {
         status: "running",
         errorCode: null,
         retryable: false,
+        quotaReserved: latest?.job.quotaReserved ?? false,
+        leaseUntil: new Date(new Date(input.now).getTime() + JOB_LEASE_MS).toISOString(),
         createdAt: input.now,
         updatedAt: input.now
       };
@@ -2529,15 +2556,22 @@ var BlobGenerationJobRepository = class {
     throw new Error("JOB_CLAIM_CONFLICT");
   }
   async get(ownerKey, jobId) {
-    const prefix = `${this.baseKey(ownerKey, jobId)}/attempts/`;
-    const keys = (await this.blob.list(prefix, { consistency: "strong", limit: 64 })).blobs;
-    const attempts = keys.map((key) => Number(/\/attempts\/(\d{4})\/claim\.json$/.exec(key)?.[1])).filter((attempt2) => Number.isInteger(attempt2) && attempt2 > 0);
-    if (attempts.length === 0) return null;
-    const attempt = Math.max(...attempts);
-    const result = await this.blob.get(this.resultKey(ownerKey, jobId, attempt), { consistency: "strong" });
-    if (result !== null) return publicJob(result);
-    const claim = await this.blob.get(this.claimKey(ownerKey, jobId, attempt), { consistency: "strong" });
-    return claim === null ? null : publicJob(claim);
+    return (await this.readLatestState(ownerKey, jobId))?.job ?? null;
+  }
+  async markQuotaReserved(ownerKey, jobId, attempt, leaseToken, now) {
+    const existing = await this.blob.get(this.quotaMarkerKey(ownerKey, jobId), { consistency: "strong" });
+    if (existing === null) {
+      const latest = await this.readLatestState(ownerKey, jobId);
+      if (latest === null || latest.job.attempt !== attempt || latest.job.status !== "running" || latest.claim.leaseToken !== leaseToken) throw new Error("JOB_LEASE_CONFLICT");
+      try {
+        await this.blob.put(this.quotaMarkerKey(ownerKey, jobId), { jobId, attempt, reservedAt: now }, { onlyIfNew: true });
+      } catch (error) {
+        if (!(error instanceof BlobPreconditionFailedError)) throw error;
+      }
+    }
+    const updated = await this.get(ownerKey, jobId);
+    if (updated === null) throw new Error("JOB_CLAIM_MISSING");
+    return updated;
   }
   async complete(ownerKey, jobId, attempt, leaseToken, now) {
     return await this.finish(ownerKey, jobId, attempt, leaseToken, {
@@ -2548,7 +2582,12 @@ var BlobGenerationJobRepository = class {
     });
   }
   async fail(ownerKey, jobId, attempt, leaseToken, errorCode, retryable, now) {
-    return await this.finish(ownerKey, jobId, attempt, leaseToken, { status: "failed", errorCode, retryable, now });
+    return await this.finish(ownerKey, jobId, attempt, leaseToken, {
+      status: "failed",
+      errorCode,
+      retryable: retryable && attempt < MAX_JOB_ATTEMPTS,
+      now
+    });
   }
   async recoverCompleted(ownerKey, jobId, attempt, now) {
     const claim = await this.blob.get(this.claimKey(ownerKey, jobId, attempt), { consistency: "strong" });
@@ -2562,7 +2601,7 @@ var BlobGenerationJobRepository = class {
   }
   async finish(ownerKey, jobId, attempt, leaseToken, result) {
     const existing = await this.blob.get(this.resultKey(ownerKey, jobId, attempt), { consistency: "strong" });
-    if (existing !== null) return publicJob(existing);
+    if (existing !== null) return await this.withQuota(ownerKey, jobId, existing);
     const claim = await this.blob.get(this.claimKey(ownerKey, jobId, attempt), { consistency: "strong" });
     if (claim === null || claim.leaseToken !== leaseToken) throw new Error("JOB_LEASE_CONFLICT");
     const finished = {
@@ -2571,17 +2610,33 @@ var BlobGenerationJobRepository = class {
       status: result.status,
       errorCode: result.errorCode,
       retryable: result.retryable,
+      leaseUntil: null,
       updatedAt: result.now
     };
     try {
       await this.blob.put(this.resultKey(ownerKey, jobId, attempt), finished, { onlyIfNew: true });
-      return finished;
+      return await this.withQuota(ownerKey, jobId, finished);
     } catch (error) {
       if (!(error instanceof BlobPreconditionFailedError)) throw error;
       const winner = await this.blob.get(this.resultKey(ownerKey, jobId, attempt), { consistency: "strong" });
       if (winner === null) throw new Error("JOB_RESULT_CONFLICT");
-      return winner;
+      return await this.withQuota(ownerKey, jobId, winner);
     }
+  }
+  async readLatestState(ownerKey, jobId) {
+    const prefix = `${this.baseKey(ownerKey, jobId)}/attempts/`;
+    const keys = (await this.blob.list(prefix, { consistency: "strong", limit: 64 })).blobs;
+    const attempts = keys.map((key) => Number(/\/attempts\/(\d{4})\/claim\.json$/.exec(key)?.[1])).filter((attempt2) => Number.isInteger(attempt2) && attempt2 > 0);
+    if (attempts.length === 0) return null;
+    const attempt = Math.max(...attempts);
+    const claim = await this.blob.get(this.claimKey(ownerKey, jobId, attempt), { consistency: "strong" });
+    if (claim === null) return null;
+    const result = await this.blob.get(this.resultKey(ownerKey, jobId, attempt), { consistency: "strong" });
+    return { job: await this.withQuota(ownerKey, jobId, result ?? claim), claim };
+  }
+  async withQuota(ownerKey, jobId, record) {
+    const marker = await this.blob.get(this.quotaMarkerKey(ownerKey, jobId), { consistency: "strong" });
+    return publicJob(record, marker !== null);
   }
   baseKey(ownerKey, jobId) {
     return `jobs/${encodeURIComponent(ownerKey)}/${encodeURIComponent(jobId)}`;
@@ -2592,10 +2647,44 @@ var BlobGenerationJobRepository = class {
   resultKey(ownerKey, jobId, attempt) {
     return `${this.baseKey(ownerKey, jobId)}/attempts/${String(attempt).padStart(4, "0")}/result.json`;
   }
+  quotaMarkerKey(ownerKey, jobId) {
+    return `${this.baseKey(ownerKey, jobId)}/quota-reserved.json`;
+  }
 };
-function publicJob(record) {
-  const { jobId, ownerKey, clientRequestIdHash, assessmentId, attempt, revision, status, errorCode, retryable, createdAt, updatedAt } = record;
-  return { jobId, ownerKey, clientRequestIdHash, assessmentId, attempt, revision, status, errorCode, retryable, createdAt, updatedAt };
+function leaseExpired(job, now) {
+  const leaseUntil = job.leaseUntil ?? job.updatedAt;
+  return new Date(leaseUntil).getTime() <= new Date(now).getTime();
+}
+function publicJob(record, quotaReserved = record.quotaReserved === true) {
+  const {
+    jobId,
+    ownerKey,
+    clientRequestIdHash,
+    assessmentId,
+    attempt,
+    revision,
+    status,
+    errorCode,
+    retryable,
+    createdAt,
+    updatedAt
+  } = record;
+  const leaseUntil = status === "running" && typeof record.leaseUntil === "string" ? record.leaseUntil : null;
+  return {
+    jobId,
+    ownerKey,
+    clientRequestIdHash,
+    assessmentId,
+    attempt,
+    revision,
+    status,
+    errorCode,
+    retryable,
+    quotaReserved,
+    leaseUntil,
+    createdAt,
+    updatedAt
+  };
 }
 
 // src/storage/edgeOneStores.ts
@@ -2617,7 +2706,11 @@ function createEdgeOneStores(blob, options) {
 var import_node_crypto2 = require("node:crypto");
 var TOKEN_EXPIRY_MARGIN_MS = 5 * 60 * 1e3;
 var TOKEN_REQUEST_TIMEOUT_MS = 1e4;
-var refreshFlights = /* @__PURE__ */ new Map();
+var TOKEN_REFRESH_BUDGET_MS = 15e3;
+var REFRESH_LOCK_LEASE_MS = 12e3;
+var REFRESH_POLL_MS = 50;
+var MAX_LOCK_REVISION = 999999999999;
+var refreshFlightsByScope = /* @__PURE__ */ new WeakMap();
 async function getWeChatAccessToken(dependencies, deadline) {
   if (!dependencies.appId || !dependencies.appSecret) throw new ApiError("CONFIGURATION_ERROR", 503, false);
   const appId = dependencies.appId;
@@ -2634,15 +2727,73 @@ async function getWeChatAccessToken(dependencies, deadline) {
   }
   if (isUsable(cached, dependencies.now())) return cached.accessToken;
   const flightKey = appId;
+  const refreshFlights = flightsFor(dependencies.blob);
   const existingFlight = refreshFlights.get(flightKey);
   if (existingFlight !== void 0) return await awaitInfrastructure(existingFlight, deadline);
-  const flight = refreshAccessToken(dependencies, cacheKey, appId, appSecret, deadline);
+  const internalDeadline = createDeadline(TOKEN_REFRESH_BUDGET_MS);
+  const refresh = refreshAcrossInstances(dependencies, cacheKey, appId, appSecret, internalDeadline);
+  let flight;
+  flight = refresh.then(
+    (value) => {
+      if (refreshFlights.get(flightKey) === flight) refreshFlights.delete(flightKey);
+      return value;
+    },
+    (error) => {
+      if (refreshFlights.get(flightKey) === flight) refreshFlights.delete(flightKey);
+      throw error;
+    }
+  );
   refreshFlights.set(flightKey, flight);
-  try {
-    return await awaitInfrastructure(flight, deadline);
-  } finally {
-    if (refreshFlights.get(flightKey) === flight) refreshFlights.delete(flightKey);
+  return await awaitInfrastructure(flight, deadline);
+}
+function flightsFor(blob) {
+  const scope = blob.coordinationKey ?? blob;
+  const existing = refreshFlightsByScope.get(scope);
+  if (existing !== void 0) return existing;
+  const created = /* @__PURE__ */ new Map();
+  refreshFlightsByScope.set(scope, created);
+  return created;
+}
+async function refreshAcrossInstances(dependencies, cacheKey, appId, appSecret, deadline) {
+  while (remainingMilliseconds(deadline) > 0) {
+    const cached = await awaitInfrastructure(
+      dependencies.blob.get(cacheKey, { consistency: "strong" }),
+      deadline
+    );
+    if (isUsable(cached, dependencies.now())) return cached.accessToken;
+    const currentLock = await readLatestRefreshLock(dependencies.blob, appId, deadline);
+    if (currentLock !== null && isActiveLock(currentLock.lock, dependencies.now())) {
+      await waitForRefresh(deadline);
+      continue;
+    }
+    const now = dependencies.now();
+    const revision = (currentLock?.lock.revision ?? 0) + 1;
+    if (revision > MAX_LOCK_REVISION) throw backendUnavailable2();
+    const lockKey = refreshLockKey(appId, revision);
+    const ownerToken = (0, import_node_crypto2.randomUUID)();
+    try {
+      await awaitInfrastructure(dependencies.blob.put(lockKey, {
+        revision,
+        ownerToken,
+        leaseUntil: new Date(now.getTime() + REFRESH_LOCK_LEASE_MS).toISOString(),
+        updatedAt: now.toISOString()
+      }, { onlyIfNew: true }), deadline);
+    } catch (error) {
+      if (isPreconditionFailure2(error)) {
+        await waitForRefresh(deadline);
+        continue;
+      }
+      throw error;
+    }
+    if (currentLock !== null) void dependencies.blob.delete(currentLock.key).catch(() => void 0);
+    const afterClaim = await awaitInfrastructure(
+      dependencies.blob.get(cacheKey, { consistency: "strong" }),
+      deadline
+    );
+    if (isUsable(afterClaim, dependencies.now())) return afterClaim.accessToken;
+    return await refreshAccessToken(dependencies, cacheKey, appId, appSecret, deadline);
   }
+  throw backendUnavailable2();
 }
 async function refreshAccessToken(dependencies, cacheKey, appId, appSecret, deadline) {
   let response;
@@ -2671,7 +2822,7 @@ async function refreshAccessToken(dependencies, cacheKey, appId, appSecret, dead
     if (timeout !== void 0) clearTimeout(timeout);
   }
   if (!response.ok) {
-    await cancelUnreadBody2(response);
+    cancelUnreadBody2(response);
     throw backendUnavailable2();
   }
   let payload;
@@ -2701,18 +2852,44 @@ function tokenCacheKey(appId) {
   const digest = (0, import_node_crypto2.createHash)("sha256").update(appId, "utf8").digest("hex").slice(0, 24);
   return `moderation/wechat-access-token/${digest}.json`;
 }
+function refreshLockPrefix(appId) {
+  const digest = (0, import_node_crypto2.createHash)("sha256").update(appId, "utf8").digest("hex").slice(0, 24);
+  return `moderation/wechat-access-token/${digest}.refresh-locks/`;
+}
+function refreshLockKey(appId, revision) {
+  const inverse = MAX_LOCK_REVISION - revision;
+  return `${refreshLockPrefix(appId)}${String(inverse).padStart(12, "0")}.json`;
+}
+async function readLatestRefreshLock(blob, appId, deadline) {
+  const prefix = refreshLockPrefix(appId);
+  const keys = await awaitInfrastructure(blob.list(prefix, { consistency: "strong", limit: 1 }), deadline);
+  const key = keys.blobs[0];
+  if (key === void 0) return null;
+  const lock = await awaitInfrastructure(blob.get(key, { consistency: "strong" }), deadline);
+  if (lock === null || !Number.isInteger(lock.revision) || lock.revision <= 0) throw backendUnavailable2();
+  return { key, lock };
+}
+function isActiveLock(value, now) {
+  return value !== null && typeof value.ownerToken === "string" && typeof value.leaseUntil === "string" && Number.isFinite(new Date(value.leaseUntil).getTime()) && new Date(value.leaseUntil).getTime() > now.getTime();
+}
+async function waitForRefresh(deadline) {
+  const delay = Math.min(REFRESH_POLL_MS, remainingMilliseconds(deadline));
+  if (delay <= 0) throw backendUnavailable2();
+  await awaitInfrastructure(new Promise((resolve) => setTimeout(resolve, delay)), deadline);
+}
 function operationTimeout(deadline, maximum) {
   return deadline === void 0 ? maximum : Math.min(maximum, remainingMilliseconds(deadline));
 }
 async function awaitInfrastructure(operation, deadline) {
   try {
     return deadline === void 0 ? await operation : await withinDeadline(operation, deadline);
-  } catch {
+  } catch (error) {
+    if (isPreconditionFailure2(error)) throw error;
     throw backendUnavailable2();
   }
 }
-async function cancelUnreadBody2(response) {
-  if (response.body !== null && !response.body.locked) await response.body.cancel().catch(() => void 0);
+function cancelUnreadBody2(response) {
+  if (response.body !== null && !response.body.locked) void response.body.cancel().catch(() => void 0);
 }
 async function readJsonResponse(response, deadline, maximumMs) {
   if (response.body === null) throw backendUnavailable2();
@@ -2740,7 +2917,7 @@ async function readJsonResponse(response, deadline, maximumMs) {
       chunks.push(result.value);
     }
   } catch (error) {
-    await reader.cancel().catch(() => void 0);
+    void reader.cancel().catch(() => void 0);
     throw error;
   } finally {
     reader.releaseLock();
@@ -2758,6 +2935,9 @@ function backendUnavailable2() {
 }
 function isRecord4(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function isPreconditionFailure2(error) {
+  return error instanceof BlobPreconditionFailedError || isRecord4(error) && error.code === "BLOB_PRECONDITION_FAILED";
 }
 
 // src/moderation/wechatTextSecurity.ts
@@ -2806,7 +2986,7 @@ async function moderateChunk(content, openId, token, fetchPort, deadline) {
       expiry
     ]);
     if (!response.ok) {
-      await cancelUnreadBody3(response);
+      cancelUnreadBody3(response);
       throw backendUnavailable3();
     }
     let payload;
@@ -2826,8 +3006,8 @@ async function moderateChunk(content, openId, token, fetchPort, deadline) {
     if (timeout !== void 0) clearTimeout(timeout);
   }
 }
-async function cancelUnreadBody3(response) {
-  if (response.body !== null && !response.body.locked) await response.body.cancel().catch(() => void 0);
+function cancelUnreadBody3(response) {
+  if (response.body !== null && !response.body.locked) void response.body.cancel().catch(() => void 0);
 }
 function splitUtf8(value, maxBytes) {
   const chunks = [];
@@ -2911,7 +3091,7 @@ async function readRequestBody(request, deadline) {
     }
     return new TextDecoder().decode(joined);
   } catch (error) {
-    await reader.cancel().catch(() => void 0);
+    void reader.cancel().catch(() => void 0);
     throw error;
   } finally {
     reader.releaseLock();
@@ -2987,27 +3167,27 @@ async function createGenerationRoute(request, context, injected) {
       }
       return success(jobEnvelope(begun.job), begun.job.status === "running" ? 202 : 200);
     }
-    const quota = await withinDeadline(dependencies.stores.quota.reserve(
-      identity.ownerKey,
-      dependencies.now(),
-      context.env.GENERATION_ENABLED === "true"
-    ), deadline);
-    const quotaCode = quotaErrorCode(quota);
-    if (quotaCode !== null) {
-      const status = quotaCode === "FREE_TIER_LIMIT" ? 429 : 503;
-      const error = new ApiError(quotaCode, status, quotaCode === "FREE_TIER_LIMIT");
-      await withinDeadline(dependencies.stores.jobs.fail(
-        identity.ownerKey,
-        jobId,
-        begun.job.attempt,
-        leaseToken,
-        error.code,
-        error.retryable,
-        dependencies.now().toISOString()
-      ), deadline);
-      return routeFailure(error);
-    }
     try {
+      if (!begun.job.quotaReserved) {
+        const quota = await withinDeadline(dependencies.stores.quota.reserve(
+          identity.ownerKey,
+          dependencies.now(),
+          context.env.GENERATION_ENABLED === "true",
+          jobId
+        ), deadline);
+        const quotaCode = quotaErrorCode(quota);
+        if (quotaCode !== null) {
+          const status = quotaCode === "FREE_TIER_LIMIT" ? 429 : 503;
+          throw new ApiError(quotaCode, status, quotaCode === "FREE_TIER_LIMIT");
+        }
+        await withinDeadline(dependencies.stores.jobs.markQuotaReserved(
+          identity.ownerKey,
+          jobId,
+          begun.job.attempt,
+          leaseToken,
+          dependencies.now().toISOString()
+        ), deadline);
+      }
       await withinDeadline(dependencies.generate({
         ownerKey: identity.ownerKey,
         openId: identity.openId,
@@ -3025,22 +3205,26 @@ async function createGenerationRoute(request, context, injected) {
       return success(jobEnvelope(completed), 201);
     } catch (error) {
       const apiError = error instanceof ApiError ? error : new ApiError("INTERNAL_ERROR", 500, true);
-      try {
-        await withinDeadline(dependencies.stores.jobs.fail(
-          identity.ownerKey,
-          jobId,
-          begun.job.attempt,
-          leaseToken,
-          apiError.code,
-          apiError.retryable,
-          dependencies.now().toISOString()
-        ), deadline);
-      } catch {
-      }
+      await bestEffortFail(dependencies, identity.ownerKey, jobId, begun.job.attempt, leaseToken, apiError);
       throw apiError;
     }
   } catch (error) {
     return routeFailure(error);
+  }
+}
+async function bestEffortFail(dependencies, ownerKey, jobId, attempt, leaseToken, error) {
+  const failureDeadline = createDeadline(2e3);
+  try {
+    await withinDeadline(dependencies.stores.jobs.fail(
+      ownerKey,
+      jobId,
+      attempt,
+      leaseToken,
+      error.code,
+      error.retryable,
+      dependencies.now().toISOString()
+    ), failureDeadline);
+  } catch {
   }
 }
 function defaultDependencies(context) {

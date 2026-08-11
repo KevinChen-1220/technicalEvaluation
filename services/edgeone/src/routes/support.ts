@@ -59,7 +59,7 @@ async function readRequestBody(request: Request, deadline: Deadline): Promise<st
     }
     return new TextDecoder().decode(joined);
   } catch (error) {
-    await reader.cancel().catch(() => undefined);
+    void reader.cancel().catch(() => undefined);
     throw error;
   } finally {
     reader.releaseLock();
