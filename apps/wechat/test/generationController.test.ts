@@ -5,7 +5,10 @@ import { createGenerationIntentStore } from '../src/storage/generationIntent';
 
 jest.mock('@tarojs/taro', () => ({
   __esModule: true,
-  default: { cloud: { callFunction: jest.fn() } },
+  default: {
+    getStorageSync: jest.fn(), setStorageSync: jest.fn(), removeStorageSync: jest.fn(),
+    login: jest.fn(), request: jest.fn(),
+  },
 }));
 
 const request = { topic: 'TypeScript', notes: 'Generics' };
@@ -191,11 +194,10 @@ describe('GenerationController', () => {
       clientRequestId: 'legacy-request-1',
       input: { topic: 'TypeScript', notes: 'Legacy intent', questionCount: 100 },
     });
-    const calls: Array<{ name: string; data: Record<string, unknown> }> = [];
+    const calls: Array<{ path: string; method: string; body?: Record<string, unknown>; timeoutMs: number }> = [];
     const cloudClient = createCloudClient(async (call) => {
       calls.push(call);
-      if (call.name === 'create-generation-job') return { result: { jobId: 'job-1', status: 'queued' } };
-      return { result: { jobId: 'job-1', status: 'failed', progress: 100, retryable: false, errorCode: 'INVALID_REQUEST' } };
+      return { jobId: 'job-1', status: 'failed', progress: 0, retryable: false, errorCode: 'INVALID_REQUEST' };
     });
     const intentStore = createGenerationIntentStore(storage);
     const controller = new GenerationController({
@@ -214,8 +216,8 @@ describe('GenerationController', () => {
     await expect(controller.resumePending()).resolves.toBe(true);
 
     expect(calls[0]).toEqual({
-      name: 'create-generation-job',
-      data: { topic: 'TypeScript', notes: 'Legacy intent', clientRequestId: 'legacy-request-1' },
+      path: '/api/generation', method: 'POST', timeoutMs: 120_000,
+      body: { topic: 'TypeScript', notes: 'Legacy intent', clientRequestId: 'legacy-request-1' },
     });
   });
 

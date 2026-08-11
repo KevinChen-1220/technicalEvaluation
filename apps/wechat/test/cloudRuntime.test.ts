@@ -2,40 +2,101 @@ import { createCloudRuntime } from '../src/services/cloudRuntime';
 
 jest.mock('@tarojs/taro', () => ({
   __esModule: true,
-  default: { cloud: { init: jest.fn(), callFunction: jest.fn() } },
+  default: {
+    getStorageSync: jest.fn(), setStorageSync: jest.fn(), removeStorageSync: jest.fn(),
+    login: jest.fn(), request: jest.fn(),
+  },
 }));
 
-describe('Mini Program Cloud runtime', () => {
-  test('initializes the deploy-selected environment before the first function call', async () => {
-    const events: string[] = [];
-    const sdk = {
-      init: jest.fn((options: unknown) => { events.push(`init:${JSON.stringify(options)}`); }),
-      callFunction: jest.fn(async () => { events.push('call'); return { result: { ok: true } }; }),
-    };
-    const runtime = createCloudRuntime(sdk, 'cloudbase-production-1');
+describe('Mini Program EdgeOne runtime', () => {
+  test('normalizes the configured HTTPS API base URL and initializes a session once', async () => {
+    const ensureSession = jest.fn(async () => 'session-token');
+    const request = jest.fn(async () => ({ statusCode: 200, data: { ok: true, data: { id: 'assessment-1' } } }));
+    const runtime = createCloudRuntime({
+      apiBaseUrl: ' https://api.example.edgeone.run/ ',
+      request,
+      session: { ensureSession, refreshSession: jest.fn(), clearSession: jest.fn() },
+    });
 
-    await runtime.callFunction({ name: 'get-assessment', data: { assessmentId: 'assessment-1' } });
-    await runtime.callFunction({ name: 'get-generation-job', data: { jobId: 'job-1' } });
+    await runtime.initialize();
+    await runtime.request({ path: '/api/assessments/assessment-1', method: 'GET', timeoutMs: 15_000 });
 
-    expect(events).toEqual([
-      'init:{"env":"cloudbase-production-1","traceUser":true}',
-      'call',
-      'call',
-    ]);
-    expect(sdk.init).toHaveBeenCalledTimes(1);
-    expect(sdk.init.mock.calls[0]?.[0]).not.toHaveProperty('apiKey');
-    expect(sdk.init.mock.calls[0]?.[0]).not.toHaveProperty('secret');
-    expect(sdk.init.mock.calls[0]?.[0]).not.toHaveProperty('provider');
+    expect(ensureSession).toHaveBeenCalledTimes(2);
+    expect(request).toHaveBeenCalledWith(expect.objectContaining({
+      url: 'https://api.example.edgeone.run/api/assessments/assessment-1',
+      method: 'GET',
+      timeout: 15_000,
+      header: { Authorization: 'Bearer session-token' },
+    }));
   });
 
-  test('app-start initialization is idempotent and supports the bound default environment', () => {
-    const sdk = { init: jest.fn(), callFunction: jest.fn() };
-    const runtime = createCloudRuntime(sdk, undefined);
+  test.each([undefined, '', 'http://api.example.edgeone.run', 'not a url'])(
+    'rejects an absent or non-HTTPS API base URL: %p',
+    (apiBaseUrl) => {
+      const runtime = createCloudRuntime({
+        apiBaseUrl,
+        request: jest.fn(),
+        session: { ensureSession: jest.fn(), refreshSession: jest.fn(), clearSession: jest.fn() },
+      });
+      return expect(runtime.requestPublic({ path: '/api/health', method: 'GET', timeoutMs: 15_000 }))
+        .rejects.toThrow(/EdgeOne API base URL/i);
+    },
+  );
 
-    runtime.initialize();
-    runtime.initialize();
+  test('refreshes a session after one 401 and retries the request exactly once', async () => {
+    const request = jest.fn()
+      .mockResolvedValueOnce({ statusCode: 401, data: { ok: false, error: { code: 'UNAUTHORIZED', retryable: false } } })
+      .mockResolvedValueOnce({ statusCode: 200, data: { ok: true, data: { type: 'listed' } } });
+    const runtime = createCloudRuntime({
+      apiBaseUrl: 'https://api.example.edgeone.run', request,
+      session: {
+        ensureSession: jest.fn(async () => 'old-token'),
+        refreshSession: jest.fn(async () => 'new-token'),
+        clearSession: jest.fn(),
+      },
+    });
 
-    expect(sdk.init).toHaveBeenCalledTimes(1);
-    expect(sdk.init).toHaveBeenCalledWith({ traceUser: true });
+    await expect(runtime.request({ path: '/api/assessments', method: 'GET', timeoutMs: 15_000 }))
+      .resolves.toEqual({ type: 'listed' });
+    expect(request).toHaveBeenNthCalledWith(1, expect.objectContaining({ header: { Authorization: 'Bearer old-token' } }));
+    expect(request).toHaveBeenNthCalledWith(2, expect.objectContaining({ header: { Authorization: 'Bearer new-token' } }));
+  });
+
+  test('does not loop when the retried request is also unauthorized', async () => {
+    const request = jest.fn(async () => ({ statusCode: 401, data: { ok: false, error: { code: 'UNAUTHORIZED', retryable: false } } }));
+    const runtime = createCloudRuntime({
+      apiBaseUrl: 'https://api.example.edgeone.run', request,
+      session: {
+        ensureSession: jest.fn(async () => 'old-token'),
+        refreshSession: jest.fn(async () => 'new-token'),
+        clearSession: jest.fn(),
+      },
+    });
+
+    await expect(runtime.request({ path: '/api/assessments', method: 'GET', timeoutMs: 15_000 }))
+      .rejects.toMatchObject({ errorCode: 'UNAUTHORIZED' });
+    expect(request).toHaveBeenCalledTimes(2);
+  });
+
+  test('marks startup offline when EdgeOne is unavailable without preventing a later local UI render', async () => {
+    const runtime = createCloudRuntime({
+      apiBaseUrl: 'https://api.example.edgeone.run',
+      request: jest.fn(async () => { throw new Error('offline'); }),
+      session: { ensureSession: jest.fn(), refreshSession: jest.fn(), clearSession: jest.fn() },
+    });
+
+    await expect(runtime.initialize()).rejects.toMatchObject({ errorCode: 'NETWORK_ERROR' });
+    expect(runtime.getStatus()).toBe('offline');
+  });
+
+  test('maps network, HTTP and malformed JSON responses to typed public errors', async () => {
+    const session = { ensureSession: jest.fn(async () => 'session-token'), refreshSession: jest.fn(), clearSession: jest.fn() };
+    const network = createCloudRuntime({ apiBaseUrl: 'https://api.example.edgeone.run', request: jest.fn(async () => { throw new Error('network down'); }), session });
+    await expect(network.request({ path: '/api/settings', method: 'GET', timeoutMs: 15_000 }))
+      .rejects.toMatchObject({ errorCode: 'NETWORK_ERROR' });
+
+    const malformed = createCloudRuntime({ apiBaseUrl: 'https://api.example.edgeone.run', request: jest.fn(async () => ({ statusCode: 200, data: '<html>' })), session });
+    await expect(malformed.request({ path: '/api/settings', method: 'GET', timeoutMs: 15_000 }))
+      .rejects.toMatchObject({ errorCode: 'INVALID_RESPONSE' });
   });
 });

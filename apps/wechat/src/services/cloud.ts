@@ -5,6 +5,7 @@ import type {
   CachedDraftAssessment,
 } from '../storage/assessmentCache';
 import { cloudRuntime } from './cloudRuntime';
+import type { EdgeOneRequestInput } from './edgeOneRuntime';
 
 declare const require: (moduleName: string) => { createReleaseFixtureCloudClient: () => ReturnType<typeof createCloudClient> };
 
@@ -77,22 +78,25 @@ export type CreateReportInput = {
   policyVersion: string;
 };
 
-type CloudCall = (input: { name: string; data: Record<string, unknown> }) => Promise<{ result?: unknown }>;
+type EdgeOneCall = (input: EdgeOneRequestInput) => Promise<unknown>;
 
-type CloudClientOptions = { callTimeoutMs?: number };
+type CloudClientOptions = { generationTimeoutMs?: number; crudTimeoutMs?: number };
 
 export function createCloudClient(
-  callFunction: CloudCall = cloudRuntime.callFunction,
+  request: EdgeOneCall = cloudRuntime.request,
   options: CloudClientOptions = {},
 ) {
-  const callTimeoutMs = options.callTimeoutMs ?? 15_000;
+  const generationTimeoutMs = options.generationTimeoutMs ?? 120_000;
+  const crudTimeoutMs = options.crudTimeoutMs ?? 15_000;
+  const generationJobs = new Map<string, GenerationJobStatus>();
 
-  async function call<T>(name: string, data: Record<string, unknown>): Promise<T> {
-    const response: unknown = await withTimeout(callFunction({ name, data }), callTimeoutMs);
-    if (!isRecord(response) || !Object.prototype.hasOwnProperty.call(response, 'result')) {
-      throw createPublicError('INTERNAL_ERROR');
+  async function call<T>(input: EdgeOneRequestInput): Promise<T> {
+    try {
+      return await request(input) as T;
+    } catch (error) {
+      if (isTypedPublicError(error)) throw error;
+      throw createPublicError('NETWORK_ERROR');
     }
-    return response.result as T;
   }
 
   return {
@@ -102,24 +106,24 @@ export function createCloudClient(
         ...(input.notes === undefined ? {} : { notes: input.notes }),
         ...(input.clientRequestId === undefined ? {} : { clientRequestId: input.clientRequestId }),
       };
-      const result = await call<unknown>('create-generation-job', data);
-      if (!isRecord(result) || !isNonEmptyString(result.jobId) || !isGenerationStatus(result.status)) {
+      const result = await call<unknown>({ path: '/api/generation', method: 'POST', body: data, timeoutMs: generationTimeoutMs });
+      if (!isGenerationJobStatus(result)) {
         throwPublicError(result);
       }
-      return result as { jobId: string; status: 'queued' | 'running' | 'completed' | 'failed' };
+      const job = result as GenerationJobStatus;
+      generationJobs.set(job.jobId, job);
+      return job;
     },
     async getGenerationJob(input: { jobId: string }): Promise<GenerationJobStatus> {
-      const result = await call<unknown>('get-generation-job', { jobId: input.jobId });
-      if (!isGenerationJobStatus(result)) throwPublicError(
-        isRecord(result) && result.status === 'completed' ? { errorCode: 'INCOMPLETE_JOB' } : result,
-      );
-      return result as GenerationJobStatus;
+      const job = generationJobs.get(input.jobId);
+      if (job === undefined) throw createPublicError('INCOMPLETE_JOB');
+      return job;
     },
     async getAssessment(input: { assessmentId: string }): Promise<
       | { type: 'found'; assessment: CachedAssessment }
       | { type: 'not_found'; errorCode: 'INVALID_REQUEST' }
     > {
-      const result = await call<unknown>('get-assessment', { assessmentId: input.assessmentId });
+      const result = await call<unknown>({ path: `/api/assessments/${encodeURIComponent(input.assessmentId)}`, method: 'GET', timeoutMs: crudTimeoutMs });
       if (isRecord(result) && result.type === 'not_found' && result.errorCode === 'INVALID_REQUEST') {
         return { type: 'not_found', errorCode: 'INVALID_REQUEST' };
       }
@@ -129,11 +133,11 @@ export function createCloudClient(
       return { type: 'found', assessment: result.assessment };
     },
     async updateAssessment(input: UpdateAssessmentInput): Promise<UpdateAssessmentResponse> {
-      const result = await call<unknown>('update-assessment', {
+      const result = await call<unknown>({ path: `/api/assessments/${encodeURIComponent(input.assessmentId)}`, method: 'PUT', body: {
         assessmentId: input.assessmentId,
         answers: input.answers,
         expectedRevision: input.expectedRevision,
-      });
+      }, timeoutMs: crudTimeoutMs });
       if (isRecord(result) && result.type === 'updated' && isPositiveInteger(result.revision)) {
         return { type: 'updated', revision: result.revision };
       }
@@ -148,9 +152,12 @@ export function createCloudClient(
       assessments: CachedAssessment[];
       nextCursor: string | null;
     }> {
-      const result = await call<unknown>('list-assessments', {
-        ...(input.cursor === undefined || input.cursor === null ? {} : { cursor: input.cursor }),
-        ...(input.pageSize === undefined ? {} : { pageSize: input.pageSize }),
+      const parameters = new URLSearchParams();
+      if (input.cursor !== undefined && input.cursor !== null) parameters.set('cursor', input.cursor);
+      if (input.pageSize !== undefined) parameters.set('pageSize', String(input.pageSize));
+      const result = await call<unknown>({
+        path: `/api/assessments${parameters.size === 0 ? '' : `?${parameters.toString()}`}`,
+        method: 'GET', timeoutMs: crudTimeoutMs,
       });
       if (
         isRecord(result)
@@ -171,11 +178,11 @@ export function createCloudClient(
       throwPublicError(result);
     },
     async completeAssessment(input: UpdateAssessmentInput): Promise<CompleteAssessmentResponse> {
-      const result = await call<unknown>('complete-assessment', {
+      const result = await call<unknown>({ path: `/api/assessments/${encodeURIComponent(input.assessmentId)}/complete`, method: 'POST', body: {
         assessmentId: input.assessmentId,
         answers: input.answers,
         expectedRevision: input.expectedRevision,
-      });
+      }, timeoutMs: crudTimeoutMs });
       if (isRecord(result) && result.type === 'completed' && isCompletedAssessment(result.assessment)) {
         return { type: 'completed', assessment: result.assessment };
       }
@@ -191,7 +198,7 @@ export function createCloudClient(
       throwPublicError(result);
     },
     async getUserSettings(_input: Record<string, unknown> = {}): Promise<UserSettingsResponse> {
-      const result = await call<unknown>('get-user-settings', {});
+      const result = await call<unknown>({ path: '/api/settings', method: 'GET', timeoutMs: crudTimeoutMs });
       if (isRecord(result) && result.type === 'not_found' && result.errorCode === 'INVALID_REQUEST') {
         return { type: 'not_found', errorCode: 'INVALID_REQUEST' };
       }
@@ -204,21 +211,21 @@ export function createCloudClient(
       throwPublicError(result);
     },
     async acceptPrivacyPolicy(input: AcceptPrivacyPolicyInput): Promise<Extract<UserSettingsResponse, { type: 'found' }>['settings']> {
-      const result = await call<unknown>('update-user-settings', {
+      const result = await call<unknown>({ path: '/api/settings', method: 'PUT', body: {
         privacyPolicyVersion: input.privacyPolicyVersion,
-      });
+      }, timeoutMs: crudTimeoutMs });
       if (isRecord(result) && result.type === 'accepted' && isPublicUserSettings(result.settings)) {
         return result.settings as Extract<UserSettingsResponse, { type: 'found' }>['settings'];
       }
       throwPublicError(result);
     },
     async createReport(input: CreateReportInput): Promise<{ type: 'created'; reportId: string }> {
-      const result = await call<unknown>('create-report', {
+      const result = await call<unknown>({ path: '/api/reports', method: 'POST', body: {
         ...(input.assessmentId === undefined ? {} : { assessmentId: input.assessmentId }),
         reason: input.reason,
         ...(input.detail === undefined ? {} : { detail: input.detail }),
         policyVersion: input.policyVersion,
-      });
+      }, timeoutMs: crudTimeoutMs });
       if (isRecord(result) && result.type === 'created' && isNonEmptyString(result.reportId)) {
         return { type: 'created', reportId: result.reportId };
       }
@@ -238,13 +245,20 @@ export function createRuntimeCloudClient(): ReturnType<typeof createCloudClient>
 
 function isSafeErrorCode(value: string): boolean {
   return value === 'INVALID_REQUEST'
-    || value === 'QUOTA_EXCEEDED'
+    || value === 'UNAUTHORIZED'
+    || value === 'SESSION_EXPIRED'
+    || value === 'FREE_TIER_LIMIT'
     || value === 'PRIVACY_CONSENT_REQUIRED'
     || value === 'CONTENT_BLOCKED'
-    || value === 'RATE_LIMITED'
+    || value === 'GENERATION_DISABLED'
+    || value === 'BACKEND_UNAVAILABLE'
     || value === 'PROVIDER_ERROR'
     || value === 'INVALID_MODEL_RESPONSE'
     || value === 'CONFIGURATION_ERROR'
+    || value === 'NETWORK_ERROR'
+    || value === 'INVALID_RESPONSE'
+    || value === 'HTTP_ERROR'
+    || value === 'LOGIN_FAILED'
     || value === 'INTERNAL_ERROR'
     || value === 'INCOMPLETE_JOB'
     || value === 'REQUEST_TIMEOUT';
@@ -506,14 +520,8 @@ function isAnswers(value: unknown, paper: CachedAssessment['paper']): value is R
   });
 }
 
-function withTimeout<T>(operation: Promise<T>, timeoutMs: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = setTimeout(() => reject(createPublicError('REQUEST_TIMEOUT')), timeoutMs);
-    operation.then(
-      (value) => { clearTimeout(timer); resolve(value); },
-      (error) => { clearTimeout(timer); reject(error); },
-    );
-  });
+function isTypedPublicError(value: unknown): value is Error & { errorCode: string } {
+  return value instanceof Error && typeof (value as { errorCode?: unknown }).errorCode === 'string';
 }
 
 function throwPublicError(result: unknown): never {

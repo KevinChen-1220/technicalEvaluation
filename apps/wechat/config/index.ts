@@ -7,21 +7,21 @@ const releaseProfile = process.env.TARO_APP_RELEASE_PROFILE?.trim() || 'developm
 const releaseFixtureMode = process.env.TARO_APP_RELEASE_FIXTURE_MODE === 'enabled'
   ? 'enabled'
   : 'disabled';
-const publicCloudBaseEnvId = process.env.TARO_APP_CLOUDBASE_ENV_ID?.trim() ?? '';
+const publicEdgeOneApiBaseUrl = process.env.TARO_APP_EDGEONE_API_BASE_URL?.trim() ?? '';
 
 if (releaseProfile === 'formal' && releaseFixtureMode === 'enabled') {
   throw new Error('Release fixture mode is forbidden in the formal profile.');
 }
 
-if (releaseProfile === 'formal' && publicCloudBaseEnvId.length === 0) {
-  throw new Error('CloudBase environment id is required for the formal profile.');
+if (releaseProfile === 'formal' && !isHttpsUrl(publicEdgeOneApiBaseUrl)) {
+  throw new Error('An HTTPS EdgeOne API base URL is required for the formal profile.');
 }
 
 export default defineConfig({
   projectName: 'dynamic-assessment-wechat',
   date: '2026-08-03',
   env: {
-    TARO_APP_CLOUDBASE_ENV_ID: JSON.stringify(publicCloudBaseEnvId),
+    TARO_APP_EDGEONE_API_BASE_URL: JSON.stringify(publicEdgeOneApiBaseUrl),
     TARO_APP_RELEASE_DISCLOSURE_JSON: JSON.stringify(JSON.stringify(releaseDisclosure)),
     TARO_APP_RELEASE_FIXTURE_MODE: JSON.stringify(releaseFixtureMode),
     TARO_APP_RELEASE_PROFILE: JSON.stringify(releaseProfile),
@@ -44,3 +44,12 @@ export default defineConfig({
     },
   },
 });
+
+function isHttpsUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && !url.username && !url.password && !url.search && !url.hash;
+  } catch {
+    return false;
+  }
+}

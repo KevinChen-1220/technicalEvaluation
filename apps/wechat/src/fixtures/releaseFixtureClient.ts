@@ -197,7 +197,7 @@ function buildFixtureQuestion(index: number, english: boolean, notes: string | u
   const options = truthy
     ? [{ id: 'a', text: english ? 'True' : '正确' }, { id: 'b', text: english ? 'False' : '错误' }]
     : [
-        { id: 'a', text: english ? 'Use a server-side CloudBase function boundary.' : '使用服务端 CloudBase 函数边界。' },
+        { id: 'a', text: english ? 'Use a server-side EdgeOne API boundary.' : '使用服务端 EdgeOne API 边界。' },
         { id: 'b', text: english ? 'Store the model key in Mini Program settings.' : '把模型密钥放进小程序设置页。' },
         { id: 'c', text: english ? 'Persist drafts before opening the answer screen.' : '进入答题页前先保存草稿。' },
         { id: 'd', text: english ? 'Disable privacy disclosure for preview builds.' : '预览版关闭隐私披露。' },

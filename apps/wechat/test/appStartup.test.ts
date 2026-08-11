@@ -1,10 +1,10 @@
-const initialize = jest.fn();
+const initialize = jest.fn(async () => undefined);
 
 jest.mock('../src/services/cloudRuntime', () => ({ cloudRuntime: { initialize } }));
 jest.mock('../src/app.css', () => ({}));
 
 describe('Mini Program app startup', () => {
-  test('initializes CloudBase while loading the app root', () => {
+  test('starts EdgeOne session initialization without blocking the app root', () => {
     jest.isolateModules(() => {
       require('../src/app');
     });
