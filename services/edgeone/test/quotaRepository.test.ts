@@ -27,7 +27,7 @@ describe('free tier quota', () => {
     await expect(quota.reserve('owner-a', now, true, 'job-a')).resolves.toBe('allowed');
     await expect(quota.reserve('owner-a', now, true, 'job-b')).resolves.toBe('rate_limited');
 
-    const ledger = await blob.list('quotas/', { consistency: 'strong', limit: 16 });
+    const ledger = await blob.list('quotas/owner-a/ledger/', { consistency: 'strong', limit: 16 });
     expect(ledger.blobs).toHaveLength(1);
     await expect(blob.get(ledger.blobs[0]!, { consistency: 'strong' })).resolves.toEqual(expect.objectContaining({
       dailyCount: 1, reservationId: 'job-a',
@@ -49,5 +49,56 @@ describe('free tier quota', () => {
     const latest = records.filter((record): record is NonNullable<typeof record> => record !== null)
       .sort((left, right) => right.revision - left.revision)[0];
     expect(latest).toEqual(expect.objectContaining({ dailyCount: 2, reservationIds: ['job-a', 'job-b'] }));
+  });
+
+  test('keeps a reservation charged to its first UTC date across midnight', async () => {
+    const blob = new MemoryBlobPort();
+    const quota = new BlobQuotaRepository(blob);
+
+    await expect(quota.reserve('owner-a', new Date('2026-08-11T23:58:00.000Z'), true, 'job-a')).resolves.toBe('allowed');
+    await expect(quota.reserve('owner-a', new Date('2026-08-11T23:59:00.000Z'), true, 'job-b')).resolves.toBe('allowed');
+    await expect(quota.reserve('owner-a', new Date('2026-08-12T00:00:00.000Z'), true, 'job-a')).resolves.toBe('allowed');
+
+    const ledger = await blob.list('quotas/owner-a/ledger/', { consistency: 'strong' });
+    const records = (await Promise.all(ledger.blobs.map(async (key) => await blob.get<{
+      utcDay: string; dailyCount: number; reservationIds?: string[];
+    }>(key, { consistency: 'strong' })))).filter((record): record is NonNullable<typeof record> => record !== null);
+    expect(records.filter((record) => record.utcDay === '2026-08-11')).toContainEqual(expect.objectContaining({
+      dailyCount: 2, reservationIds: ['job-a', 'job-b'],
+    }));
+    expect(records.filter((record) => record.utcDay === '2026-08-12')).toHaveLength(0);
+    const markers = await blob.list('quotas/owner-a/reservations/', { consistency: 'strong' });
+    const markerRecords = await Promise.all(markers.blobs.map(async (key) => await blob.get(key, { consistency: 'strong' })));
+    expect(markerRecords).toContainEqual(expect.objectContaining({ reservedDate: '2026-08-11' }));
+  });
+
+  test('uses an existing marker to repair its original date after a ledger write fails', async () => {
+    const blob = new MemoryBlobPort();
+    const quota = new BlobQuotaRepository(blob);
+    const originalPut = blob.put.bind(blob);
+    let failLedger = true;
+    jest.spyOn(blob, 'put').mockImplementation(async (key, value, options) => {
+      if (failLedger && key.includes('/ledger/')) {
+        failLedger = false;
+        throw new Error('ledger unavailable');
+      }
+      await originalPut(key, value, options);
+    });
+
+    await expect(quota.reserve(
+      'owner-a', new Date('2026-08-11T23:58:00.000Z'), true, 'job-a',
+    )).rejects.toThrow('ledger unavailable');
+    await expect(quota.reserve(
+      'owner-a', new Date('2026-08-12T00:00:00.000Z'), true, 'job-a',
+    )).resolves.toBe('allowed');
+
+    const ledger = await blob.list('quotas/owner-a/ledger/', { consistency: 'strong' });
+    const records = (await Promise.all(ledger.blobs.map(async (key) => await blob.get<{
+      utcDay: string; dailyCount: number; reservationIds?: string[];
+    }>(key, { consistency: 'strong' })))).filter((record): record is NonNullable<typeof record> => record !== null);
+    expect(records).toContainEqual(expect.objectContaining({
+      utcDay: '2026-08-11', dailyCount: 1, reservationIds: ['job-a'],
+    }));
+    expect(records.filter((record) => record.utcDay === '2026-08-12')).toHaveLength(0);
   });
 });

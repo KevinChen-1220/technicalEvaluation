@@ -82,4 +82,27 @@ describe('EdgeOne Blob adapter', () => {
     )).resolves.toEqual(expect.objectContaining({ status: 'running', quotaReserved: true }));
     expect(list).toHaveBeenCalledWith(expect.objectContaining({ directories: false }));
   });
+
+  test('preserves the SDK lexicographic order used by inverse revision keys', async () => {
+    const keys = [
+      'cache/999999999998.json',
+      'cache/999999999982.json',
+      'cache/999999999997.json',
+    ];
+    const list = jest.fn(async ({ prefix = '', limit }: { prefix?: string; limit?: number } = {}) => ({
+      blobs: keys.filter((key) => key.startsWith(prefix)).sort().slice(0, limit).map((key) => ({ key })),
+      directories: [],
+    }));
+    const blob = createBlobPort({
+      get: async () => null,
+      setJSON: async () => undefined,
+      delete: async () => undefined,
+      list,
+    });
+
+    await expect(blob.list('cache/', { consistency: 'strong', limit: 1 })).resolves.toEqual({
+      blobs: ['cache/999999999982.json'], directories: [],
+    });
+    expect(list).toHaveBeenCalledWith({ prefix: 'cache/', directories: false, consistency: 'strong', limit: 1 });
+  });
 });

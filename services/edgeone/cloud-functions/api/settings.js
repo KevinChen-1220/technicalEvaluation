@@ -1033,56 +1033,132 @@ function clone(value) {
 }
 
 // src/storage/quotaRepository.ts
+var import_node_crypto2 = require("node:crypto");
+var MAX_REVISION = 999999999999;
+var MAX_CAS_ATTEMPTS = 8;
 var BlobQuotaRepository = class {
   constructor(blob) {
     this.blob = blob;
   }
   async reserve(ownerKey, now, generationEnabled, reservationId) {
     if (!generationEnabled) return "generation_disabled";
-    for (let attempt = 0; attempt < 8; attempt += 1) {
-      const latest = await this.readLatest(ownerKey);
-      const utcDay = now.toISOString().slice(0, 10);
-      const reservationIds = latest?.utcDay === utcDay ? normalizedReservationIds(latest) : [];
+    const utcDay = now.toISOString().slice(0, 10);
+    if (reservationId !== void 0) {
+      const marker2 = await this.readMarker(ownerKey, reservationId);
+      if (marker2 !== null) {
+        return await this.ensureDailyReservation(ownerKey, marker2.reservedDate, reservationId, marker2.reservedAt);
+      }
+    }
+    const today = await this.readLatestDay(ownerKey, utcDay);
+    if (reservationId !== void 0 && normalizedReservationIds(today).includes(reservationId)) {
+      const marker2 = await this.claimMarker(ownerKey, reservationId, utcDay, now.toISOString());
+      return await this.ensureDailyReservation(ownerKey, marker2.reservedDate, reservationId, marker2.reservedAt);
+    }
+    const previous = await this.readLatestDay(ownerKey, previousUtcDay(utcDay));
+    const mostRecent = latestByRequestTime(today, previous);
+    if (mostRecent !== null && now.getTime() - new Date(mostRecent.lastRequestAt).getTime() < 6e4) {
+      return "rate_limited";
+    }
+    if ((today?.dailyCount ?? 0) >= 5) return "quota_exceeded";
+    if (reservationId === void 0) {
+      return await this.appendDailyReservation(ownerKey, utcDay, void 0, now.toISOString());
+    }
+    const marker = await this.claimMarker(ownerKey, reservationId, utcDay, now.toISOString());
+    return await this.ensureDailyReservation(ownerKey, marker.reservedDate, reservationId, marker.reservedAt);
+  }
+  async claimMarker(ownerKey, reservationId, reservedDate, reservedAt) {
+    const marker = {
+      reservationIdHash: hashReservationId(reservationId),
+      reservedDate,
+      reservedAt
+    };
+    try {
+      await this.blob.put(this.markerKey(ownerKey, reservationId), marker, { onlyIfNew: true });
+      return marker;
+    } catch (error) {
+      if (!isPreconditionFailure2(error)) throw error;
+      const winner = await this.readMarker(ownerKey, reservationId);
+      if (winner === null) throw new Error("QUOTA_MARKER_CONFLICT");
+      return winner;
+    }
+  }
+  async readMarker(ownerKey, reservationId) {
+    const marker = await this.blob.get(this.markerKey(ownerKey, reservationId), { consistency: "strong" });
+    if (marker === null) return null;
+    if (marker.reservationIdHash !== hashReservationId(reservationId) || !/^\d{4}-\d{2}-\d{2}$/.test(marker.reservedDate) || !Number.isFinite(new Date(marker.reservedAt).getTime())) throw new Error("INVALID_QUOTA_MARKER");
+    return marker;
+  }
+  async ensureDailyReservation(ownerKey, utcDay, reservationId, reservedAt) {
+    return await this.appendDailyReservation(ownerKey, utcDay, reservationId, reservedAt);
+  }
+  async appendDailyReservation(ownerKey, utcDay, reservationId, reservedAt) {
+    for (let attempt = 0; attempt < MAX_CAS_ATTEMPTS; attempt += 1) {
+      const latest = await this.readLatestDay(ownerKey, utcDay);
+      const reservationIds = normalizedReservationIds(latest);
       if (reservationId !== void 0 && reservationIds.includes(reservationId)) return "allowed";
-      if (latest !== null && now.getTime() - new Date(latest.lastRequestAt).getTime() < 6e4) return "rate_limited";
-      const dailyCount = latest?.utcDay === utcDay ? latest.dailyCount : 0;
+      const dailyCount = latest?.dailyCount ?? 0;
       if (dailyCount >= 5) return "quota_exceeded";
       const next = {
         revision: (latest?.revision ?? 0) + 1,
-        lastRequestAt: now.toISOString(),
+        lastRequestAt: latestRequestTime(latest?.lastRequestAt, reservedAt),
         utcDay,
         dailyCount: dailyCount + 1,
         reservationIds: reservationId === void 0 ? reservationIds : [...reservationIds, reservationId],
         ...reservationId === void 0 ? {} : { reservationId }
       };
       try {
-        await this.blob.put(this.key(ownerKey, next.revision), next, { onlyIfNew: true });
+        await this.blob.put(this.ledgerKey(ownerKey, utcDay, next.revision), next, { onlyIfNew: true });
         return "allowed";
       } catch (error) {
-        if (error instanceof BlobPreconditionFailedError) continue;
+        if (isPreconditionFailure2(error)) continue;
         throw error;
       }
     }
     return "rate_limited";
   }
-  async readLatest(ownerKey) {
-    const prefix = `quotas/${encodeURIComponent(ownerKey)}/ledger/`;
-    const keys = (await this.blob.list(prefix, { consistency: "strong", limit: 32 })).blobs;
-    const revisions = keys.map((key) => Number(/\/(\d{12})\.json$/.exec(key)?.[1])).map((inverse) => 999999999999 - inverse).filter((revision2) => Number.isInteger(revision2) && revision2 > 0);
+  async readLatestDay(ownerKey, utcDay) {
+    const prefix = this.ledgerPrefix(ownerKey, utcDay);
+    const keys = (await this.blob.list(prefix, { consistency: "strong" })).blobs;
+    const revisions = keys.map((key) => Number(/\/(\d{12})\.json$/.exec(key)?.[1])).map((inverse) => MAX_REVISION - inverse).filter((revision2) => Number.isInteger(revision2) && revision2 > 0);
     const revision = revisions.length === 0 ? null : Math.max(...revisions);
-    return revision === null ? null : await this.blob.get(this.key(ownerKey, revision), { consistency: "strong" });
+    return revision === null ? null : await this.blob.get(this.ledgerKey(ownerKey, utcDay, revision), { consistency: "strong" });
   }
-  key(ownerKey, revision) {
-    const inverseRevision = 999999999999 - revision;
-    return `quotas/${encodeURIComponent(ownerKey)}/ledger/${String(inverseRevision).padStart(12, "0")}.json`;
+  ledgerPrefix(ownerKey, utcDay) {
+    return `quotas/${encodeURIComponent(ownerKey)}/ledger/${utcDay}/`;
+  }
+  ledgerKey(ownerKey, utcDay, revision) {
+    const inverseRevision = MAX_REVISION - revision;
+    return `${this.ledgerPrefix(ownerKey, utcDay)}${String(inverseRevision).padStart(12, "0")}.json`;
+  }
+  markerKey(ownerKey, reservationId) {
+    return `quotas/${encodeURIComponent(ownerKey)}/reservations/${hashReservationId(reservationId)}.json`;
   }
 };
 function normalizedReservationIds(record) {
+  if (record === null) return [];
   const ids = Array.isArray(record.reservationIds) ? record.reservationIds.filter((value) => typeof value === "string" && value.length > 0).slice(0, 5) : [];
   if (typeof record.reservationId === "string" && record.reservationId.length > 0 && !ids.includes(record.reservationId)) {
     ids.push(record.reservationId);
   }
   return ids.slice(0, 5);
+}
+function hashReservationId(reservationId) {
+  return (0, import_node_crypto2.createHash)("sha256").update(reservationId, "utf8").digest("hex");
+}
+function previousUtcDay(utcDay) {
+  return new Date((/* @__PURE__ */ new Date(`${utcDay}T00:00:00.000Z`)).getTime() - 864e5).toISOString().slice(0, 10);
+}
+function latestByRequestTime(left, right) {
+  if (left === null) return right;
+  if (right === null) return left;
+  return new Date(left.lastRequestAt).getTime() >= new Date(right.lastRequestAt).getTime() ? left : right;
+}
+function latestRequestTime(existing, candidate) {
+  if (existing === void 0) return candidate;
+  return new Date(existing).getTime() >= new Date(candidate).getTime() ? existing : candidate;
+}
+function isPreconditionFailure2(error) {
+  return error instanceof BlobPreconditionFailedError || typeof error === "object" && error !== null && "code" in error && error.code === "BLOB_PRECONDITION_FAILED";
 }
 
 // src/storage/reportRepository.ts

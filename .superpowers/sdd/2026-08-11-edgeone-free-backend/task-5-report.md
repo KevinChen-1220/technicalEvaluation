@@ -2,7 +2,7 @@
 
 ## Status
 
-Completed, including all three strict review hardening rounds.
+Completed, including all four strict review hardening rounds.
 
 ## Generation Contract
 
@@ -28,7 +28,8 @@ Completed, including all three strict review hardening rounds.
 - Concurrent token refreshes use same-process single-flight scoped to the underlying EdgeOne Blob service. The refresh has an independent 15-second budget while each waiter observes its own deadline, so a short waiter cannot cancel a longer waiter.
 - Cross-instance refreshes use strongly read, immutable revision locks with a 12-second lease and `onlyIfNew` claims. Only one contender refreshes, and an abandoned lock can be taken over after expiry.
 - The refresh budget is 10 seconds, strictly below the 12-second lease, while the upstream request is capped at 8 seconds to retain a persistence margin.
-- Access tokens use immutable, AppID-scoped cache revisions containing `revision`, `issuedAt`, and `expiresAt`. Strong bounded reads select the highest valid record by stored revision rather than SDK list order, so a paused old holder cannot overwrite a newer token.
+- Access tokens use immutable, AppID-scoped cache revisions containing `revision`, `issuedAt`, and `expiresAt`. Strong reads select the newest valid record by persisted issue time and revision, so a paused old holder cannot overwrite a newer token.
+- Token and refresh-lock revisions are partitioned by UTC day. Discovery strongly lists the current and previous day without an SDK limit, then selects by persisted timestamps and revision fields; failed cleanup beyond 16 records cannot hide the newest record.
 - Blob token reads/writes, token fetches, moderation fetches, and response readers are deadline bounded. Fetch timeouts do not depend on the upstream honoring `AbortSignal`.
 - Output moderation runs at most three requests concurrently and waits for already-started workers to settle before returning a failure.
 - Explicit content violations map to non-retryable `CONTENT_BLOCKED`/422. WeChat HTTP, network, JSON, timeout, token, and Blob failures fail closed as retryable `BACKEND_UNAVAILABLE`/503.
@@ -42,6 +43,7 @@ Completed, including all three strict review hardening rounds.
 - Failed jobs remain stable until `retry: true` explicitly opens a new attempt.
 - Quota is reserved only after the first job claim. The immutable job-level `quota-reserved.json` marker and quota ledger reservation ID ensure retries reuse the original reservation; a failed-then-successful job increments the daily count once.
 - Each quota ledger revision carries the UTC day's bounded `reservationIds` set. A-B-A retries remain idempotent even when another job was recorded after A or A's job marker write failed.
+- Each owner/reservation pair also has a global immutable marker containing its first `reservedDate` and `reservedAt`. Daily ledgers are partitioned by UTC date, so cross-midnight retries repair or reuse the first day's entry and never charge the current day.
 - Failure persistence uses a fresh two-second best-effort deadline, so an exhausted 115-second request deadline cannot leave a permanent running state. If that short write also fails, lease expiry permits recovery.
 - Immediately after any running job result from `begin`, including a newly claimed stale takeover, the route checks the deterministic assessment ID. An existing assessment completes that attempt before quota or LLM work.
 - `BlobPort.list` defaults to recursive flat blobs and exposes an explicit `directories` option. The EdgeOne adapter passes `directories: false` by default so nested job, assessment, quota, and token revisions remain discoverable.
@@ -60,10 +62,11 @@ Completed, including all three strict review hardening rounds.
 - Existing tests cover encrypted session storage, GCM tamper detection, moderation `openid`, job concurrency, failure retry, lost-response recovery, 49/51 questions, HTML/XML, JSON repair, schema rejection, language behavior, 2 MiB multi-chunk limits, stalled readers, and all business-route authentication.
 - New red-green tests cover stale running takeover, concurrent takeover, three-attempt exhaustion, durable quota failures, one real-ledger reservation across failure/retry, failure writes after global timeout, never-resolving stream cancellation, per-waiter token deadlines, cross-instance refresh locking, expired-lock takeover, and stable process coordination across EdgeOne Blob wrappers.
 - Third-round red-green tests reproduce EdgeOne delimiter grouping, A-B-A quota duplication, marker-write recovery, a 13-second stale token holder, unordered token-cache listing, and assessment recovery immediately after stale takeover.
+- Fourth-round red-green tests cover A@23:58, B@23:59, A@00:00 global idempotency, marker-first ledger repair, SDK lexicographic ordering, and token/lock revision 17 discovery with cleanup permanently failing.
 
 ## Verification
 
-- `npm run test:edgeone -- --runInBand`: 17 suites, 121 tests passed.
+- `npm run test:edgeone -- --runInBand`: 17 suites, 126 tests passed.
 - `npm run typecheck:edgeone`: passed.
 - `npm run build:edgeone`: passed and regenerated all six Node Function bundles.
 - `npm run scan:secrets:source`: passed.

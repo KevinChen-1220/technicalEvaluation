@@ -396,6 +396,51 @@ describe('WeChat text security', () => {
     }
   });
 
+  test('selects token revision 17 when cleanup fails under lexicographic listing', async () => {
+    const blob = new MemoryBlobPort();
+    jest.spyOn(blob, 'delete').mockRejectedValue(new Error('cleanup unavailable'));
+    const appId = 'wx-token-revision-seventeen';
+    let currentTime = new Date('2026-08-11T08:00:00.000Z').getTime();
+    let sequence = 0;
+    const dependencies = {
+      blob, appId, appSecret: 'runtime-secret',
+      fetch: async () => new Response(JSON.stringify({ access_token: `token-${++sequence}`, expires_in: 301 })),
+      now: () => new Date(currentTime),
+    };
+    for (let revision = 1; revision <= 17; revision += 1) {
+      await expect(getWeChatAccessToken(dependencies, createDeadline(1_000))).resolves.toBe(`token-${revision}`);
+      if (revision < 17) currentTime += 302_000;
+    }
+
+    const readerFetch = jest.fn();
+    await expect(getWeChatAccessToken({ ...dependencies, fetch: readerFetch }, createDeadline(200))).resolves.toBe('token-17');
+    expect(readerFetch).not.toHaveBeenCalled();
+  });
+
+  test('discovers lock revision 17 despite failed cleanup and adverse list order', async () => {
+    const blob = new DescendingListBlob();
+    jest.spyOn(blob, 'delete').mockRejectedValue(new Error('cleanup unavailable'));
+    const appId = 'wx-lock-revision-seventeen';
+    let currentTime = new Date('2026-08-11T08:00:00.000Z').getTime();
+    let sequence = 0;
+    const dependencies = {
+      blob, appId, appSecret: 'runtime-secret',
+      fetch: async () => new Response(JSON.stringify({ access_token: `token-${++sequence}`, expires_in: 301 })),
+      now: () => new Date(currentTime),
+    };
+    for (let revision = 1; revision <= 17; revision += 1) {
+      await expect(getWeChatAccessToken(dependencies, createDeadline(1_000))).resolves.toBe(`token-${revision}`);
+      if (revision < 17) currentTime += 302_000;
+    }
+    for (const key of [...blob.records.keys()]) {
+      if (key.includes('.tokens/') || /wechat-access-token\/[a-f0-9]+\.json$/.test(key)) blob.records.delete(key);
+    }
+    currentTime += 13_000;
+
+    await expect(getWeChatAccessToken(dependencies, createDeadline(200))).resolves.toBe('token-18');
+    expect(sequence).toBe(18);
+  });
+
   test.each(['token', 'moderation'] as const)('enforces the global deadline when the %s fetch ignores abort', async (stage) => {
     jest.useFakeTimers();
     try {
@@ -488,10 +533,10 @@ async function seedToken(blob: MemoryBlobPort): Promise<string> {
   ))!;
 }
 
-function refreshLockKeyForTest(appId: string, revision: number): string {
+function refreshLockKeyForTest(appId: string, revision: number, updatedAt = '2026-08-11T08:00:00.000Z'): string {
   const digest = createHash('sha256').update(appId, 'utf8').digest('hex').slice(0, 24);
   const inverse = 999_999_999_999 - revision;
-  return `moderation/wechat-access-token/${digest}.refresh-locks/${String(inverse).padStart(12, '0')}.json`;
+  return `moderation/wechat-access-token/${digest}.refresh-locks/${updatedAt.slice(0, 10)}/${String(inverse).padStart(12, '0')}.json`;
 }
 
 async function settlesWithin(operation: Promise<unknown>, milliseconds: number) {
@@ -533,5 +578,15 @@ class DelayedFirstTokenWriteBlob extends MemoryBlobPort {
   override async list(prefix = '', options?: { consistency?: 'eventual' | 'strong'; limit?: number; directories?: boolean }) {
     const result = await super.list(prefix, options);
     return prefix.includes('.tokens/') ? { ...result, blobs: [...result.blobs].reverse() } : result;
+  }
+}
+
+class DescendingListBlob extends MemoryBlobPort {
+  override async list(prefix = '', options?: { consistency?: 'eventual' | 'strong'; limit?: number; directories?: boolean }) {
+    const result = await super.list(prefix, {
+      ...(options?.consistency === undefined ? {} : { consistency: options.consistency }),
+      ...(options?.directories === undefined ? {} : { directories: options.directories }),
+    });
+    return { ...result, blobs: [...result.blobs].sort().reverse().slice(0, options?.limit) };
   }
 }
