@@ -25,6 +25,7 @@ export interface BlobListResult {
 export interface BlobListOptions {
   consistency?: BlobConsistency;
   limit?: number;
+  directories?: boolean;
 }
 
 export interface BlobPort {

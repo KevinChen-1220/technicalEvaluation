@@ -678,7 +678,7 @@ function createBlobPort(store) {
     async list(prefix, options) {
       const result = await store.list({
         ...prefix === void 0 ? {} : { prefix },
-        directories: true,
+        directories: options?.directories ?? false,
         ...options?.consistency === void 0 ? {} : { consistency: options.consistency },
         ...options?.limit === void 0 ? {} : { limit: options.limit }
       });

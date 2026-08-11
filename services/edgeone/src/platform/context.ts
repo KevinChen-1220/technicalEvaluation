@@ -49,10 +49,10 @@ export function createBlobPort(store: EdgeOneBlobStore): BlobPort {
     async delete(key: string) {
       await store.delete(key);
     },
-    async list(prefix?: string, options?: { consistency?: 'eventual' | 'strong'; limit?: number }) {
+    async list(prefix?: string, options?: { consistency?: 'eventual' | 'strong'; limit?: number; directories?: boolean }) {
       const result = await store.list({
         ...(prefix === undefined ? {} : { prefix }),
-        directories: true,
+        directories: options?.directories ?? false,
         ...(options?.consistency === undefined ? {} : { consistency: options.consistency }),
         ...(options?.limit === undefined ? {} : { limit: options.limit }),
       });

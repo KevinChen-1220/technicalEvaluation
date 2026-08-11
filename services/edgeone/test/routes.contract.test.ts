@@ -8,6 +8,7 @@ import { createSettingsRoute } from '../src/routes/settings';
 import { MemoryBlobPort } from '../src/storage/memoryStores';
 import { createEdgeOneStores } from '../src/storage/edgeOneStores';
 import { ApiError } from '../src/http/errors';
+import { createHash } from 'node:crypto';
 
 const now = () => new Date('2026-08-11T08:00:00.000Z');
 
@@ -98,6 +99,45 @@ describe('EdgeOne REST contracts', () => {
     await first;
   });
 
+  test('recovers a persisted assessment immediately after taking over a stale running job', async () => {
+    const fixture = await routeFixture();
+    await fixture.stores.settings.set(fixture.ownerKey, {
+      privacyPolicyVersion: '2026-08-10', privacyConsentAt: now().toISOString(),
+    });
+    const clientRequestId = 'stale-persisted-assessment';
+    const digest = createHash('sha256')
+      .update(`${fixture.ownerKey}\0${clientRequestId}`, 'utf8').digest('hex').slice(0, 32);
+    const assessmentId = `assessment-${digest}`;
+    const jobId = `job-${digest}`;
+    await fixture.stores.jobs.begin({
+      ownerKey: fixture.ownerKey,
+      jobId,
+      clientRequestIdHash: createHash('sha256').update(clientRequestId, 'utf8').digest('hex'),
+      assessmentId,
+      leaseToken: 'abandoned-lease',
+      now: '2026-08-11T08:00:00.000Z',
+      retry: false,
+    });
+    await fixture.stores.assessments.createIfAbsent(assessmentRecord(fixture.ownerKey, assessmentId, 'TypeScript'));
+    const reserve = jest.spyOn(fixture.stores.quota, 'reserve');
+    const generate = jest.fn(async () => { throw new Error('LLM must not run'); });
+
+    const response = await createGenerationRoute(fixture.request('/api/generation', 'POST', {
+      topic: 'TypeScript', clientRequestId, retry: true,
+    }), fixture.context, {
+      stores: fixture.stores,
+      generate,
+      now: () => new Date('2026-08-11T08:03:00.000Z'),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ ok: true, data: expect.objectContaining({
+      status: 'completed', assessmentId, attempt: 2,
+    }) });
+    expect(reserve).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+  });
+
   test('creates a 115-second deadline at route entry and passes it into generation', async () => {
     const fixture = await routeFixture();
     await fixture.stores.settings.set(fixture.ownerKey, {
@@ -180,6 +220,52 @@ describe('EdgeOne REST contracts', () => {
       .filter(([key]) => key.startsWith(`quotas/${encodeURIComponent(fixture.ownerKey)}/ledger/`));
     expect(quotaRecords).toHaveLength(1);
     expect(quotaRecords[0]?.[1]).toEqual(expect.objectContaining({ dailyCount: 1 }));
+  });
+
+  test('recovers quota idempotency when the job marker write fails before an A-B-A retry', async () => {
+    const fixture = await routeFixture();
+    await fixture.stores.settings.set(fixture.ownerKey, {
+      privacyPolicyVersion: '2026-08-10', privacyConsentAt: now().toISOString(),
+    });
+    const originalPut = fixture.blob.put.bind(fixture.blob);
+    let failMarker = true;
+    jest.spyOn(fixture.blob, 'put').mockImplementation(async (key, value, options) => {
+      if (failMarker && key.endsWith('/quota-reserved.json')) {
+        failMarker = false;
+        throw new Error('marker unavailable');
+      }
+      await originalPut(key, value, options);
+    });
+    const generate = jest.fn(async (input: { ownerKey: string; assessmentId: string; topic: string }) => {
+      const record = assessmentRecord(input.ownerKey, input.assessmentId, input.topic);
+      await fixture.stores.assessments.createIfAbsent(record);
+      return record;
+    });
+    const body = { topic: 'TypeScript', clientRequestId: 'marker-failure-job-a' };
+
+    const failed = await createGenerationRoute(fixture.request('/api/generation', 'POST', body), fixture.context, {
+      stores: fixture.stores, generate, now,
+    });
+    expect(failed.status).toBe(500);
+    await expect(fixture.stores.quota.reserve(
+      fixture.ownerKey, new Date('2026-08-11T08:01:00.000Z'), true, 'job-b',
+    )).resolves.toBe('allowed');
+
+    const retried = await createGenerationRoute(
+      fixture.request('/api/generation', 'POST', { ...body, retry: true }), fixture.context,
+      { stores: fixture.stores, generate, now },
+    );
+    expect(retried.status).toBe(201);
+    expect(generate).toHaveBeenCalledTimes(1);
+
+    const quotaRecords = [...fixture.blob.records.entries()]
+      .filter(([key]) => key.startsWith(`quotas/${encodeURIComponent(fixture.ownerKey)}/ledger/`))
+      .map(([, value]) => value as { revision: number; dailyCount: number; reservationIds: string[] })
+      .sort((left, right) => right.revision - left.revision);
+    expect(quotaRecords[0]).toEqual(expect.objectContaining({
+      dailyCount: 2,
+      reservationIds: expect.arrayContaining(['job-b', expect.stringMatching(/^job-/)]),
+    }));
   });
 
   test('durably fails a claimed job when quota reservation throws', async () => {

@@ -14,9 +14,10 @@ export class BlobQuotaRepository {
     if (!generationEnabled) return 'generation_disabled';
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const latest = await this.readLatest(ownerKey);
-      if (reservationId !== undefined && latest?.reservationId === reservationId) return 'allowed';
-      if (latest !== null && now.getTime() - new Date(latest.lastRequestAt).getTime() < 60_000) return 'rate_limited';
       const utcDay = now.toISOString().slice(0, 10);
+      const reservationIds = latest?.utcDay === utcDay ? normalizedReservationIds(latest) : [];
+      if (reservationId !== undefined && reservationIds.includes(reservationId)) return 'allowed';
+      if (latest !== null && now.getTime() - new Date(latest.lastRequestAt).getTime() < 60_000) return 'rate_limited';
       const dailyCount = latest?.utcDay === utcDay ? latest.dailyCount : 0;
       if (dailyCount >= 5) return 'quota_exceeded';
       const next: QuotaReservation = {
@@ -24,6 +25,7 @@ export class BlobQuotaRepository {
         lastRequestAt: now.toISOString(),
         utcDay,
         dailyCount: dailyCount + 1,
+        reservationIds: reservationId === undefined ? reservationIds : [...reservationIds, reservationId],
         ...(reservationId === undefined ? {} : { reservationId }),
       };
       try {
@@ -56,4 +58,21 @@ export class BlobQuotaRepository {
   }
 }
 
-type QuotaReservation = { revision: number; lastRequestAt: string; utcDay: string; dailyCount: number; reservationId?: string };
+type QuotaReservation = {
+  revision: number;
+  lastRequestAt: string;
+  utcDay: string;
+  dailyCount: number;
+  reservationIds?: string[];
+  reservationId?: string;
+};
+
+function normalizedReservationIds(record: QuotaReservation): string[] {
+  const ids = Array.isArray(record.reservationIds)
+    ? record.reservationIds.filter((value): value is string => typeof value === 'string' && value.length > 0).slice(0, 5)
+    : [];
+  if (typeof record.reservationId === 'string' && record.reservationId.length > 0 && !ids.includes(record.reservationId)) {
+    ids.push(record.reservationId);
+  }
+  return ids.slice(0, 5);
+}

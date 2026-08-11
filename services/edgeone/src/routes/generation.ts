@@ -58,16 +58,16 @@ export async function createGenerationRoute(
       now: dependencies.now().toISOString(),
       retry,
     }), deadline);
-    if (begun.type === 'existing') {
-      if (begun.job.status === 'running') {
-        const assessment = await withinDeadline(dependencies.stores.assessments.get(identity.ownerKey, assessmentId), deadline);
-        if (assessment !== null) {
-          const recovered = await withinDeadline(dependencies.stores.jobs.recoverCompleted(
-            identity.ownerKey, jobId, begun.job.attempt, dependencies.now().toISOString(),
-          ), deadline);
-          return success(jobEnvelope(recovered));
-        }
+    if (begun.job.status === 'running') {
+      const assessment = await withinDeadline(dependencies.stores.assessments.get(identity.ownerKey, assessmentId), deadline);
+      if (assessment !== null) {
+        const recovered = await withinDeadline(dependencies.stores.jobs.recoverCompleted(
+          identity.ownerKey, jobId, begun.job.attempt, dependencies.now().toISOString(),
+        ), deadline);
+        return success(jobEnvelope(recovered));
       }
+    }
+    if (begun.type === 'existing') {
       return success(jobEnvelope(begun.job), begun.job.status === 'running' ? 202 : 200);
     }
 

@@ -16,7 +16,19 @@ export class MemoryBlobPort implements BlobPort {
   async delete(key: string): Promise<void> { this.records.delete(key); }
 
   async list(prefix = '', options?: BlobListOptions): Promise<BlobListResult> {
-    return { blobs: [...this.records.keys()].filter((key) => key.startsWith(prefix)).sort().slice(0, options?.limit), directories: [] };
+    const matches = [...this.records.keys()].filter((key) => key.startsWith(prefix)).sort();
+    if (options?.directories !== true) {
+      return { blobs: matches.slice(0, options?.limit), directories: [] };
+    }
+    const blobs: string[] = [];
+    const directories = new Set<string>();
+    for (const key of matches) {
+      const suffix = key.slice(prefix.length);
+      const separator = suffix.indexOf('/');
+      if (separator < 0) blobs.push(key);
+      else directories.add(`${prefix}${suffix.slice(0, separator + 1)}`);
+    }
+    return { blobs: blobs.slice(0, options?.limit), directories: [...directories] };
   }
 }
 

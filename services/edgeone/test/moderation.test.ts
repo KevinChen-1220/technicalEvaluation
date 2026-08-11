@@ -344,6 +344,58 @@ describe('WeChat text security', () => {
     }
   });
 
+  test('fences a holder paused past the lease so its late token cannot become current', async () => {
+    jest.useFakeTimers();
+    jest.setSystemTime(new Date('2026-08-11T08:00:00.000Z'));
+    let getFromOldHolder!: typeof getWeChatAccessToken;
+    let getFromNewHolder!: typeof getWeChatAccessToken;
+    let getFromReader!: typeof getWeChatAccessToken;
+    await jest.isolateModulesAsync(async () => {
+      getFromOldHolder = (await import('../src/moderation/wechatAccessToken')).getWeChatAccessToken;
+    });
+    await jest.isolateModulesAsync(async () => {
+      getFromNewHolder = (await import('../src/moderation/wechatAccessToken')).getWeChatAccessToken;
+    });
+    await jest.isolateModulesAsync(async () => {
+      getFromReader = (await import('../src/moderation/wechatAccessToken')).getWeChatAccessToken;
+    });
+    const blob = new DelayedFirstTokenWriteBlob();
+    const appId = 'wx-token-fencing';
+    try {
+      const oldOperation = getFromOldHolder({
+        blob, appId, appSecret: 'runtime-secret',
+        fetch: async () => new Response(JSON.stringify({ access_token: 'old-token', expires_in: 7200 })),
+        now: () => new Date(Date.now()),
+      }, createDeadline(30_000));
+      const oldOutcome = oldOperation.then(
+        (value) => ({ type: 'resolved' as const, value }),
+        (error: unknown) => ({ type: 'rejected' as const, error }),
+      );
+      await blob.firstTokenWriteStarted;
+      await jest.advanceTimersByTimeAsync(13_000);
+
+      await expect(getFromNewHolder({
+        blob, appId, appSecret: 'runtime-secret',
+        fetch: async () => new Response(JSON.stringify({ access_token: 'new-token', expires_in: 7200 })),
+        now: () => new Date(Date.now()),
+      }, createDeadline(10_000))).resolves.toBe('new-token');
+      blob.releaseFirstTokenWrite();
+      await expect(oldOutcome).resolves.toEqual({
+        type: 'rejected', error: expect.objectContaining({ code: 'BACKEND_UNAVAILABLE', retryable: true }),
+      });
+
+      const readerFetch = jest.fn();
+      await expect(getFromReader({
+        blob, appId, appSecret: 'runtime-secret', fetch: readerFetch,
+        now: () => new Date(Date.now()),
+      }, createDeadline(1_000))).resolves.toBe('new-token');
+      expect(readerFetch).not.toHaveBeenCalled();
+    } finally {
+      blob.releaseFirstTokenWrite();
+      jest.useRealTimers();
+    }
+  });
+
   test.each(['token', 'moderation'] as const)('enforces the global deadline when the %s fetch ignores abort', async (stage) => {
     jest.useFakeTimers();
     try {
@@ -456,5 +508,30 @@ async function settlesWithin(operation: Promise<unknown>, milliseconds: number) 
     ]);
   } finally {
     if (timer !== undefined) clearTimeout(timer);
+  }
+}
+
+class DelayedFirstTokenWriteBlob extends MemoryBlobPort {
+  private releaseWrite: (() => void) | undefined;
+  private readonly writeBarrier = new Promise<void>((resolve) => { this.releaseWrite = resolve; });
+  private markWriteStarted: (() => void) | undefined;
+  readonly firstTokenWriteStarted = new Promise<void>((resolve) => { this.markWriteStarted = resolve; });
+  private delayNextTokenWrite = true;
+
+  releaseFirstTokenWrite(): void { this.releaseWrite?.(); }
+
+  override async put<T>(key: string, value: T, options?: { onlyIfNew?: boolean }): Promise<void> {
+    if (this.delayNextTokenWrite && /^moderation\/wechat-access-token\/[a-f0-9]+(?:\.json|\.tokens\/)/.test(key)
+      && !key.includes('.refresh-locks/')) {
+      this.delayNextTokenWrite = false;
+      this.markWriteStarted?.();
+      await this.writeBarrier;
+    }
+    await super.put(key, value, options);
+  }
+
+  override async list(prefix = '', options?: { consistency?: 'eventual' | 'strong'; limit?: number; directories?: boolean }) {
+    const result = await super.list(prefix, options);
+    return prefix.includes('.tokens/') ? { ...result, blobs: [...result.blobs].reverse() } : result;
   }
 }

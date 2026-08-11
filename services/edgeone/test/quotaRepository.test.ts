@@ -33,4 +33,21 @@ describe('free tier quota', () => {
       dailyCount: 1, reservationId: 'job-a',
     }));
   });
+
+  test('keeps A-B-A reservations idempotent for the whole UTC day', async () => {
+    const blob = new MemoryBlobPort();
+    const quota = new BlobQuotaRepository(blob);
+
+    await expect(quota.reserve('owner-a', new Date('2026-08-11T00:00:00.000Z'), true, 'job-a')).resolves.toBe('allowed');
+    await expect(quota.reserve('owner-a', new Date('2026-08-11T00:01:00.000Z'), true, 'job-b')).resolves.toBe('allowed');
+    await expect(quota.reserve('owner-a', new Date('2026-08-11T00:02:00.000Z'), true, 'job-a')).resolves.toBe('allowed');
+
+    const ledger = await blob.list('quotas/owner-a/ledger/', { consistency: 'strong', limit: 16 });
+    const records = await Promise.all(ledger.blobs.map(async (key) => await blob.get<{
+      revision: number; dailyCount: number; reservationIds?: string[];
+    }>(key, { consistency: 'strong' })));
+    const latest = records.filter((record): record is NonNullable<typeof record> => record !== null)
+      .sort((left, right) => right.revision - left.revision)[0];
+    expect(latest).toEqual(expect.objectContaining({ dailyCount: 2, reservationIds: ['job-a', 'job-b'] }));
+  });
 });

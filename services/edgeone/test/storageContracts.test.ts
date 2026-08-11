@@ -23,7 +23,19 @@ function suites() {
       data.set(key, value);
     },
     delete: async (key: string) => { data.delete(key); },
-    list: async ({ prefix }: { prefix?: string } = {}) => ({ blobs: [...data.keys()].filter((key) => key.startsWith(prefix ?? '')).map((key) => ({ key })), directories: [] }),
+    list: async ({ prefix = '', directories = false }: { prefix?: string; directories?: boolean } = {}) => {
+      const matches = [...data.keys()].filter((key) => key.startsWith(prefix));
+      if (!directories) return { blobs: matches.map((key) => ({ key })), directories: [] };
+      const blobs: Array<{ key: string }> = [];
+      const grouped = new Set<string>();
+      for (const key of matches) {
+        const suffix = key.slice(prefix.length);
+        const separator = suffix.indexOf('/');
+        if (separator < 0) blobs.push({ key });
+        else grouped.add(`${prefix}${suffix.slice(0, separator + 1)}`);
+      }
+      return { blobs, directories: [...grouped] };
+    },
   }), { now: () => now });
   return [memory, edgeStore];
 }

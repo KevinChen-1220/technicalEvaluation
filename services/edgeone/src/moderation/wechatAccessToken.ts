@@ -6,13 +6,16 @@ import { BlobPreconditionFailedError, type BlobPort } from '../storage/ports';
 import type { FetchPort } from '../generation/openAIClient';
 
 const TOKEN_EXPIRY_MARGIN_MS = 5 * 60 * 1000;
-const TOKEN_REQUEST_TIMEOUT_MS = 10_000;
-const TOKEN_REFRESH_BUDGET_MS = 15_000;
+const TOKEN_REQUEST_TIMEOUT_MS = 8_000;
+const TOKEN_REFRESH_BUDGET_MS = 10_000;
 const REFRESH_LOCK_LEASE_MS = 12_000;
 const REFRESH_POLL_MS = 50;
+const TOKEN_DISCOVERY_LIMIT = 16;
+const LOCK_DISCOVERY_LIMIT = 16;
 const MAX_LOCK_REVISION = 999_999_999_999;
 
-type StoredAccessToken = { accessToken: string; expiresAt: string };
+type StoredAccessToken = { revision: number; accessToken: string; issuedAt: string; expiresAt: string };
+type LegacyAccessToken = { accessToken: string; expiresAt: string };
 type StoredRefreshLock = { revision: number; ownerToken: string; leaseUntil: string; updatedAt: string };
 type RefreshLockState = { key: string; lock: StoredRefreshLock };
 const refreshFlightsByScope = new WeakMap<object, Map<string, Promise<string>>>();
@@ -29,13 +32,9 @@ export async function getWeChatAccessToken(dependencies: WeChatAccessTokenDepend
   if (!dependencies.appId || !dependencies.appSecret) throw new ApiError('CONFIGURATION_ERROR', 503, false);
   const appId = dependencies.appId;
   const appSecret = dependencies.appSecret;
-  const cacheKey = tokenCacheKey(appId);
-  let cached: StoredAccessToken | null;
+  let cached: StoredAccessToken | LegacyAccessToken | null;
   try {
-    cached = await awaitInfrastructure(
-      dependencies.blob.get<StoredAccessToken>(cacheKey, { consistency: 'strong' }),
-      deadline,
-    );
+    cached = await readLatestAccessToken(dependencies.blob, appId, deadline);
   } catch {
     throw backendUnavailable();
   }
@@ -46,7 +45,7 @@ export async function getWeChatAccessToken(dependencies: WeChatAccessTokenDepend
   const existingFlight = refreshFlights.get(flightKey);
   if (existingFlight !== undefined) return await awaitInfrastructure(existingFlight, deadline);
   const internalDeadline = createDeadline(TOKEN_REFRESH_BUDGET_MS);
-  const refresh = refreshAcrossInstances(dependencies, cacheKey, appId, appSecret, internalDeadline);
+  const refresh = refreshAcrossInstances(dependencies, appId, appSecret, internalDeadline);
   let flight: Promise<string>;
   flight = refresh.then(
     (value) => {
@@ -73,15 +72,12 @@ function flightsFor(blob: BlobPort): Map<string, Promise<string>> {
 
 async function refreshAcrossInstances(
   dependencies: WeChatAccessTokenDependencies,
-  cacheKey: string,
   appId: string,
   appSecret: string,
   deadline: Deadline,
 ): Promise<string> {
   while (remainingMilliseconds(deadline) > 0) {
-    const cached = await awaitInfrastructure(
-      dependencies.blob.get<StoredAccessToken>(cacheKey, { consistency: 'strong' }), deadline,
-    );
+    const cached = await readLatestAccessToken(dependencies.blob, appId, deadline);
     if (isUsable(cached, dependencies.now())) return cached.accessToken;
 
     const currentLock = await readLatestRefreshLock(dependencies.blob, appId, deadline);
@@ -111,20 +107,20 @@ async function refreshAcrossInstances(
     }
     if (currentLock !== null) void dependencies.blob.delete(currentLock.key).catch(() => undefined);
 
-    const afterClaim = await awaitInfrastructure(
-      dependencies.blob.get<StoredAccessToken>(cacheKey, { consistency: 'strong' }), deadline,
-    );
+    const afterClaim = await readLatestAccessToken(dependencies.blob, appId, deadline);
     if (isUsable(afterClaim, dependencies.now())) return afterClaim.accessToken;
-    return await refreshAccessToken(dependencies, cacheKey, appId, appSecret, deadline);
+    return await refreshAccessToken(dependencies, appId, appSecret, {
+      revision, ownerToken, leaseUntil: new Date(now.getTime() + REFRESH_LOCK_LEASE_MS).toISOString(), updatedAt: now.toISOString(),
+    }, deadline);
   }
   throw backendUnavailable();
 }
 
 async function refreshAccessToken(
   dependencies: WeChatAccessTokenDependencies,
-  cacheKey: string,
   appId: string,
   appSecret: string,
+  lock: StoredRefreshLock,
   deadline?: Deadline,
 ): Promise<string> {
   let response: Response;
@@ -173,25 +169,78 @@ async function refreshAccessToken(
   const expiresAt = new Date(dependencies.now().getTime() + payload.expires_in * 1000);
   try {
     await awaitInfrastructure(
-      dependencies.blob.put(cacheKey, { accessToken: payload.access_token, expiresAt: expiresAt.toISOString() }),
+      dependencies.blob.put(tokenCacheKey(appId, lock.revision), {
+        revision: lock.revision,
+        accessToken: payload.access_token,
+        issuedAt: lock.updatedAt,
+        expiresAt: expiresAt.toISOString(),
+      }, { onlyIfNew: true }),
       deadline,
     );
+    void pruneOlderTokens(dependencies.blob, appId, lock.revision).catch(() => undefined);
   } catch {
     throw backendUnavailable();
   }
   return payload.access_token;
 }
 
-function isUsable(value: StoredAccessToken | null, now: Date): value is StoredAccessToken {
+function isUsable(value: StoredAccessToken | LegacyAccessToken | null, now: Date): value is StoredAccessToken | LegacyAccessToken {
   return value !== null
     && typeof value.accessToken === 'string'
     && Number.isFinite(new Date(value.expiresAt).getTime())
     && new Date(value.expiresAt).getTime() - now.getTime() > TOKEN_EXPIRY_MARGIN_MS;
 }
 
-function tokenCacheKey(appId: string): string {
+function legacyTokenCacheKey(appId: string): string {
   const digest = createHash('sha256').update(appId, 'utf8').digest('hex').slice(0, 24);
   return `moderation/wechat-access-token/${digest}.json`;
+}
+
+function tokenCachePrefix(appId: string): string {
+  const digest = createHash('sha256').update(appId, 'utf8').digest('hex').slice(0, 24);
+  return `moderation/wechat-access-token/${digest}.tokens/`;
+}
+
+function tokenCacheKey(appId: string, revision: number): string {
+  return `${tokenCachePrefix(appId)}${String(revision).padStart(12, '0')}.json`;
+}
+
+async function readLatestAccessToken(
+  blob: BlobPort,
+  appId: string,
+  deadline?: Deadline,
+): Promise<StoredAccessToken | LegacyAccessToken | null> {
+  const listing = await awaitInfrastructure(
+    blob.list(tokenCachePrefix(appId), { consistency: 'strong', limit: TOKEN_DISCOVERY_LIMIT }), deadline,
+  );
+  const candidates = await awaitInfrastructure(Promise.all(listing.blobs.map(async (key) => (
+    await blob.get<StoredAccessToken>(key, { consistency: 'strong' })
+  ))), deadline);
+  const valid = candidates.filter((value): value is StoredAccessToken => isStoredAccessToken(value));
+  valid.sort((left, right) => right.revision - left.revision
+    || new Date(right.issuedAt).getTime() - new Date(left.issuedAt).getTime());
+  if (valid[0] !== undefined) return valid[0];
+  return await awaitInfrastructure(
+    blob.get<LegacyAccessToken>(legacyTokenCacheKey(appId), { consistency: 'strong' }), deadline,
+  );
+}
+
+function isStoredAccessToken(value: StoredAccessToken | null): value is StoredAccessToken {
+  return value !== null
+    && Number.isInteger(value.revision)
+    && value.revision > 0
+    && typeof value.accessToken === 'string'
+    && value.accessToken.length > 0
+    && Number.isFinite(new Date(value.issuedAt).getTime())
+    && Number.isFinite(new Date(value.expiresAt).getTime());
+}
+
+async function pruneOlderTokens(blob: BlobPort, appId: string, keepRevision: number): Promise<void> {
+  const listing = await blob.list(tokenCachePrefix(appId), { consistency: 'strong', limit: TOKEN_DISCOVERY_LIMIT });
+  await Promise.all(listing.blobs.map(async (key) => {
+    const revision = Number(/\/(\d{12})\.json$/.exec(key)?.[1]);
+    if (Number.isInteger(revision) && revision < keepRevision) await blob.delete(key);
+  }));
 }
 
 function refreshLockPrefix(appId: string): string {
@@ -210,12 +259,16 @@ async function readLatestRefreshLock(
   deadline: Deadline,
 ): Promise<RefreshLockState | null> {
   const prefix = refreshLockPrefix(appId);
-  const keys = await awaitInfrastructure(blob.list(prefix, { consistency: 'strong', limit: 1 }), deadline);
-  const key = keys.blobs[0];
-  if (key === undefined) return null;
-  const lock = await awaitInfrastructure(blob.get<StoredRefreshLock>(key, { consistency: 'strong' }), deadline);
-  if (lock === null || !Number.isInteger(lock.revision) || lock.revision <= 0) throw backendUnavailable();
-  return { key, lock };
+  const listing = await awaitInfrastructure(blob.list(prefix, { consistency: 'strong', limit: LOCK_DISCOVERY_LIMIT }), deadline);
+  const states = await awaitInfrastructure(Promise.all(listing.blobs.map(async (key) => ({
+    key,
+    lock: await blob.get<StoredRefreshLock>(key, { consistency: 'strong' }),
+  }))), deadline);
+  const valid = states.filter((state): state is RefreshLockState => state.lock !== null
+    && Number.isInteger(state.lock.revision)
+    && state.lock.revision > 0);
+  valid.sort((left, right) => right.lock.revision - left.lock.revision);
+  return valid[0] ?? null;
 }
 
 function isActiveLock(value: StoredRefreshLock | null, now: Date): value is StoredRefreshLock {

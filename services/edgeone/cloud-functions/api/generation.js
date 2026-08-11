@@ -678,7 +678,7 @@ function createBlobPort(store) {
     async list(prefix, options) {
       const result = await store.list({
         ...prefix === void 0 ? {} : { prefix },
-        directories: true,
+        directories: options?.directories ?? false,
         ...options?.consistency === void 0 ? {} : { consistency: options.consistency },
         ...options?.limit === void 0 ? {} : { limit: options.limit }
       });
@@ -2406,9 +2406,10 @@ var BlobQuotaRepository = class {
     if (!generationEnabled) return "generation_disabled";
     for (let attempt = 0; attempt < 8; attempt += 1) {
       const latest = await this.readLatest(ownerKey);
-      if (reservationId !== void 0 && latest?.reservationId === reservationId) return "allowed";
-      if (latest !== null && now.getTime() - new Date(latest.lastRequestAt).getTime() < 6e4) return "rate_limited";
       const utcDay = now.toISOString().slice(0, 10);
+      const reservationIds = latest?.utcDay === utcDay ? normalizedReservationIds(latest) : [];
+      if (reservationId !== void 0 && reservationIds.includes(reservationId)) return "allowed";
+      if (latest !== null && now.getTime() - new Date(latest.lastRequestAt).getTime() < 6e4) return "rate_limited";
       const dailyCount = latest?.utcDay === utcDay ? latest.dailyCount : 0;
       if (dailyCount >= 5) return "quota_exceeded";
       const next = {
@@ -2416,6 +2417,7 @@ var BlobQuotaRepository = class {
         lastRequestAt: now.toISOString(),
         utcDay,
         dailyCount: dailyCount + 1,
+        reservationIds: reservationId === void 0 ? reservationIds : [...reservationIds, reservationId],
         ...reservationId === void 0 ? {} : { reservationId }
       };
       try {
@@ -2440,6 +2442,13 @@ var BlobQuotaRepository = class {
     return `quotas/${encodeURIComponent(ownerKey)}/ledger/${String(inverseRevision).padStart(12, "0")}.json`;
   }
 };
+function normalizedReservationIds(record) {
+  const ids = Array.isArray(record.reservationIds) ? record.reservationIds.filter((value) => typeof value === "string" && value.length > 0).slice(0, 5) : [];
+  if (typeof record.reservationId === "string" && record.reservationId.length > 0 && !ids.includes(record.reservationId)) {
+    ids.push(record.reservationId);
+  }
+  return ids.slice(0, 5);
+}
 
 // src/storage/reportRepository.ts
 var BlobReportRepository = class {
@@ -2705,23 +2714,21 @@ function createEdgeOneStores(blob, options) {
 // src/moderation/wechatAccessToken.ts
 var import_node_crypto2 = require("node:crypto");
 var TOKEN_EXPIRY_MARGIN_MS = 5 * 60 * 1e3;
-var TOKEN_REQUEST_TIMEOUT_MS = 1e4;
-var TOKEN_REFRESH_BUDGET_MS = 15e3;
+var TOKEN_REQUEST_TIMEOUT_MS = 8e3;
+var TOKEN_REFRESH_BUDGET_MS = 1e4;
 var REFRESH_LOCK_LEASE_MS = 12e3;
 var REFRESH_POLL_MS = 50;
+var TOKEN_DISCOVERY_LIMIT = 16;
+var LOCK_DISCOVERY_LIMIT = 16;
 var MAX_LOCK_REVISION = 999999999999;
 var refreshFlightsByScope = /* @__PURE__ */ new WeakMap();
 async function getWeChatAccessToken(dependencies, deadline) {
   if (!dependencies.appId || !dependencies.appSecret) throw new ApiError("CONFIGURATION_ERROR", 503, false);
   const appId = dependencies.appId;
   const appSecret = dependencies.appSecret;
-  const cacheKey = tokenCacheKey(appId);
   let cached;
   try {
-    cached = await awaitInfrastructure(
-      dependencies.blob.get(cacheKey, { consistency: "strong" }),
-      deadline
-    );
+    cached = await readLatestAccessToken(dependencies.blob, appId, deadline);
   } catch {
     throw backendUnavailable2();
   }
@@ -2731,7 +2738,7 @@ async function getWeChatAccessToken(dependencies, deadline) {
   const existingFlight = refreshFlights.get(flightKey);
   if (existingFlight !== void 0) return await awaitInfrastructure(existingFlight, deadline);
   const internalDeadline = createDeadline(TOKEN_REFRESH_BUDGET_MS);
-  const refresh = refreshAcrossInstances(dependencies, cacheKey, appId, appSecret, internalDeadline);
+  const refresh = refreshAcrossInstances(dependencies, appId, appSecret, internalDeadline);
   let flight;
   flight = refresh.then(
     (value) => {
@@ -2754,12 +2761,9 @@ function flightsFor(blob) {
   refreshFlightsByScope.set(scope, created);
   return created;
 }
-async function refreshAcrossInstances(dependencies, cacheKey, appId, appSecret, deadline) {
+async function refreshAcrossInstances(dependencies, appId, appSecret, deadline) {
   while (remainingMilliseconds(deadline) > 0) {
-    const cached = await awaitInfrastructure(
-      dependencies.blob.get(cacheKey, { consistency: "strong" }),
-      deadline
-    );
+    const cached = await readLatestAccessToken(dependencies.blob, appId, deadline);
     if (isUsable(cached, dependencies.now())) return cached.accessToken;
     const currentLock = await readLatestRefreshLock(dependencies.blob, appId, deadline);
     if (currentLock !== null && isActiveLock(currentLock.lock, dependencies.now())) {
@@ -2786,16 +2790,18 @@ async function refreshAcrossInstances(dependencies, cacheKey, appId, appSecret, 
       throw error;
     }
     if (currentLock !== null) void dependencies.blob.delete(currentLock.key).catch(() => void 0);
-    const afterClaim = await awaitInfrastructure(
-      dependencies.blob.get(cacheKey, { consistency: "strong" }),
-      deadline
-    );
+    const afterClaim = await readLatestAccessToken(dependencies.blob, appId, deadline);
     if (isUsable(afterClaim, dependencies.now())) return afterClaim.accessToken;
-    return await refreshAccessToken(dependencies, cacheKey, appId, appSecret, deadline);
+    return await refreshAccessToken(dependencies, appId, appSecret, {
+      revision,
+      ownerToken,
+      leaseUntil: new Date(now.getTime() + REFRESH_LOCK_LEASE_MS).toISOString(),
+      updatedAt: now.toISOString()
+    }, deadline);
   }
   throw backendUnavailable2();
 }
-async function refreshAccessToken(dependencies, cacheKey, appId, appSecret, deadline) {
+async function refreshAccessToken(dependencies, appId, appSecret, lock, deadline) {
   let response;
   const controller = new AbortController();
   const timeoutMs = operationTimeout(deadline, TOKEN_REQUEST_TIMEOUT_MS);
@@ -2837,9 +2843,15 @@ async function refreshAccessToken(dependencies, cacheKey, appId, appSecret, dead
   const expiresAt = new Date(dependencies.now().getTime() + payload.expires_in * 1e3);
   try {
     await awaitInfrastructure(
-      dependencies.blob.put(cacheKey, { accessToken: payload.access_token, expiresAt: expiresAt.toISOString() }),
+      dependencies.blob.put(tokenCacheKey(appId, lock.revision), {
+        revision: lock.revision,
+        accessToken: payload.access_token,
+        issuedAt: lock.updatedAt,
+        expiresAt: expiresAt.toISOString()
+      }, { onlyIfNew: true }),
       deadline
     );
+    void pruneOlderTokens(dependencies.blob, appId, lock.revision).catch(() => void 0);
   } catch {
     throw backendUnavailable2();
   }
@@ -2848,9 +2860,40 @@ async function refreshAccessToken(dependencies, cacheKey, appId, appSecret, dead
 function isUsable(value, now) {
   return value !== null && typeof value.accessToken === "string" && Number.isFinite(new Date(value.expiresAt).getTime()) && new Date(value.expiresAt).getTime() - now.getTime() > TOKEN_EXPIRY_MARGIN_MS;
 }
-function tokenCacheKey(appId) {
+function legacyTokenCacheKey(appId) {
   const digest = (0, import_node_crypto2.createHash)("sha256").update(appId, "utf8").digest("hex").slice(0, 24);
   return `moderation/wechat-access-token/${digest}.json`;
+}
+function tokenCachePrefix(appId) {
+  const digest = (0, import_node_crypto2.createHash)("sha256").update(appId, "utf8").digest("hex").slice(0, 24);
+  return `moderation/wechat-access-token/${digest}.tokens/`;
+}
+function tokenCacheKey(appId, revision) {
+  return `${tokenCachePrefix(appId)}${String(revision).padStart(12, "0")}.json`;
+}
+async function readLatestAccessToken(blob, appId, deadline) {
+  const listing = await awaitInfrastructure(
+    blob.list(tokenCachePrefix(appId), { consistency: "strong", limit: TOKEN_DISCOVERY_LIMIT }),
+    deadline
+  );
+  const candidates = await awaitInfrastructure(Promise.all(listing.blobs.map(async (key) => await blob.get(key, { consistency: "strong" }))), deadline);
+  const valid = candidates.filter((value) => isStoredAccessToken(value));
+  valid.sort((left, right) => right.revision - left.revision || new Date(right.issuedAt).getTime() - new Date(left.issuedAt).getTime());
+  if (valid[0] !== void 0) return valid[0];
+  return await awaitInfrastructure(
+    blob.get(legacyTokenCacheKey(appId), { consistency: "strong" }),
+    deadline
+  );
+}
+function isStoredAccessToken(value) {
+  return value !== null && Number.isInteger(value.revision) && value.revision > 0 && typeof value.accessToken === "string" && value.accessToken.length > 0 && Number.isFinite(new Date(value.issuedAt).getTime()) && Number.isFinite(new Date(value.expiresAt).getTime());
+}
+async function pruneOlderTokens(blob, appId, keepRevision) {
+  const listing = await blob.list(tokenCachePrefix(appId), { consistency: "strong", limit: TOKEN_DISCOVERY_LIMIT });
+  await Promise.all(listing.blobs.map(async (key) => {
+    const revision = Number(/\/(\d{12})\.json$/.exec(key)?.[1]);
+    if (Number.isInteger(revision) && revision < keepRevision) await blob.delete(key);
+  }));
 }
 function refreshLockPrefix(appId) {
   const digest = (0, import_node_crypto2.createHash)("sha256").update(appId, "utf8").digest("hex").slice(0, 24);
@@ -2862,12 +2905,14 @@ function refreshLockKey(appId, revision) {
 }
 async function readLatestRefreshLock(blob, appId, deadline) {
   const prefix = refreshLockPrefix(appId);
-  const keys = await awaitInfrastructure(blob.list(prefix, { consistency: "strong", limit: 1 }), deadline);
-  const key = keys.blobs[0];
-  if (key === void 0) return null;
-  const lock = await awaitInfrastructure(blob.get(key, { consistency: "strong" }), deadline);
-  if (lock === null || !Number.isInteger(lock.revision) || lock.revision <= 0) throw backendUnavailable2();
-  return { key, lock };
+  const listing = await awaitInfrastructure(blob.list(prefix, { consistency: "strong", limit: LOCK_DISCOVERY_LIMIT }), deadline);
+  const states = await awaitInfrastructure(Promise.all(listing.blobs.map(async (key) => ({
+    key,
+    lock: await blob.get(key, { consistency: "strong" })
+  }))), deadline);
+  const valid = states.filter((state) => state.lock !== null && Number.isInteger(state.lock.revision) && state.lock.revision > 0);
+  valid.sort((left, right) => right.lock.revision - left.lock.revision);
+  return valid[0] ?? null;
 }
 function isActiveLock(value, now) {
   return value !== null && typeof value.ownerToken === "string" && typeof value.leaseUntil === "string" && Number.isFinite(new Date(value.leaseUntil).getTime()) && new Date(value.leaseUntil).getTime() > now.getTime();
@@ -3152,19 +3197,19 @@ async function createGenerationRoute(request, context, injected) {
       now: dependencies.now().toISOString(),
       retry
     }), deadline);
-    if (begun.type === "existing") {
-      if (begun.job.status === "running") {
-        const assessment = await withinDeadline(dependencies.stores.assessments.get(identity.ownerKey, assessmentId), deadline);
-        if (assessment !== null) {
-          const recovered = await withinDeadline(dependencies.stores.jobs.recoverCompleted(
-            identity.ownerKey,
-            jobId,
-            begun.job.attempt,
-            dependencies.now().toISOString()
-          ), deadline);
-          return success(jobEnvelope(recovered));
-        }
+    if (begun.job.status === "running") {
+      const assessment = await withinDeadline(dependencies.stores.assessments.get(identity.ownerKey, assessmentId), deadline);
+      if (assessment !== null) {
+        const recovered = await withinDeadline(dependencies.stores.jobs.recoverCompleted(
+          identity.ownerKey,
+          jobId,
+          begun.job.attempt,
+          dependencies.now().toISOString()
+        ), deadline);
+        return success(jobEnvelope(recovered));
       }
+    }
+    if (begun.type === "existing") {
       return success(jobEnvelope(begun.job), begun.job.status === "running" ? 202 : 200);
     }
     try {
