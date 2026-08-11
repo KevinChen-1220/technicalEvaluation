@@ -636,6 +636,17 @@ module.exports = __toCommonJS(health_exports);
 
 // src/platform/context.ts
 var import_pages_blob = __toESM(require_dist());
+
+// src/storage/ports.ts
+var BlobPreconditionFailedError = class extends Error {
+  code = "BLOB_PRECONDITION_FAILED";
+  constructor() {
+    super("BLOB_PRECONDITION_FAILED");
+    this.name = "BlobPreconditionFailedError";
+  }
+};
+
+// src/platform/context.ts
 function createEdgeOneContext(request, env) {
   return {
     request,
@@ -651,8 +662,13 @@ function createBlobPort(store) {
         ...options?.consistency === void 0 ? {} : { consistency: options.consistency }
       });
     },
-    async put(key, value) {
-      await store.setJSON(key, value);
+    async put(key, value, options) {
+      try {
+        await store.setJSON(key, value, options);
+      } catch (error) {
+        if (options?.onlyIfNew && isPreconditionFailure(error)) throw new BlobPreconditionFailedError();
+        throw error;
+      }
     },
     async delete(key) {
       await store.delete(key);
@@ -668,6 +684,9 @@ function createBlobPort(store) {
       };
     }
   };
+}
+function isPreconditionFailure(error) {
+  return typeof error === "object" && error !== null && "name" in error && error.name === "PreconditionFailed";
 }
 
 // src/http/envelope.ts

@@ -1,5 +1,5 @@
 import { getStore } from '@edgeone/pages-blob';
-import type { BlobPort } from '../storage/ports';
+import { BlobPreconditionFailedError, type BlobPort } from '../storage/ports';
 
 export type EdgeOneEnvironment = Record<string, string | undefined>;
 
@@ -11,7 +11,7 @@ export interface EdgeOneContext {
 
 interface EdgeOneBlobStore {
   get(key: string, options?: { type?: 'json'; consistency?: 'eventual' | 'strong' }): Promise<unknown | null>;
-  setJSON(key: string, value: unknown): Promise<void>;
+  setJSON(key: string, value: unknown, options?: { onlyIfNew?: boolean }): Promise<void>;
   delete(key: string): Promise<void>;
   list(options?: { prefix?: string; directories?: boolean }): Promise<{
     blobs?: Array<{ key?: string } | string>;
@@ -35,8 +35,13 @@ export function createBlobPort(store: EdgeOneBlobStore): BlobPort {
         ...(options?.consistency === undefined ? {} : { consistency: options.consistency }),
       }) as T | null;
     },
-    async put<T>(key: string, value: T) {
-      await store.setJSON(key, value);
+    async put<T>(key: string, value: T, options?: { onlyIfNew?: boolean }) {
+      try {
+        await store.setJSON(key, value, options);
+      } catch (error) {
+        if (options?.onlyIfNew && isPreconditionFailure(error)) throw new BlobPreconditionFailedError();
+        throw error;
+      }
     },
     async delete(key: string) {
       await store.delete(key);
@@ -52,4 +57,11 @@ export function createBlobPort(store: EdgeOneBlobStore): BlobPort {
       };
     },
   };
+}
+
+function isPreconditionFailure(error: unknown): boolean {
+  return typeof error === 'object'
+    && error !== null
+    && 'name' in error
+    && (error as { name?: unknown }).name === 'PreconditionFailed';
 }

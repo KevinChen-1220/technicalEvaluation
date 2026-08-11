@@ -15,7 +15,7 @@ describe('EdgeOne Blob adapter', () => {
 
     await expect(blob.get<{ enabled: boolean }>('settings/user.json', { consistency: 'strong' }))
       .resolves.toEqual({ enabled: true });
-    await blob.put('settings/user.json', { enabled: true });
+    await blob.put('settings/user.json', { enabled: true }, { onlyIfNew: true });
     await blob.delete('settings/user.json');
     await expect(blob.list('settings/')).resolves.toEqual({
       blobs: ['settings/user.json', 'reports/r1.json'],
@@ -26,8 +26,21 @@ describe('EdgeOne Blob adapter', () => {
       type: 'json',
       consistency: 'strong',
     });
-    expect(store.setJSON).toHaveBeenCalledWith('settings/user.json', { enabled: true });
+    expect(store.setJSON).toHaveBeenCalledWith('settings/user.json', { enabled: true }, { onlyIfNew: true });
     expect(store.delete).toHaveBeenCalledWith('settings/user.json');
     expect(store.list).toHaveBeenCalledWith({ prefix: 'settings/', directories: true });
+  });
+
+  test('maps platform precondition failures to the portable conflict error', async () => {
+    const store = {
+      get: jest.fn(),
+      setJSON: jest.fn(async () => { throw Object.assign(new Error('exists'), { name: 'PreconditionFailed' }); }),
+      delete: jest.fn(),
+      list: jest.fn(),
+    };
+    const blob = createBlobPort(store);
+
+    await expect(blob.put('assessments/owner/id/revisions/2.json', {}, { onlyIfNew: true }))
+      .rejects.toMatchObject({ code: 'BLOB_PRECONDITION_FAILED' });
   });
 });
