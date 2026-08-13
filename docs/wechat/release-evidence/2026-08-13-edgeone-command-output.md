@@ -3,7 +3,7 @@
 Profile: development/local release candidate
 Generated at: 2026-08-13T17:36:21+08:00
 Branch: `main`
-Head: `3837092d5f0a681c9e3de01751914163fb9f1862`
+Head: `2a54026c91d52f769cb9a8b39f880cb8ceb97700`
 
 ## Review Gates
 
@@ -80,12 +80,12 @@ Deployment:
 
 ```text
 Project ID: makers-xt0lfsjyivza
-Deployment ID: dp87jp31mcyz
-Deploy URL: https://skillscope-wechat-7ii3kn8n.edgeone.cool?eo_token=05908f63e11ced36c7e5940eb62a4228&eo_time=1786613699
-Console URL: https://console.cloud.tencent.com/edgeone/pages/project/makers-xt0lfsjyivza/deployment/dp87jp31mcyz
+Deployment ID: dp5937p0xizn
+Deploy URL origin: https://skillscope-wechat-7ii3kn8n.edgeone.cool
+Console URL: https://console.cloud.tencent.com/edgeone/pages/project/makers-xt0lfsjyivza/deployment/dp5937p0xizn
 ```
 
-Remote health check:
+Remote token-preview health check:
 
 ```json
 {"ok":true,"data":{"service":"skillscope-edgeone","version":"unknown","configurationReady":false,"generationEnabled":false}}
@@ -93,7 +93,7 @@ Remote health check:
 
 The false configuration flags are expected before production runtime environment variables are configured in EdgeOne.
 The EdgeOne CLI deployment log still reported `No environment variables found`; configure production runtime variables in the EdgeOne console before enabling generation.
-The same default `edgeone.cool` origin without the deployment token returned HTTP 401, so a stable public HTTPS origin must still be bound before it can be used as the WeChat request legal domain.
+The same default `edgeone.cool` origin without the deployment token returned HTTP 401, so a stable public HTTPS origin must still be bound before it can be used as the WeChat request legal domain. Do not save preview `eo_token` query parameters in committed release evidence.
 
 ### npx edgeone@1.6.23 makers env ls/pull/set
 
@@ -118,7 +118,7 @@ This confirms that runtime environment variables still need to be entered in the
 Status: exit 0
 
 ```text
-gh secret set EDGEONE_DEPLOYMENT_VERSION --env wechat-production --body 3837092d5f0a681c9e3de01751914163fb9f1862
+gh secret set EDGEONE_DEPLOYMENT_VERSION --env wechat-production --body 2a54026c91d52f769cb9a8b39f880cb8ceb97700
 ```
 
 ### npm run verify:wechat-go-live -- --app-id wx31dd3d7448aac8e3 --api-base-url https://api.skillscope.cn --skip-health
