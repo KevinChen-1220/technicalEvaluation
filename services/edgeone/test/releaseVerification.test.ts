@@ -298,6 +298,36 @@ describe('EdgeOne production release gates', () => {
     rmSync(temp, { recursive: true, force: true });
   });
 
+  test('verifies go-live readiness from protected workflow environment values', () => {
+    const missingUploadKey = runNode('scripts/verify-wechat-go-live.mjs', [
+      '--from-env',
+      '--skip-health',
+    ], {
+      ...process.env,
+      EDGEONE_DEPLOYMENT_VERSION: 'build-123',
+      TARO_APP_EDGEONE_API_BASE_URL: 'https://api.skillscope.cn',
+      WECHAT_APP_ID: 'wx31dd3d7448aac8e3',
+      WECHAT_PRIVATE_KEY_PEM: '',
+    });
+
+    expect(missingUploadKey.status).not.toBe(0);
+    expect(`${missingUploadKey.stdout}${missingUploadKey.stderr}`).toContain('WECHAT_PRIVATE_KEY_PEM');
+
+    const ready = runNode('scripts/verify-wechat-go-live.mjs', [
+      '--from-env',
+      '--skip-health',
+    ], {
+      ...process.env,
+      EDGEONE_DEPLOYMENT_VERSION: 'build-123',
+      TARO_APP_EDGEONE_API_BASE_URL: 'https://api.skillscope.cn',
+      WECHAT_APP_ID: 'wx31dd3d7448aac8e3',
+      WECHAT_PRIVATE_KEY_PEM: 'mock-upload-private-key-pem',
+    });
+
+    expect(ready.status).toBe(0);
+    expect(ready.stdout).toContain('WeChat go-live readiness passed');
+  });
+
   test('verifies the EdgeOne artifact, 120-second budget, fixed 50-question contract, and public HTTPS origin', () => {
     const verifier = readFileSync(join(repoRoot, 'scripts', 'verify-edgeone-release.mjs'), 'utf8');
     const edgeoneConfig = readFileSync(join(repoRoot, 'services', 'edgeone', 'edgeone.json'), 'utf8');
@@ -344,7 +374,10 @@ describe('EdgeOne production release gates', () => {
     expect(environmentTemplate).toMatch(/GENERATION_ENABLED=false/);
     expect(workflow).toMatch(/environment:\s*\n\s+name: wechat-production/);
     expect(workflow).toMatch(/Deploy EdgeOne production/);
+    expect(workflow).toMatch(/Run go-live readiness gate/);
     expect(workflow.indexOf('Deploy EdgeOne production')).toBeLessThan(workflow.indexOf('Run formal release verification'));
+    expect(workflow.indexOf('Run go-live readiness gate')).toBeLessThan(workflow.indexOf('Run formal release verification'));
+    expect(workflow).not.toMatch(/Run go-live readiness gate[\s\S]*EDGEONE_API_TOKEN/);
     expect(workflow).not.toMatch(/cloudbase|TARO_APP_CLOUDBASE_ENV_ID/i);
     expect(workflow).toContain('secrets.EDGEONE_API_TOKEN');
     expect(workflow).toContain('secrets.EDGEONE_PROJECT_NAME');

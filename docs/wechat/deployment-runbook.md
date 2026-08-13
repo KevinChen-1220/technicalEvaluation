@@ -55,6 +55,8 @@ npm run verify:wechat-go-live -- --app-id wx31dd3d7448aac8e3 --api-base-url <pro
 
 这个命令只读取公开 AppID、公开 HTTPS origin、GitHub environment 中的 secret 名称和 `/api/health` 的公开响应；它不会读取或打印 GitHub secret 值。尚未绑定稳定域名时可临时加 `--skip-health` 查看 GitHub 环境缺口，但正式上传微信草稿前必须移除该参数并通过 health 检查。
 
+GitHub 受保护的 upload workflow 会在 EdgeOne production 部署后自动执行 `npm run verify:wechat-go-live -- --from-env`，使用已注入的 protected secrets 检查部署版本、API origin、AppID 和上传私钥是否齐全，并再次验证公开 health。该步骤不调用 GitHub API 读取 secret 内容，不额外接触 EdgeOne API token，也不会打印 secret 值。
+
 ## 4. preview 与 production smoke
 
 在 preview deployment 完成一次完整 smoke；将相同证据在 production deployment 复测后，才能关闭 `.github/ISSUE_TEMPLATE/wechat_production_smoke.yml` 创建的 issue。

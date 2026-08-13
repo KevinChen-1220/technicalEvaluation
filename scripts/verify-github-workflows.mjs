@@ -85,6 +85,16 @@ const uploadStepAllowlist = [
     },
   },
   {
+    name: 'Run go-live readiness gate',
+    run: 'npm run verify:wechat-go-live -- --from-env',
+    env: {
+      EDGEONE_DEPLOYMENT_VERSION: '${{ secrets.EDGEONE_DEPLOYMENT_VERSION }}',
+      TARO_APP_EDGEONE_API_BASE_URL: '${{ secrets.TARO_APP_EDGEONE_API_BASE_URL }}',
+      WECHAT_APP_ID: '${{ secrets.WECHAT_APP_ID }}',
+      WECHAT_PRIVATE_KEY_PEM: '${{ secrets.WECHAT_PRIVATE_KEY_PEM }}',
+    },
+  },
+  {
     name: 'Run formal release verification',
     run: 'npm run verify:wechat-release:formal -- --disclosure-file "$DISCLOSURE_FILE"',
     env: {
@@ -317,6 +327,17 @@ function verifyWeChatReleaseWorkflow() {
       ],
     },
     {
+      label: 'go-live readiness gate',
+      name: 'Run go-live readiness gate',
+      command: 'npm run verify:wechat-go-live -- --from-env',
+      bindings: [
+        ['EDGEONE_DEPLOYMENT_VERSION', 'EDGEONE_DEPLOYMENT_VERSION'],
+        ['TARO_APP_EDGEONE_API_BASE_URL', 'TARO_APP_EDGEONE_API_BASE_URL'],
+        ['WECHAT_APP_ID', 'WECHAT_APP_ID'],
+        ['WECHAT_PRIVATE_KEY_PEM', 'WECHAT_PRIVATE_KEY_PEM'],
+      ],
+    },
+    {
       label: 'WeChat upload',
       name: 'Upload to WeChat draft',
       command: 'npm run wechat:ci:upload',
@@ -343,6 +364,7 @@ function verifyWeChatReleaseWorkflow() {
 
   const environmentGateStep = protectedSteps.get('Run formal EdgeOne environment gate');
   const deploymentStep = protectedSteps.get('Deploy EdgeOne production');
+  const goLiveStep = protectedSteps.get('Run go-live readiness gate');
   const formalStep = protectedSteps.get('Run formal release verification');
   const uploadStep = protectedSteps.get('Upload to WeChat draft');
   if (environmentGateStep && deploymentStep && environmentGateStep.index >= deploymentStep.index) {
@@ -350,6 +372,12 @@ function verifyWeChatReleaseWorkflow() {
   }
   if (deploymentStep && formalStep && deploymentStep.index >= formalStep.index) {
     fail('EdgeOne deployment must complete before the production Mini Program build');
+  }
+  if (deploymentStep && goLiveStep && deploymentStep.index >= goLiveStep.index) {
+    fail('EdgeOne deployment must complete before go-live readiness');
+  }
+  if (goLiveStep && formalStep && goLiveStep.index >= formalStep.index) {
+    fail('go-live readiness must run before the production Mini Program build');
   }
   if (formalStep && uploadStep && formalStep.index >= uploadStep.index) {
     fail('formal release verification must run before upload');

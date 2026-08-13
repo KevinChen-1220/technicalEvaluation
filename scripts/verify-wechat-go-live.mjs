@@ -17,6 +17,13 @@ const requiredGithubSecrets = [
   'WECHAT_PRIVATE_KEY_PEM',
 ];
 
+const requiredProtectedEnvironmentVariables = [
+  'EDGEONE_DEPLOYMENT_VERSION',
+  'TARO_APP_EDGEONE_API_BASE_URL',
+  'WECHAT_APP_ID',
+  'WECHAT_PRIVATE_KEY_PEM',
+];
+
 if (!/^wx[0-9a-f]{16}$/i.test(String(appId ?? '').trim())) {
   findings.push('WECHAT_APP_ID must be the real Mini Program AppID');
 }
@@ -25,14 +32,20 @@ if (!isProductionEdgeOneApiBaseUrl(apiBaseUrl) || isEdgeOnePreviewHost(apiBaseUr
   findings.push('TARO_APP_EDGEONE_API_BASE_URL must be a stable public HTTPS origin root, not localhost, example, tokenized preview, edgeone.cool, or a path under /api');
 }
 
-const githubSecrets = readGithubEnvironmentSecretNames(githubEnvironment);
-if (githubSecrets.ok) {
-  const names = new Set(githubSecrets.names);
-  for (const name of requiredGithubSecrets) {
-    if (!names.has(name)) findings.push(`GitHub environment ${githubEnvironment} is missing ${name}`);
+if (args.fromEnv) {
+  for (const name of requiredProtectedEnvironmentVariables) {
+    if (!hasUsableValue(environment[name])) findings.push(`protected upload environment is missing ${name}`);
   }
 } else {
-  findings.push(githubSecrets.message);
+  const githubSecrets = readGithubEnvironmentSecretNames(githubEnvironment);
+  if (githubSecrets.ok) {
+    const names = new Set(githubSecrets.names);
+    for (const name of requiredGithubSecrets) {
+      if (!names.has(name)) findings.push(`GitHub environment ${githubEnvironment} is missing ${name}`);
+    }
+  } else {
+    findings.push(githubSecrets.message);
+  }
 }
 
 if (!args.skipHealth && findings.length === 0) {
@@ -89,6 +102,12 @@ function isEdgeOnePreviewHost(value) {
   }
 }
 
+function hasUsableValue(value) {
+  return typeof value === 'string'
+    && value.trim() !== ''
+    && !/^(?:placeholder|changeme|example|todo|tbd|待配置|replace-)/i.test(value.trim());
+}
+
 async function fetchHealth(origin) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
@@ -117,11 +136,15 @@ async function fetchHealth(origin) {
 }
 
 function parseArgs(values) {
-  const parsed = { skipHealth: false };
+  const parsed = { skipHealth: false, fromEnv: false };
   for (let index = 0; index < values.length; index += 1) {
     const key = values[index];
     if (key === '--skip-health') {
       parsed.skipHealth = true;
+      continue;
+    }
+    if (key === '--from-env') {
+      parsed.fromEnv = true;
       continue;
     }
     const value = values[index + 1];
