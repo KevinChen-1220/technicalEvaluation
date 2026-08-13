@@ -374,6 +374,53 @@ describe('EdgeOne production release gates', () => {
     rmSync(temp, { recursive: true, force: true });
   });
 
+  test('reports go-live status as JSON without exposing secret values', () => {
+    const temp = mkdtempSync(join(tmpdir(), 'wechat-status-'));
+    const fakeGh = join(temp, process.platform === 'win32' ? 'gh.cmd' : 'gh');
+    if (process.platform === 'win32') {
+      writeFileSync(fakeGh, '@echo off\r\necho [{"name":"EDGEONE_API_TOKEN"},{"name":"EDGEONE_DEPLOYMENT_VERSION"},{"name":"EDGEONE_PROJECT_NAME"},{"name":"WECHAT_APP_ID"}]\r\nexit /b 0\r\n');
+    } else {
+      writeFileSync(fakeGh, '#!/bin/sh\necho \'[{"name":"EDGEONE_API_TOKEN"},{"name":"EDGEONE_DEPLOYMENT_VERSION"},{"name":"EDGEONE_PROJECT_NAME"},{"name":"WECHAT_APP_ID"}]\'\nexit 0\n');
+      chmodSync(fakeGh, 0o700);
+    }
+
+    const result = runNode('scripts/wechat-go-live-status.mjs', [
+      '--app-id',
+      'wx31dd3d7448aac8e3',
+      '--api-base-url',
+      'https://api.skillscope.cn',
+      '--json',
+    ], {
+      ...process.env,
+      GH_CLI_BIN: fakeGh,
+      EDGEONE_API_TOKEN: 'token-that-must-never-be-printed',
+      WECHAT_PRIVATE_KEY_PEM: 'mock-secret-private-key',
+    });
+
+    expect(result.status).toBe(0);
+    const report = JSON.parse(result.stdout);
+    expect(report.ready).toBe(false);
+    expect(report.githubEnvironment.presentSecrets).toEqual([
+      'EDGEONE_API_TOKEN',
+      'EDGEONE_DEPLOYMENT_VERSION',
+      'EDGEONE_PROJECT_NAME',
+      'WECHAT_APP_ID',
+    ]);
+    expect(report.githubEnvironment.missingSecrets).toEqual([
+      'TARO_APP_EDGEONE_API_BASE_URL',
+      'WECHAT_PRIVATE_KEY_PEM',
+    ]);
+    expect(report.productionDisclosure.exists).toBe(false);
+    expect(report.nextActions).toEqual(expect.arrayContaining([
+      'Configure TARO_APP_EDGEONE_API_BASE_URL and WECHAT_PRIVATE_KEY_PEM in GitHub environment wechat-production.',
+      'Create docs/wechat/release-disclosure.production.json with real non-placeholder production disclosure.',
+      'Run verify:wechat-go-live without --skip-health after the production HTTPS origin is bound.',
+    ]));
+    expect(`${result.stdout}${result.stderr}`).not.toContain('token-that-must-never-be-printed');
+    expect(`${result.stdout}${result.stderr}`).not.toContain('mock-secret-private-key');
+    rmSync(temp, { recursive: true, force: true });
+  });
+
   test('verifies the EdgeOne artifact, 120-second budget, fixed 50-question contract, and public HTTPS origin', () => {
     const verifier = readFileSync(join(repoRoot, 'scripts', 'verify-edgeone-release.mjs'), 'utf8');
     const edgeoneConfig = readFileSync(join(repoRoot, 'services', 'edgeone', 'edgeone.json'), 'utf8');

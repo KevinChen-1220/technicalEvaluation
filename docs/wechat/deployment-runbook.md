@@ -47,10 +47,22 @@ TARO_APP_RELEASE_DISCLOSURE_FILE=docs/wechat/release-disclosure.production.json
 
 在微信公众平台的开发管理 -> 开发设置中，把完全相同的 production HTTPS origin 加入 `request合法域名`。不允许填写 `/api` 子路径，客户端会自行拼接 API 路径。
 
+域名选择结论：
+
+- 开发阶段：微信开发者工具登录后可临时关闭合法域名与 TLS 校验，用于本机调试；这不能证明真机、体验版或正式版可用。
+- 免费默认域名：EdgeOne preview/default 域名可以用于浏览器 smoke，但当前 `edgeone.cool` 默认 origin 未带 token 时返回 401，带 token 又不符合小程序 base URL 的 origin-root 约束，不能作为正式 `request合法域名`。
+- 正式上线：使用你拥有并可完成微信后台校验的自定义域名，例如 `api.<your-domain>`。EdgeOne 可为已接入域名配置免费证书，但域名本身和微信后台合规校验仍需要真实域名资料；不要把第三方免费二级域名当作正式生产方案。
+
 完成 GitHub environment secrets、EdgeOne runtime environment 和微信 `request合法域名` 后，运行 go-live readiness：
 
 ```sh
 npm run verify:wechat-go-live -- --app-id wx31dd3d7448aac8e3 --api-base-url <production-https-origin>
+```
+
+也可以先生成不含密钥值的状态报告：
+
+```sh
+npm run wechat:go-live-status -- --app-id wx31dd3d7448aac8e3 --api-base-url <production-https-origin> --json
 ```
 
 若已在本机下载微信上传私钥，可以用仓库脚本配置 GitHub 受保护环境的两个上传输入。脚本通过 stdin 写入 `gh secret set`，只打印 secret 名称，不打印 origin 或 PEM 内容：

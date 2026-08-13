@@ -218,6 +218,7 @@ function verifyPackageScripts() {
     'verify:wechat-release:formal',
     'verify:wechat-release:formal-preflight',
     'verify:wechat-go-live',
+    'wechat:go-live-status',
     'verify:edgeone-release',
     'edgeone:deploy',
     'wechat:configure-production-secrets',
