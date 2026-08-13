@@ -680,11 +680,13 @@ function createBlobPort(store) {
         ...prefix === void 0 ? {} : { prefix },
         directories: options?.directories ?? false,
         ...options?.consistency === void 0 ? {} : { consistency: options.consistency },
-        ...options?.limit === void 0 ? {} : { limit: options.limit }
+        ...options?.limit === void 0 ? {} : { limit: options.limit },
+        ...options?.cursor === void 0 ? {} : { cursor: options.cursor }
       });
       return {
         blobs: (result.blobs ?? []).map((blob) => typeof blob === "string" ? blob : blob.key ?? "").slice(0, options?.limit),
-        directories: result.directories ?? []
+        directories: result.directories ?? [],
+        ...result.cursor === void 0 ? {} : { cursor: result.cursor }
       };
     }
   };
@@ -1277,11 +1279,20 @@ var BlobReportRepository = class {
   async create(record) {
     const written = JSON.parse(JSON.stringify(record));
     await this.cleanupExpired(written.ownerKey);
-    await this.blob.put(this.indexKey(written.ownerKey, written.createdAt, written.id), {
+    const indexKey = this.indexKey(written.ownerKey, written.createdAt, written.id);
+    await this.blob.put(indexKey, {
       id: written.id,
       createdAt: written.createdAt
     }, { onlyIfNew: true });
-    await this.blob.put(this.recordKey(written.ownerKey, written.id), written, { onlyIfNew: true });
+    try {
+      await this.blob.put(this.recordKey(written.ownerKey, written.id), written, { onlyIfNew: true });
+    } catch (error) {
+      try {
+        await this.blob.delete(indexKey);
+      } catch {
+      }
+      throw error;
+    }
     return written;
   }
   async list(ownerKey) {
@@ -1291,15 +1302,34 @@ var BlobReportRepository = class {
   }
   async cleanupExpired(ownerKey) {
     let remaining = this.cleanupLimit;
+    const recordCache = /* @__PURE__ */ new Map();
     const entries = (await this.blob.list(this.indexPrefix(ownerKey), { consistency: "strong", limit: remaining })).blobs;
     for (const key of entries) {
       const entry = await this.blob.get(key, { consistency: "strong" });
       if (entry === null || typeof entry.id !== "string" || typeof entry.createdAt !== "string") {
         await this.blob.delete(key);
+        remaining -= 1;
+        if (remaining === 0) return;
         continue;
       }
-      if (new Date(entry.createdAt).getTime() >= this.cutoff()) break;
-      await this.blob.delete(this.recordKey(ownerKey, entry.id));
+      const createdAt = new Date(entry.createdAt).getTime();
+      if (!Number.isFinite(createdAt)) {
+        await this.blob.delete(key);
+        remaining -= 1;
+        if (remaining === 0) return;
+        continue;
+      }
+      if (createdAt < this.cutoff()) {
+        await this.blob.delete(this.recordKey(ownerKey, entry.id));
+        await this.blob.delete(key);
+        remaining -= 1;
+        if (remaining === 0) return;
+        continue;
+      }
+      const recordKey = this.recordKey(ownerKey, entry.id);
+      const record = await this.blob.get(recordKey, { consistency: "strong" });
+      recordCache.set(recordKey, record);
+      if (record !== null) continue;
       await this.blob.delete(key);
       remaining -= 1;
       if (remaining === 0) return;
@@ -1310,7 +1340,7 @@ var BlobReportRepository = class {
       await this.blob.delete(this.legacyKey(ownerKey, record.id));
       remaining -= 1;
     }
-    for (const record of await this.orphanRecordCandidates(ownerKey, remaining)) {
+    for (const record of await this.orphanRecordCandidates(ownerKey, remaining, recordCache)) {
       if (remaining === 0) return;
       if (new Date(record.createdAt).getTime() >= this.cutoff()) continue;
       await this.blob.delete(this.recordKey(ownerKey, record.id));
@@ -1330,9 +1360,22 @@ var BlobReportRepository = class {
     const records = await Promise.all(keys.map((key) => this.blob.get(key, { consistency: "strong" })));
     return records.filter((record) => record !== null && record.ownerKey === ownerKey);
   }
-  async orphanRecordCandidates(ownerKey, limit) {
-    const keys = (await this.blob.list(this.recordsPrefix(ownerKey), { consistency: "strong", limit })).blobs;
-    const records = await Promise.all(keys.map((key) => this.blob.get(key, { consistency: "strong" })));
+  async orphanRecordCandidates(ownerKey, limit, recordCache) {
+    const sweepKey = this.orphanSweepKey(ownerKey);
+    const state = await this.blob.get(sweepKey, { consistency: "strong" });
+    const cursor = state !== null && typeof state.cursor === "string" ? state.cursor : void 0;
+    const listing = await this.blob.list(this.recordsPrefix(ownerKey), {
+      consistency: "strong",
+      limit,
+      ...cursor === void 0 ? {} : { cursor }
+    });
+    if (listing.cursor === void 0) await this.blob.delete(sweepKey);
+    else await this.blob.put(sweepKey, { cursor: listing.cursor });
+    const keys = listing.blobs;
+    const records = await Promise.all(keys.map(async (key) => {
+      if (recordCache.has(key)) return recordCache.get(key) ?? null;
+      return await this.blob.get(key, { consistency: "strong" });
+    }));
     return records.filter((record) => record !== null && record.ownerKey === ownerKey);
   }
   cutoff() {
@@ -1349,6 +1392,9 @@ var BlobReportRepository = class {
   }
   indexPrefix(ownerKey) {
     return `${this.prefix(ownerKey)}index/`;
+  }
+  orphanSweepKey(ownerKey) {
+    return `${this.prefix(ownerKey)}ops/orphan-sweep.json`;
   }
   recordKey(ownerKey, id) {
     return `${this.recordsPrefix(ownerKey)}${encodeURIComponent(id)}.json`;

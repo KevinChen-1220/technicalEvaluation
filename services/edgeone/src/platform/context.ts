@@ -13,9 +13,10 @@ interface EdgeOneBlobStore {
   get(key: string, options?: { type?: 'json'; consistency?: 'eventual' | 'strong' }): Promise<unknown | null>;
   setJSON(key: string, value: unknown, options?: { onlyIfNew?: boolean }): Promise<void>;
   delete(key: string): Promise<void>;
-  list(options?: { prefix?: string; directories?: boolean; consistency?: 'eventual' | 'strong'; limit?: number }): Promise<{
+  list(options?: { prefix?: string; directories?: boolean; consistency?: 'eventual' | 'strong'; limit?: number; cursor?: string }): Promise<{
     blobs?: Array<{ key?: string } | string>;
     directories?: string[];
+    cursor?: string;
   }>;
 }
 
@@ -49,16 +50,18 @@ export function createBlobPort(store: EdgeOneBlobStore): BlobPort {
     async delete(key: string) {
       await store.delete(key);
     },
-    async list(prefix?: string, options?: { consistency?: 'eventual' | 'strong'; limit?: number; directories?: boolean }) {
+    async list(prefix?: string, options?: { consistency?: 'eventual' | 'strong'; limit?: number; directories?: boolean; cursor?: string }) {
       const result = await store.list({
         ...(prefix === undefined ? {} : { prefix }),
         directories: options?.directories ?? false,
         ...(options?.consistency === undefined ? {} : { consistency: options.consistency }),
         ...(options?.limit === undefined ? {} : { limit: options.limit }),
+        ...(options?.cursor === undefined ? {} : { cursor: options.cursor }),
       });
       return {
         blobs: (result.blobs ?? []).map((blob) => typeof blob === 'string' ? blob : blob.key ?? '').slice(0, options?.limit),
         directories: result.directories ?? [],
+        ...(result.cursor === undefined ? {} : { cursor: result.cursor }),
       };
     },
   };

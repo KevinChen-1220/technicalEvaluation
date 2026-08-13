@@ -253,3 +253,49 @@ npm run build:edgeone
 ```
 
 Output: exit 0. EdgeOne cloud-function artifacts were regenerated from the tested sources.
+
+## Round 5 RED Evidence
+
+Command:
+
+```sh
+npm run test:edgeone -- --runInBand services/edgeone/test/settingsAndReports.test.ts
+```
+
+Output: exit 1. The orphan reconciliation regression left `records/z-expired.json` behind after repeated bounded passes, the record-write failure left its ordered index behind, and later cleanup did not remove that dangling retained index. Strengthened reruns also exited 1 when a healthy retained index sorted before the dangling index and when an index contained an invalid timestamp.
+
+## Round 5 GREEN Evidence
+
+Command:
+
+```sh
+npm run test:edgeone -- --runInBand services/edgeone/test/settingsAndReports.test.ts
+```
+
+Output: exit 0. `18` suites passed; `154` tests passed. The regression coverage verifies persisted orphan sweep progress, compensating index deletion, recovery after compensation failure, invalid-index cleanup, and the existing bounded healthy-record read limit.
+
+## Round 5 Final Verification
+
+Command:
+
+```sh
+npm run test:edgeone -- --runInBand
+```
+
+Output: exit 0. `18` suites passed; `154` tests passed.
+
+Command:
+
+```sh
+npm run build:edgeone
+```
+
+Output: exit 0. EdgeOne cloud-function artifacts were regenerated from the tested sources.
+
+Command:
+
+```sh
+git diff --check
+```
+
+Output: exit 0. No whitespace errors were reported; Git emitted only line-ending conversion warnings for the Windows worktree.

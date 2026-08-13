@@ -20,12 +20,14 @@ export class BlobPreconditionFailedError extends Error {
 export interface BlobListResult {
   blobs: string[];
   directories: string[];
+  cursor?: string;
 }
 
 export interface BlobListOptions {
   consistency?: BlobConsistency;
   limit?: number;
   directories?: boolean;
+  cursor?: string;
 }
 
 export interface BlobPort {

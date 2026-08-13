@@ -10,6 +10,7 @@ describe('EdgeOne Blob adapter', () => {
       list: jest.fn(async () => ({
         blobs: [{ key: 'settings/user.json' }, 'reports/r1.json'],
         directories: ['settings/'],
+        cursor: 'next-page',
       })),
     };
     const blob = createBlobPort(store);
@@ -19,9 +20,10 @@ describe('EdgeOne Blob adapter', () => {
       .resolves.toEqual({ enabled: true });
     await blob.put('settings/user.json', { enabled: true }, { onlyIfNew: true });
     await blob.delete('settings/user.json');
-    await expect(blob.list('settings/', { consistency: 'strong', limit: 10 })).resolves.toEqual({
+    await expect(blob.list('settings/', { consistency: 'strong', limit: 10, cursor: 'current-page' })).resolves.toEqual({
       blobs: ['settings/user.json', 'reports/r1.json'],
       directories: ['settings/'],
+      cursor: 'next-page',
     });
 
     expect(store.get).toHaveBeenCalledWith('settings/user.json', {
@@ -30,7 +32,9 @@ describe('EdgeOne Blob adapter', () => {
     });
     expect(store.setJSON).toHaveBeenCalledWith('settings/user.json', { enabled: true }, { onlyIfNew: true });
     expect(store.delete).toHaveBeenCalledWith('settings/user.json');
-    expect(store.list).toHaveBeenCalledWith({ prefix: 'settings/', directories: false, consistency: 'strong', limit: 10 });
+    expect(store.list).toHaveBeenCalledWith({
+      prefix: 'settings/', directories: false, consistency: 'strong', limit: 10, cursor: 'current-page',
+    });
   });
 
   test('maps platform precondition failures to the portable conflict error', async () => {

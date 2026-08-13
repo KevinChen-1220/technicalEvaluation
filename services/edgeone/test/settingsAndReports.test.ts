@@ -107,6 +107,121 @@ describe('settings and reports', () => {
     await expect(blob.get('reports/owner-a/records/orphan.json')).resolves.toBeNull();
   });
 
+  test('advances bounded orphan cleanup past retained records across cleanup passes', async () => {
+    const blob = new MemoryBlobPort();
+    for (const id of ['a-retained', 'b-retained']) {
+      await blob.put(`reports/owner-a/records/${id}.json`, {
+        id, ownerKey: 'owner-a', reason: 'other', createdAt: '2026-08-12T00:00:00.000Z', updatedAt: '2026-08-12T00:00:00.000Z',
+      });
+    }
+    await blob.put('reports/owner-a/records/z-expired.json', {
+      id: 'z-expired', ownerKey: 'owner-a', reason: 'other', createdAt: '2026-08-10T00:00:00.000Z', updatedAt: '2026-08-10T00:00:00.000Z',
+    });
+    const reports = new BlobReportRepository(blob, {
+      now: () => new Date('2026-08-12T00:00:00.000Z'), retentionDays: 1, cleanupLimit: 2,
+    });
+
+    await reports.create({
+      id: 'pass-1', ownerKey: 'owner-a', reason: 'other', createdAt: '2026-08-12T00:00:00.000Z', updatedAt: '2026-08-12T00:00:00.000Z',
+    });
+    await expect(blob.get('reports/owner-a/records/z-expired.json')).resolves.not.toBeNull();
+
+    await reports.create({
+      id: 'pass-2', ownerKey: 'owner-a', reason: 'other', createdAt: '2026-08-12T00:00:01.000Z', updatedAt: '2026-08-12T00:00:01.000Z',
+    });
+    await expect(blob.get('reports/owner-a/records/z-expired.json')).resolves.toBeNull();
+  });
+
+  test('removes the ordered index when its report record write fails', async () => {
+    const blob = new MemoryBlobPort();
+    const indexKey = 'reports/owner-a/index/2026-08-12T00%3A00%3A00.000Z/failed.json';
+    const failingRecordBlob: MemoryBlobPort = {
+      records: blob.records,
+      get: blob.get.bind(blob),
+      put: async (key, value, options) => {
+        if (key === 'reports/owner-a/records/failed.json') throw new Error('record write failed');
+        await blob.put(key, value, options);
+      },
+      delete: blob.delete.bind(blob),
+      list: blob.list.bind(blob),
+    };
+    const reports = new BlobReportRepository(failingRecordBlob, {
+      now: () => new Date('2026-08-12T00:00:00.000Z'), retentionDays: 1, cleanupLimit: 20,
+    });
+
+    await expect(reports.create({
+      id: 'failed', ownerKey: 'owner-a', reason: 'other', createdAt: '2026-08-12T00:00:00.000Z', updatedAt: '2026-08-12T00:00:00.000Z',
+    })).rejects.toThrow('record write failed');
+
+    await expect(blob.get(indexKey)).resolves.toBeNull();
+    await expect(blob.get('reports/owner-a/records/failed.json')).resolves.toBeNull();
+  });
+
+  test('removes an ordered index with an invalid creation timestamp', async () => {
+    const blob = new MemoryBlobPort();
+    const invalidIndexKey = 'reports/owner-a/index/not-a-date/invalid.json';
+    await blob.put('reports/owner-a/records/invalid.json', {
+      id: 'invalid', ownerKey: 'owner-a', reason: 'other', createdAt: 'not-a-date', updatedAt: 'not-a-date',
+    });
+    await blob.put(invalidIndexKey, { id: 'invalid', createdAt: 'not-a-date' });
+    const reports = new BlobReportRepository(blob, {
+      now: () => new Date('2026-08-12T00:00:00.000Z'), retentionDays: 1, cleanupLimit: 20,
+    });
+
+    await reports.create({
+      id: 'healthy', ownerKey: 'owner-a', reason: 'other', createdAt: '2026-08-12T00:00:00.000Z', updatedAt: '2026-08-12T00:00:00.000Z',
+    });
+
+    await expect(blob.get(invalidIndexKey)).resolves.toBeNull();
+    await expect(blob.get('reports/owner-a/records/invalid.json')).resolves.toBeNull();
+  });
+
+  test('later cleanup removes a dangling retained index when compensation fails', async () => {
+    const blob = new MemoryBlobPort();
+    const danglingIndexKey = 'reports/owner-a/index/2026-08-12T00%3A00%3A00.000Z/failed.json';
+    await blob.put('reports/owner-a/records/existing.json', {
+      id: 'existing', ownerKey: 'owner-a', reason: 'other', createdAt: '2026-08-11T23:59:59.000Z', updatedAt: '2026-08-11T23:59:59.000Z',
+    });
+    await blob.put('reports/owner-a/index/2026-08-11T23%3A59%3A59.000Z/existing.json', {
+      id: 'existing', createdAt: '2026-08-11T23:59:59.000Z',
+    });
+    let failCompensation = true;
+    const failingRecordBlob: MemoryBlobPort = {
+      records: blob.records,
+      get: blob.get.bind(blob),
+      put: async (key, value, options) => {
+        if (key === 'reports/owner-a/records/failed.json') throw new Error('record write failed');
+        await blob.put(key, value, options);
+      },
+      delete: async (key) => {
+        if (key === danglingIndexKey && failCompensation) {
+          failCompensation = false;
+          throw new Error('compensation failed');
+        }
+        await blob.delete(key);
+      },
+      list: blob.list.bind(blob),
+    };
+    const reportsWithFailure = new BlobReportRepository(failingRecordBlob, {
+      now: () => new Date('2026-08-12T00:00:00.000Z'), retentionDays: 1, cleanupLimit: 20,
+    });
+
+    await expect(reportsWithFailure.create({
+      id: 'failed', ownerKey: 'owner-a', reason: 'other', createdAt: '2026-08-12T00:00:00.000Z', updatedAt: '2026-08-12T00:00:00.000Z',
+    })).rejects.toThrow('record write failed');
+    await expect(blob.get(danglingIndexKey)).resolves.not.toBeNull();
+
+    const reports = new BlobReportRepository(blob, {
+      now: () => new Date('2026-08-12T00:00:01.000Z'), retentionDays: 1, cleanupLimit: 20,
+    });
+    await reports.create({
+      id: 'healthy', ownerKey: 'owner-a', reason: 'other', createdAt: '2026-08-12T00:00:01.000Z', updatedAt: '2026-08-12T00:00:01.000Z',
+    });
+
+    await expect(blob.get(danglingIndexKey)).resolves.toBeNull();
+    await expect(blob.get('reports/owner-a/records/healthy.json')).resolves.not.toBeNull();
+  });
+
   test('does not scan every healthy record during report creation cleanup', async () => {
     const blob = new MemoryBlobPort();
     for (let index = 0; index < 500; index += 1) {

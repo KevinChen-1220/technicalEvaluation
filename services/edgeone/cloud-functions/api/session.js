@@ -680,11 +680,13 @@ function createBlobPort(store) {
         ...prefix === void 0 ? {} : { prefix },
         directories: options?.directories ?? false,
         ...options?.consistency === void 0 ? {} : { consistency: options.consistency },
-        ...options?.limit === void 0 ? {} : { limit: options.limit }
+        ...options?.limit === void 0 ? {} : { limit: options.limit },
+        ...options?.cursor === void 0 ? {} : { cursor: options.cursor }
       });
       return {
         blobs: (result.blobs ?? []).map((blob) => typeof blob === "string" ? blob : blob.key ?? "").slice(0, options?.limit),
-        directories: result.directories ?? []
+        directories: result.directories ?? [],
+        ...result.cursor === void 0 ? {} : { cursor: result.cursor }
       };
     }
   };
