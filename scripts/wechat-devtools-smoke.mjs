@@ -8,6 +8,7 @@ const args = parseArgs(process.argv.slice(2));
 const defaultCli = 'C:\\Program Files (x86)\\Tencent\\微信web开发者工具\\cli.bat';
 const cli = args.cli ?? process.env.WECHAT_DEVTOOLS_CLI ?? defaultCli;
 const projectPath = resolve(repoRoot, args['project-path'] ?? 'apps/wechat');
+const cliPort = args.port ?? process.env.WECHAT_DEVTOOLS_PORT;
 const evidencePath = join(repoRoot, 'docs/wechat/release-evidence/2026-08-10-devtools-cli.md');
 
 const evidence = [
@@ -47,9 +48,9 @@ if (cliState.ready === false) {
 }
 
 const commands = [
-  ['islogin', ['islogin']],
-  ['open project hidden', ['open', '--project', projectPath]],
-  ['compile project', ['compile', '--project', projectPath]],
+  ['islogin', withPort(['islogin'])],
+  ['open project hidden', withPort(['open', '--project', projectPath])],
+  ['auto project trust', withPort(['auto', '--project', projectPath, '--trust-project'])],
 ];
 
 for (const [label, commandArgs] of commands) {
@@ -60,6 +61,7 @@ for (const [label, commandArgs] of commands) {
     timeout: label === 'compile project' ? 20_000 : 10_000,
     windowsHide: true,
     maxBuffer: 1024 * 1024,
+    env: runnable.env ?? process.env,
   });
   evidence.push(`## ${label}`);
   evidence.push('');
@@ -81,8 +83,8 @@ for (const [label, commandArgs] of commands) {
 
 evidence.push('## 结论');
 evidence.push('');
-evidence.push('- 该文件记录 CLI 的真实返回；未登录、缺少 AppID 或无法初始化均作为外部 blocker 记录。');
-evidence.push('- 未记录截图或真机通过，因为当前机器没有可验证的微信账号登录态和 AppID。');
+evidence.push('- 该文件记录 CLI 的真实返回；`islogin`、`open --project` 和 `auto --trust-project` 均需 exit 0 才能视为 DevTools CLI smoke 通过。');
+evidence.push('- 该 smoke 只证明本机 DevTools 已登录、项目可打开并被信任；不证明真机、体验版、正式 request 合法域名或微信审核通过。');
 writeEvidence(evidence);
 process.stdout.write('WeChat DevTools CLI evidence recorded\n');
 
@@ -110,11 +112,42 @@ function redact(value) {
 }
 
 function buildCommand(command, commandArgs) {
-  if (process.platform !== 'win32') {
+  if (process.platform !== 'win32' || !/\.(?:bat|cmd)$/i.test(command)) {
     return { command, args: commandArgs };
   }
-  const commandLine = `& ${quoteForPowerShell(command)} ${commandArgs.map(quoteForPowerShell).join(' ')}`.trim();
-  return { command: 'powershell.exe', args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', commandLine] };
+  const installRoot = dirname(command);
+  const electron = findWindowsElectronExecutable(installRoot);
+  const cliEntry = join(installRoot, 'resources', 'app.asar.unpacked', 'js', 'common', 'cli', 'index.js');
+  const bootstrap = "const e=process.argv[1],a=process.argv.slice(2).filter(function(x){return x!=='--electron'});if(!process.env.cwd)process.env.cwd=process.cwd();process.argv=[process.execPath,'--ms-enable-electron-run-as-node',e,'--electron'].concat(a);require(e)";
+  return {
+    command: electron,
+    args: ['-e', bootstrap, cliEntry, ...commandArgs],
+    env: {
+      ...process.env,
+      ELECTRON_RUN_AS_NODE: '1',
+      ELECTRON: '',
+      cwd: process.cwd(),
+    },
+  };
+}
+
+function withPort(commandArgs) {
+  return cliPort === undefined ? commandArgs : [...commandArgs, '--port', cliPort];
+}
+
+function findWindowsElectronExecutable(installRoot) {
+  const candidates = readdirSync(installRoot, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && /\.exe$/i.test(entry.name))
+    .map((entry) => join(installRoot, entry.name))
+    .filter((path) => {
+      try {
+        return !/node(?:-18)?\.exe|wxfilewatcher|notification_helper|wechatdevtools|卸载/u.test(path)
+          && existsSync(path);
+      } catch {
+        return false;
+      }
+    });
+  return candidates[0] ?? join(installRoot, '微信开发者工具.exe');
 }
 
 function formatStatus(result) {
@@ -135,10 +168,6 @@ function summarizeOutput(value) {
     `... ${lines.length - 80} lines omitted ...`,
     ...lines.slice(-40),
   ].join('\n');
-}
-
-function quoteForPowerShell(value) {
-  return `'${value.replaceAll("'", "''")}'`;
 }
 
 function findDevToolsCliState() {

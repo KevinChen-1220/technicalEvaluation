@@ -193,6 +193,25 @@ describe('EdgeOne production release gates', () => {
     expect(deploymentWrapper).toMatch(/EDGEONE_LINKED_PROJECT_FILE/);
   });
 
+  test('invokes the WeChat DevTools CLI entry directly instead of the recursive batch wrapper', () => {
+    const devtoolsSmoke = readFileSync(join(repoRoot, 'scripts', 'wechat-devtools-smoke.mjs'), 'utf8');
+
+    expect(devtoolsSmoke).toMatch(/app\.asar\.unpacked/);
+    expect(devtoolsSmoke).toMatch(/ELECTRON_RUN_AS_NODE/);
+    expect(devtoolsSmoke).toMatch(/--ms-enable-electron-run-as-node/);
+    expect(devtoolsSmoke).not.toMatch(/cmd\.exe/);
+    expect(devtoolsSmoke).not.toMatch(/powershell\.exe/);
+  });
+
+  test('uses the supported DevTools auto command for local smoke instead of compile', () => {
+    const devtoolsSmoke = readFileSync(join(repoRoot, 'scripts', 'wechat-devtools-smoke.mjs'), 'utf8');
+
+    expect(devtoolsSmoke).toMatch(/WECHAT_DEVTOOLS_PORT/);
+    expect(devtoolsSmoke).toMatch(/auto project trust/);
+    expect(devtoolsSmoke).toMatch(/--trust-project/);
+    expect(devtoolsSmoke).not.toMatch(/\['compile project'/);
+  });
+
   test('generates a console-only runtime environment checklist without deployment secrets', () => {
     const result = runNode('scripts/edgeone-runtime-env.mjs', ['--app-id', 'wx31dd3d7448aac8e3', '--version', 'build-123']);
     expect(result.status).toBe(0);
