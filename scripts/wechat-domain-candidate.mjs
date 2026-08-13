@@ -89,7 +89,7 @@ function parseArgs(values) {
     }
     const value = values[index + 1];
     if (!value || value.startsWith('--')) fail(`Missing value for ${key}`);
-    if (key === '--api-base-url') parsed.apiBaseUrl = value;
+    if (key === '--api-base-url' || key === '--url') parsed.apiBaseUrl = value;
     else if (key === '--dns-result') parsed.dnsResult = value;
     else if (key === '--health-json') parsed.healthJson = value;
     else fail(`Unsupported domain candidate argument: ${key}`);

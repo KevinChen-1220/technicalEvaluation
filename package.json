@@ -39,6 +39,7 @@
     "scan:secrets:wechat-dist": "node scripts/scan-secrets.mjs --target dist apps/wechat/dist",
     "verify:wechat-release": "node scripts/verify-wechat-release.mjs --profile development",
     "verify:wechat-disclosure:dev": "node scripts/verify-wechat-disclosure.mjs --file docs/wechat/release-disclosure.development.json --mode development",
+    "wechat:create-production-disclosure": "node scripts/create-wechat-production-disclosure.mjs",
     "verify:wechat-release:formal": "node scripts/verify-wechat-release.mjs --profile formal",
     "verify:wechat-release:formal-preflight": "node scripts/verify-wechat-formal-preflight.mjs",
     "wechat:ci:dry-run": "node scripts/wechat-miniprogram-ci.mjs --mode dry-run",

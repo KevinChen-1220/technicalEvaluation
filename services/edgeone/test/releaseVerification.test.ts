@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { pathToFileURL } from 'node:url';
@@ -431,6 +431,77 @@ describe('EdgeOne production release gates', () => {
     rmSync(temp, { recursive: true, force: true });
   });
 
+  test('generates a production disclosure file without printing public disclosure values', () => {
+    const temp = mkdtempSync(join(tmpdir(), 'wechat-disclosure-'));
+    const outputFile = join(temp, 'release-disclosure.production.json');
+    const dist = join(temp, 'dist');
+    mkdirSync(dist);
+    writeFileSync(
+      join(dist, 'app.json'),
+      JSON.stringify({
+        productVersion: '1.2.3',
+        privacyPolicyVersion: '2026-08-13',
+        serviceOperator: 'SkillScope Test Operator LLC',
+        modelDisclosure: 'Uses a user-configured LLM provider to generate fixed 50-question assessments.',
+        generativeAiRegistration: 'Registration ABC-123',
+        miniProgramFiling: 'Mini Program Filing 2026-001',
+        reportRoute: '/pages/report/index',
+        privacyRoute: '/pages/privacy/index',
+      }),
+    );
+    const result = runNode('scripts/create-wechat-production-disclosure.mjs', [
+      '--output',
+      outputFile,
+      '--dist',
+      dist,
+      '--product-version',
+      '1.2.3',
+      '--privacy-policy-version',
+      '2026-08-13',
+      '--service-operator',
+      'SkillScope Test Operator LLC',
+      '--model-disclosure',
+      'Uses a user-configured LLM provider to generate fixed 50-question assessments.',
+      '--generative-ai-registration',
+      'Registration ABC-123',
+      '--mini-program-filing',
+      'Mini Program Filing 2026-001',
+      '--report-route',
+      '/pages/report/index',
+      '--privacy-route',
+      '/pages/privacy/index',
+    ]);
+
+    expect(result.status).toBe(0);
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).toContain('Created production disclosure');
+    expect(output).not.toContain('SkillScope Test Operator LLC');
+    expect(output).not.toContain('Registration ABC-123');
+    const disclosure = JSON.parse(readFileSync(outputFile, 'utf8'));
+    expect(disclosure).toEqual({
+      environment: 'production',
+      productVersion: '1.2.3',
+      privacyPolicyVersion: '2026-08-13',
+      serviceOperator: 'SkillScope Test Operator LLC',
+      modelDisclosure: 'Uses a user-configured LLM provider to generate fixed 50-question assessments.',
+      generativeAiRegistration: 'Registration ABC-123',
+      miniProgramFiling: 'Mini Program Filing 2026-001',
+      reportRoute: '/pages/report/index',
+      privacyRoute: '/pages/privacy/index',
+    });
+
+    const verify = runNode('scripts/verify-wechat-disclosure.mjs', [
+      '--file',
+      outputFile,
+      '--mode',
+      'production',
+      '--dist',
+      dist,
+    ]);
+    expect(verify.status).toBe(0);
+    rmSync(temp, { recursive: true, force: true });
+  });
+
   test('reports go-live status as JSON without exposing secret values', () => {
     const temp = mkdtempSync(join(tmpdir(), 'wechat-status-'));
     const fakeGh = join(temp, process.platform === 'win32' ? 'gh.cmd' : 'gh');
@@ -587,6 +658,30 @@ describe('EdgeOne production release gates', () => {
     expect(report.checks.dns.ok).toBe(true);
     expect(report.checks.health.ok).toBe(true);
     expect(`${result.stdout}${result.stderr}`).not.toMatch(/api[_-]?key|private[_-]?key|secret/i);
+  });
+
+  test('accepts url as an alias when checking candidate WeChat request domains', () => {
+    const result = runNode('scripts/wechat-domain-candidate.mjs', [
+      '--url',
+      'https://api.skillscope.cn',
+      '--dns-result',
+      '93.184.216.34',
+      '--health-json',
+      JSON.stringify({
+        ok: true,
+        data: {
+          service: 'skillscope-edgeone',
+          configurationReady: true,
+          generationEnabled: true,
+        },
+      }),
+      '--json',
+    ]);
+
+    expect(result.status).toBe(0);
+    const report = JSON.parse(result.stdout);
+    expect(report.ready).toBe(true);
+    expect(report.origin).toBe('https://api.skillscope.cn');
   });
 
   test('rejects candidate WeChat request domains that resolve only to non-public addresses', () => {
