@@ -18,8 +18,8 @@ if (args.dryRun || args.checkOnly) {
   process.exit(0);
 }
 
-const project = required('EDGEONE_PROJECT_NAME');
-const token = required('EDGEONE_API_TOKEN');
+const project = resolveProjectName();
+const token = args.localLogin ? undefined : required('EDGEONE_API_TOKEN');
 const version = required('EDGEONE_DEPLOYMENT_VERSION');
 if (!args.production) fail('EdgeOne deployment requires --production');
 if (args.verifyRuntimeEnv) verifyHealth({ version, requireVersion: false });
@@ -30,7 +30,17 @@ runEdgeOneBuild(edgeoneCommand);
 verifyEdgeOneBuildPackage();
 const result = spawnSync(
   edgeoneCommand.command,
-  [...edgeoneCommand.args, 'makers', 'deploy', '-n', project, '-t', token, '-e', 'production', '--json'],
+  [
+    ...edgeoneCommand.args,
+    'makers',
+    'deploy',
+    '-n',
+    project,
+    ...(token === undefined ? [] : ['-t', token]),
+    '-e',
+    'production',
+    '--json',
+  ],
   { cwd: serviceRoot, encoding: 'utf8', windowsHide: true, timeout: 600_000, env: process.env },
 );
 if (result.status !== 0) fail('EdgeOne deployment failed; inspect the protected provider log.');
@@ -108,6 +118,21 @@ function required(name) {
   return value.trim();
 }
 
+function resolveProjectName() {
+  const configured = process.env.EDGEONE_PROJECT_NAME;
+  if (typeof configured === 'string' && configured.trim() !== '') return configured.trim();
+  if (!args.localLogin) fail('EdgeOne deployment requires EDGEONE_PROJECT_NAME');
+  const linkedProjectPath = join(serviceRoot, '.edgeone', 'project.json');
+  if (!existsSync(linkedProjectPath)) fail('EdgeOne local-login deployment requires a linked EdgeOne project');
+  try {
+    const linked = JSON.parse(readFileSync(linkedProjectPath, 'utf8'));
+    if (typeof linked.Name === 'string' && linked.Name.trim() !== '') return linked.Name.trim();
+  } catch {
+    fail('EdgeOne linked project file is not readable');
+  }
+  fail('EdgeOne linked project file is missing a project name');
+}
+
 function safe(value) {
   return value.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 128);
 }
@@ -125,13 +150,14 @@ function resolveEdgeOneCommand() {
 }
 
 function parseArgs(values) {
-  const parsed = { dryRun: false, checkOnly: false, production: false, verifyHealth: false, verifyRuntimeEnv: false };
+  const parsed = { dryRun: false, checkOnly: false, production: false, verifyHealth: false, verifyRuntimeEnv: false, localLogin: false };
   for (const value of values) {
     if (value === '--dry-run') parsed.dryRun = true;
     else if (value === '--check-only') parsed.checkOnly = true;
     else if (value === '--production') parsed.production = true;
     else if (value === '--verify-health') parsed.verifyHealth = true;
     else if (value === '--verify-runtime-env') parsed.verifyRuntimeEnv = true;
+    else if (value === '--local-login') parsed.localLogin = true;
     else fail(`Unsupported EdgeOne deployment argument: ${value}`);
   }
   return parsed;

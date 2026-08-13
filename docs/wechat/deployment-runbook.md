@@ -32,7 +32,7 @@ npm run build:edgeone
 npm run verify:github-workflows
 ```
 
-部署 Node Functions 与 Blob 配置后，先对 preview deployment 运行 smoke，再切换 production deployment。CI 使用精确锁定的 `edgeone@1.6.23` 执行 `edgeone makers deploy`；生产 wrapper 会先验证当前 `/api/health` 的 `configurationReady=true` 与 `generationEnabled`，部署后解析 CLI 输出中的 HTTPS origin 并与 `TARO_APP_EDGEONE_API_BASE_URL` 比对，再要求 health 版本匹配。若 EdgeOne CLI 不输出 URL，默认失败；只有确认供应商该版本不输出 URL 时，才可临时设置 `EDGEONE_ALLOW_MISSING_DEPLOYMENT_ORIGIN=true` 并在 release manifest 记录人工验证证据。`npm run edgeone:deploy -- --dry-run` 不读取凭据，只验证部署包；仓库不假设本机已登录 EdgeOne，因此不会伪造部署成功。
+部署 Node Functions 与 Blob 配置后，先对 preview deployment 运行 smoke，再切换 production deployment。CI 使用精确锁定的 `edgeone@1.6.23` 执行 `edgeone makers deploy`；生产 wrapper 会先验证当前 `/api/health` 的 `configurationReady=true` 与 `generationEnabled`，部署后解析 CLI 输出中的 HTTPS origin 并与 `TARO_APP_EDGEONE_API_BASE_URL` 比对，再要求 health 版本匹配。若 EdgeOne CLI 不输出 URL，默认失败；只有确认供应商该版本不输出 URL 时，才可临时设置 `EDGEONE_ALLOW_MISSING_DEPLOYMENT_ORIGIN=true` 并在 release manifest 记录人工验证证据。`npm run edgeone:deploy -- --dry-run` 不读取凭据，只验证部署包。已在本机通过 `edgeone makers login/link` 绑定项目时，可用 `npm run edgeone:deploy -- --production --local-login` 复用本机登录态；脚本会从 `services/edgeone/.edgeone/project.json` 读取项目名，并且只在 `services/edgeone` 目录打包部署，避免把整个仓库上传。
 
 ## 3. 小程序 production 配置
 

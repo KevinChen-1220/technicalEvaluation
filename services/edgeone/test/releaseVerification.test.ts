@@ -96,6 +96,49 @@ describe('EdgeOne production release gates', () => {
     rmSync(temp, { recursive: true, force: true });
   });
 
+  test('local login deployment reads the linked project and does not require an API token', () => {
+    const temp = mkdtempSync(join(tmpdir(), 'edgeone-local-release-'));
+    const fakeCli = join(temp, process.platform === 'win32' ? 'edgeone.cmd' : 'edgeone');
+    const marker = join(temp, 'args.txt');
+    if (process.platform === 'win32') {
+      writeFileSync(fakeCli, [
+        '@echo off',
+        'mkdir .edgeone\\cloud-functions\\api-node 2>nul',
+        'echo {"routes":[{"src":"^/api/health$"}]} > .edgeone\\cloud-functions\\api-node\\config.json',
+        `echo %* > "${marker}"`,
+        'echo deployed to https://skill.example.com',
+        'exit /b 0',
+      ].join('\r\n'));
+    } else {
+      writeFileSync(fakeCli, [
+        '#!/bin/sh',
+        'mkdir -p .edgeone/cloud-functions/api-node',
+        'printf \'{"routes":[{"src":"^/api/health$"}]}\' > .edgeone/cloud-functions/api-node/config.json',
+        `printf '%s' "$*" > "${marker}"`,
+        'echo deployed to https://skill.example.com',
+        'exit 0',
+      ].join('\n'));
+      chmodSync(fakeCli, 0o700);
+    }
+    const result = runNode('scripts/edgeone-deploy.mjs', ['--production', '--local-login'], {
+      ...process.env,
+      NODE_ENV: 'test',
+      EDGEONE_CLI_BIN: fakeCli,
+      EDGEONE_DEPLOYMENT_VERSION: 'build-123',
+      TARO_APP_EDGEONE_API_BASE_URL: 'https://skill.example.com',
+      EDGEONE_API_TOKEN: '',
+      EDGEONE_PROJECT_NAME: '',
+    });
+
+    expect(result.status).toBe(0);
+    const args = readFileSync(marker, 'utf8');
+    expect(args).toContain('makers deploy');
+    expect(args).toContain('-n skillscope-wechat');
+    expect(args).not.toContain('-t');
+    expect(`${result.stdout}${result.stderr}`).not.toMatch(/EDGEONE_API_TOKEN|token-that-must-not-appear/i);
+    rmSync(temp, { recursive: true, force: true });
+  });
+
   test('miniprogram-ci creates and cleans an ephemeral private key from env pem', async () => {
     const moduleUrl = pathToFileURL(join(repoRoot, 'scripts', 'wechat-upload-tempfile.mjs')).href;
     const result = runModule(`
@@ -140,6 +183,7 @@ describe('EdgeOne production release gates', () => {
     expect(deploymentWrapper).toMatch(/const serviceRoot = join\(repoRoot, 'services', 'edgeone'\)/);
     expect(deploymentWrapper).toMatch(/cwd: serviceRoot/);
     expect(deploymentWrapper).toMatch(/api-node['"],\s*['"]config\.json/);
+    expect(deploymentWrapper).toMatch(/--local-login/);
   });
 
   test('verifies the EdgeOne artifact, 120-second budget, fixed 50-question contract, and public HTTPS origin', () => {
