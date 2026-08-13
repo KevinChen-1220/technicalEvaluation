@@ -41,8 +41,15 @@ npm run wechat:ci:dry-run
 ## 阶段 4：preview 和 production smoke
 
 1. 用真实 iOS 与 Android 设备对 preview 做完整 smoke。
-2. 切换到 production deployment 后，重复 smoke，记录相同的请求、截图和错误路径。
-3. 使用 `docs/wechat/release-evidence/external-smoke-checklist.md`、`wechat_production_smoke` issue 和 go-live tracking issue #10 归档证据。
+2. 在不提交正式审核前，可用本机已登录的微信开发者工具先上传测试版并生成预览码：
+
+```sh
+npm run build:weapp
+npm run wechat:devtools:test-upload -- --version 1.0.0-test.<yyyymmdd> --description "SkillScope EdgeOne 测试版"
+```
+
+3. 切换到 production deployment 后，重复 smoke，记录相同的请求、截图和错误路径。
+4. 使用 `docs/wechat/release-evidence/external-smoke-checklist.md`、`wechat_production_smoke` issue 和 go-live tracking issue #10 归档证据。
 
 **验收：** 50 题生成、HTML/XML 解析失败、隐私拒绝/同意、答题、历史、离线队列、安全区和键盘避让均已覆盖。
 

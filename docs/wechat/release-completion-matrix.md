@@ -25,6 +25,7 @@
 | Machine-readable manifest 模板 | 本地已验证 | `docs/wechat/release-manifest.template.json` | 用真实值生成每次发布 manifest |
 | GitHub release checks | 本地已验证 | `.github/workflows/wechat-release.yml`，`npm run verify:github-workflows`，`docs/wechat/release-evidence/2026-08-13-edgeone-command-output.md` | GitHub Actions 在线运行结果外部就绪 |
 | 手动上传 job | 外部就绪 | `.github/workflows/wechat-release.yml` 的 `upload` job | 配置 `wechat-production` environment approval、EdgeOne deploy inputs 和微信上传私钥；由 issue #10 关闭 |
+| 本机 DevTools 测试版上传 | 本地已验证 | `scripts/wechat-devtools-test-upload.mjs`，`npm run wechat:devtools:test-upload`，GitHub issue #10 测试版证据 | 体验版扫码后的真机生成/同步仍依赖 production HTTPS origin ready |
 | Fork/PR 不接触敏感配置 | 本地已验证 | `release-checks` job 无 `secrets.`，不使用 `pull_request_target`；upload job 不持有服务端 runtime secret | GitHub UI environment 保护外部就绪 |
 | EdgeOne 服务端密钥边界 | 本地已验证 | `scripts/verify-edgeone-release.mjs`，`.github/workflows/wechat-release.yml`，`docs/wechat/edgeone-env.production.example` | 服务端 runtime secret 只在 EdgeOne console 配置；GitHub 只保存 deploy/upload 输入 |
 | Filing issue template | 本地已验证 | `.github/ISSUE_TEMPLATE/wechat_filing.yml` | 账号负责人填写真实 AppID、备案、隐私、生成式人工智能材料 |
@@ -33,7 +34,7 @@
 | 真实 AppID 和上传私钥 | 外部阻塞 | `apps/wechat/project.private.config.example.json`，`.gitignore` | 管理员下载上传私钥并配置本机/GitHub environment；AppID 已由用户提供为 `wx31dd3d7448aac8e3` |
 | 小程序 ICP 备案 | 外部阻塞 | `docs/wechat/release-checklist.md`，filing issue | 运营主体完成工信部/微信流程 |
 | 生成式 AI 备案或登记披露 | 外部阻塞 | `docs/wechat/release-checklist.md`，`docs/wechat/review-submission.md` | 依据服务主体和模型提供方确认 |
-| 微信开发者工具登录 | 外部阻塞 | `docs/wechat/release-evidence/2026-08-10-devtools-cli.md` | 本机登录真实账号后重跑 smoke |
+| 微信开发者工具登录 | 本地已验证 | `docs/wechat/release-evidence/2026-08-10-devtools-cli.md`，GitHub issue #10 测试版上传记录 | 继续保持登录态；换机器或登录失效时重跑 `npm run wechat:devtools:smoke` |
 | iOS/Android 真机验证 | 外部阻塞 | `docs/wechat/release-evidence/external-smoke-checklist.md` | 真实设备完成并上传截图 |
 | 微信审核和发布 | 外部阻塞 | `docs/wechat/review-submission.md`，issue #10 | 在微信公众平台提交、处理驳回、灰度发布 |
 
