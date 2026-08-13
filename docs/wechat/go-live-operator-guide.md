@@ -2,6 +2,8 @@
 
 本指南只列出真正需要账号管理员手动完成的上线步骤。Codex 可以执行本地构建、测试、EdgeOne CLI 部署、GitHub 配置和上传命令；扫码、实名认证、人脸核验、备案确认、隐私声明提交、审核提交和最终发布必须由管理员完成。
 
+剩余外部上线项统一追踪在 GitHub issue #10：<https://github.com/KevinChen-1220/technicalEvaluation/issues/10>。所有截图和命令输出只能附非密钥证据，不得上传 token、AppSecret、私钥、OpenID、用户输入或答案。
+
 ## 阶段 1：主体、AppID 与披露
 
 1. 在微信公众平台完成主体认证，创建小程序并记录真实 AppID。
@@ -39,7 +41,7 @@ npm run wechat:ci:dry-run
 
 1. 用真实 iOS 与 Android 设备对 preview 做完整 smoke。
 2. 切换到 production deployment 后，重复 smoke，记录相同的请求、截图和错误路径。
-3. 使用 `docs/wechat/release-evidence/external-smoke-checklist.md` 和 `wechat_production_smoke` issue 归档证据。
+3. 使用 `docs/wechat/release-evidence/external-smoke-checklist.md`、`wechat_production_smoke` issue 和 go-live tracking issue #10 归档证据。
 
 **验收：** 50 题生成、HTML/XML 解析失败、隐私拒绝/同意、答题、历史、离线队列、安全区和键盘避让均已覆盖。
 

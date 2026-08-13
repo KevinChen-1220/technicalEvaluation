@@ -8,11 +8,13 @@
 
 任何外部阻塞项仍为 `待配置` 时不得进入正式审核，不能用示例值替代真实材料。
 
+当前外部上线阻塞项统一追踪在 GitHub issue #10：<https://github.com/KevinChen-1220/technicalEvaluation/issues/10>。关闭该 issue 前必须附非密钥证据，并通过 `npm run verify:wechat-go-live` 的非跳过 health 检查。
+
 | 要求 | 状态 | 证据 | 剩余动作 |
 | --- | --- | --- | --- |
 | 共享技能测评 core | 本地已验证 | `packages/assessment-core`，`npm test -- --runInBand` | 无 |
 | 微信小程序 Taro UI | 本地已验证 | `apps/wechat`，`npm run test:wechat -- --runInBand`，`npm run build:weapp` | 真机截图仍属外部阻塞 |
-| EdgeOne Node Functions 与 Blob | 本地已验证 | `services/edgeone`，`npm run test:edgeone -- --runInBand`，`npm run build:edgeone`，`docs/wechat/release-evidence/2026-08-13-edgeone-command-output.md` | 生产 EdgeOne 部署权限、Blob 命名空间和 HTTPS origin 外部阻塞 |
+| EdgeOne Node Functions 与 Blob | 本地已验证 | `services/edgeone`，`npm run test:edgeone -- --runInBand`，`npm run build:edgeone`，`docs/wechat/release-evidence/2026-08-13-edgeone-command-output.md` | 生产 EdgeOne runtime、Blob 命名空间和稳定 HTTPS origin 由 issue #10 关闭 |
 | 异步生成、重试恢复和解析防护 | 本地已验证 | `services/edgeone/test/generation.test.ts`，`apps/wechat/test/generationController.test.ts` | 真实模型 hosted smoke 外部阻塞 |
 | 365 天保留与免费额度清理 | 本地已验证 | `services/edgeone/test/assessmentRepository.test.ts`，`services/edgeone/test/settingsAndReports.test.ts` | 生产 Blob 监控和定期抽查外部就绪 |
 | 隐私、投诉和数据保留 | 本地已验证 | `docs/wechat/privacy-policy.zh-CN.md`，`docs/wechat/privacy-data-map.md`，`docs/wechat/operations-runbook.md` | 微信后台隐私声明外部阻塞 |
@@ -22,7 +24,7 @@
 | 审核提交说明 | 本地已验证 | `docs/wechat/review-submission.md` | 微信公众平台提交审核 |
 | Machine-readable manifest 模板 | 本地已验证 | `docs/wechat/release-manifest.template.json` | 用真实值生成每次发布 manifest |
 | GitHub release checks | 本地已验证 | `.github/workflows/wechat-release.yml`，`npm run verify:github-workflows`，`docs/wechat/release-evidence/2026-08-13-edgeone-command-output.md` | GitHub Actions 在线运行结果外部就绪 |
-| 手动上传 job | 外部就绪 | `.github/workflows/wechat-release.yml` 的 `upload` job | 配置 `wechat-production` environment approval、EdgeOne deploy inputs 和微信上传私钥 |
+| 手动上传 job | 外部就绪 | `.github/workflows/wechat-release.yml` 的 `upload` job | 配置 `wechat-production` environment approval、EdgeOne deploy inputs 和微信上传私钥；由 issue #10 关闭 |
 | Fork/PR 不接触敏感配置 | 本地已验证 | `release-checks` job 无 `secrets.`，不使用 `pull_request_target`；upload job 不持有服务端 runtime secret | GitHub UI environment 保护外部就绪 |
 | EdgeOne 服务端密钥边界 | 本地已验证 | `scripts/verify-edgeone-release.mjs`，`.github/workflows/wechat-release.yml`，`docs/wechat/edgeone-env.production.example` | 服务端 runtime secret 只在 EdgeOne console 配置；GitHub 只保存 deploy/upload 输入 |
 | Filing issue template | 本地已验证 | `.github/ISSUE_TEMPLATE/wechat_filing.yml` | 账号负责人填写真实 AppID、备案、隐私、生成式人工智能材料 |
@@ -33,6 +35,6 @@
 | 生成式 AI 备案或登记披露 | 外部阻塞 | `docs/wechat/release-checklist.md`，`docs/wechat/review-submission.md` | 依据服务主体和模型提供方确认 |
 | 微信开发者工具登录 | 外部阻塞 | `docs/wechat/release-evidence/2026-08-10-devtools-cli.md` | 本机登录真实账号后重跑 smoke |
 | iOS/Android 真机验证 | 外部阻塞 | `docs/wechat/release-evidence/external-smoke-checklist.md` | 真实设备完成并上传截图 |
-| 微信审核和发布 | 外部阻塞 | `docs/wechat/review-submission.md` | 在微信公众平台提交、处理驳回、灰度发布 |
+| 微信审核和发布 | 外部阻塞 | `docs/wechat/review-submission.md`，issue #10 | 在微信公众平台提交、处理驳回、灰度发布 |
 
 结论：Task8 本地交付的完成条件是本矩阵中所有“本地已验证”和“外部就绪”项有仓库证据，且剩余项只依赖真实微信主体、法定备案声明、EdgeOne 生产 credentials/runtime 配置、GitHub environment 审批、微信 request 合法域名、真机或微信审核。
