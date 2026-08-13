@@ -80,8 +80,8 @@ Deployment:
 
 ```text
 Project ID: makers-xt0lfsjyivza
-Deployment ID: dpsrcz4f3x37
-Console URL: https://console.cloud.tencent.com/edgeone/pages/project/makers-xt0lfsjyivza/deployment/dpsrcz4f3x37
+Deployment ID: dp59qe1zt4ff
+Console URL: https://console.cloud.tencent.com/edgeone/pages/project/makers-xt0lfsjyivza/deployment/dp59qe1zt4ff
 ```
 
 Remote health check:
@@ -91,6 +91,7 @@ Remote health check:
 ```
 
 The false configuration flags are expected before production runtime environment variables are configured in EdgeOne.
+The EdgeOne CLI deployment log still reported `No environment variables found`; configure production runtime variables in the EdgeOne console before enabling generation.
 
 ### Typecheck
 
