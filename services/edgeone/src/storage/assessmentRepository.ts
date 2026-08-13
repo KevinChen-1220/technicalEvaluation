@@ -6,6 +6,7 @@ const INDEX_DISCOVERY_LIMIT = 64;
 const REVISION_DISCOVERY_LIMIT = 256;
 const INDEX_WRITE_RETRIES = 8;
 const DEFAULT_DRAFT_RETENTION_DAYS = 30;
+const DEFAULT_COMPLETED_RETENTION_DAYS = 365;
 const DEFAULT_CLEANUP_LIMIT = 20;
 
 export type AssessmentRecord = {
@@ -61,7 +62,7 @@ export class BlobAssessmentRepository implements AssessmentRepository {
 
   async get(ownerKey: string, id: string): Promise<AssessmentRecord | null> {
     const record = await this.readLatest(ownerKey, id);
-    if (record !== null && this.isExpiredDraft(record)) {
+    if (record !== null && this.isExpiredRecord(record)) {
       await this.deleteAssessment(ownerKey, id);
       return null;
     }
@@ -107,6 +108,7 @@ export class BlobAssessmentRepository implements AssessmentRepository {
     }
     await this.writePointer(normalized.ownerKey, normalized.id, 1);
     await this.upsertSummary(normalized);
+    await this.pruneAssessmentRevisions(normalized.ownerKey, normalized.id, 1);
     return normalized;
   }
 
@@ -148,6 +150,7 @@ export class BlobAssessmentRepository implements AssessmentRepository {
     // The revision object is the source of truth. Pointer and index writes are only discovery aids.
     await this.writePointer(next.ownerKey, next.id, next.revision);
     await this.upsertSummary(next);
+    await this.pruneAssessmentRevisions(next.ownerKey, next.id, next.revision);
     return { type: 'updated', record: next };
   }
 
@@ -180,6 +183,7 @@ export class BlobAssessmentRepository implements AssessmentRepository {
       };
       try {
         await this.blob.put(this.indexRevisionKey(ownerKey, next.revision), next, { onlyIfNew: true });
+        await this.pruneIndexRevisions(ownerKey, next.revision);
         return;
       } catch (error) {
         if (!(error instanceof BlobPreconditionFailedError)) throw error;
@@ -214,16 +218,36 @@ export class BlobAssessmentRepository implements AssessmentRepository {
     return { complete, deleted: deleteKeys.length };
   }
 
-  private isExpiredDraft(record: AssessmentRecord): boolean {
-    return record.status === 'draft' && this.isExpiredAt(record.updatedAt);
+  private async pruneAssessmentRevisions(ownerKey: string, id: string, currentRevision: number): Promise<void> {
+    await this.bestEffortPrune(`${this.baseKey(ownerKey, id)}/revisions/`, this.revisionKey(ownerKey, id, currentRevision));
+  }
+
+  private async pruneIndexRevisions(ownerKey: string, currentRevision: number): Promise<void> {
+    await this.bestEffortPrune(`${this.indexPrefix(ownerKey)}/`, this.indexRevisionKey(ownerKey, currentRevision));
+  }
+
+  private async bestEffortPrune(prefix: string, protectedKey: string): Promise<void> {
+    try {
+      const keys = (await this.blob.list(prefix, { consistency: 'strong', limit: this.cleanupLimit + 1 })).blobs;
+      await Promise.all(keys.filter((key) => key !== protectedKey).slice(0, this.cleanupLimit).map(async (key) => await this.blob.delete(key)));
+    } catch {
+      // Immutable cleanup cannot invalidate the current revision and is retried by later writes.
+    }
+  }
+
+  private isExpiredRecord(record: AssessmentRecord): boolean {
+    return this.isExpiredAt(record.status === 'completed' ? record.submittedAt ?? record.updatedAt : record.updatedAt, record.status);
   }
 
   private isExpiredSummary(summary: AssessmentSummary): boolean {
-    return summary.status === 'draft' && this.isExpiredAt(summary.updatedAt);
+    return this.isExpiredAt(summary.status === 'completed' ? summary.submittedAt ?? summary.updatedAt : summary.updatedAt, summary.status);
   }
 
-  private isExpiredAt(value: string): boolean {
-    const cutoff = this.options.now().getTime() - (this.options.draftRetentionDays ?? DEFAULT_DRAFT_RETENTION_DAYS) * 86_400_000;
+  private isExpiredAt(value: string, status: AssessmentRecord['status']): boolean {
+    const retentionDays = status === 'completed'
+      ? DEFAULT_COMPLETED_RETENTION_DAYS
+      : this.options.draftRetentionDays ?? DEFAULT_DRAFT_RETENTION_DAYS;
+    const cutoff = this.options.now().getTime() - retentionDays * 86_400_000;
     return new Date(value).getTime() < cutoff;
   }
 

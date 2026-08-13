@@ -28,6 +28,20 @@ describe('settings and reports', () => {
     await expect(stores.reports.list('owner-a')).resolves.toEqual([expect.objectContaining({ id: 'new' })]);
   });
 
+  test('cleans expired reports during new report creation when no list route is exposed', async () => {
+    const blob = new MemoryBlobPort();
+    const beforeExpiry = new BlobReportRepository(blob, {
+      now: () => new Date('2026-08-11T00:00:00.000Z'), retentionDays: 365, cleanupLimit: 20,
+    });
+    await beforeExpiry.create({ id: 'old', ownerKey: 'owner-a', reason: 'other', createdAt: '2026-08-11T00:00:00.000Z', updatedAt: '2026-08-11T00:00:00.000Z' });
+    const reports = new BlobReportRepository(blob, {
+      now: () => new Date('2027-08-12T00:00:00.000Z'), retentionDays: 365, cleanupLimit: 20,
+    });
+    await reports.create({ id: 'new', ownerKey: 'owner-a', reason: 'other', createdAt: '2027-08-12T00:00:00.000Z', updatedAt: '2027-08-12T00:00:00.000Z' });
+
+    expect([...blob.records.keys()]).toEqual(['reports/owner-a/new.json']);
+  });
+
   test('uses strong and bounded report discovery', async () => {
     const blob = new MemoryBlobPort();
     const list = jest.spyOn(blob, 'list');

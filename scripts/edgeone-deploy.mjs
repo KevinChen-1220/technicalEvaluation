@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { isProductionEdgeOneApiBaseUrl } from './wechat-release-validation.mjs';
 import {
   assertDeploymentOrigin,
-  getMissingRequiredRuntimeEnv,
+  assertHealthContract,
 } from './edgeone-release-contracts.mjs';
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -22,7 +22,6 @@ const project = required('EDGEONE_PROJECT_NAME');
 const token = required('EDGEONE_API_TOKEN');
 const version = required('EDGEONE_DEPLOYMENT_VERSION');
 if (!args.production) fail('EdgeOne deployment requires --production');
-verifyRuntimeEnvironment(process.env);
 if (args.verifyRuntimeEnv) verifyHealth({ version, requireVersion: false });
 
 const edgeoneCommand = resolveEdgeOneCommand();
@@ -51,29 +50,20 @@ function verifyArtifacts() {
   }
 }
 
-function verifyRuntimeEnvironment(environment) {
-  const missing = getMissingRequiredRuntimeEnv(environment);
-  if (missing.length > 0) fail(`EdgeOne runtime environment is incomplete: ${missing.join(', ')}`);
-}
-
 function verifyHealth({ version, requireVersion }) {
   const origin = process.env.TARO_APP_EDGEONE_API_BASE_URL;
   if (!isProductionEdgeOneApiBaseUrl(origin)) fail('EdgeOne health verification requires a public HTTPS API origin root');
-  const expectedGenerationEnabled = process.env.GENERATION_ENABLED === 'true';
   const script = [
     `fetch(${JSON.stringify(`${origin}/api/health`)})`,
     '.then(async response => {',
     'if (!response.ok) process.exit(1);',
     'const body = await response.json();',
-    `const expected = ${JSON.stringify({ version, generationEnabled: expectedGenerationEnabled, requireVersion })};`,
-    'if (body?.ok !== true || body?.data?.service !== "skillscope-edgeone") process.exit(1);',
-    'if (expected.requireVersion && body.data.version !== expected.version) process.exit(1);',
-    'if (body.data.configurationReady !== true) process.exit(1);',
-    'if (body.data.generationEnabled !== expected.generationEnabled) process.exit(1);',
+    `const expected = ${JSON.stringify({ version, requireVersion })};`,
+    `return import(${JSON.stringify(new URL('./edgeone-release-contracts.mjs', import.meta.url).href)}).then(({ assertHealthContract }) => assertHealthContract(body, expected));`,
     '})',
     '.catch(() => process.exit(1));',
   ].join('');
-  const result = spawnSync(process.execPath, ['-e', script], { cwd: repoRoot, timeout: 20_000 });
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', script], { cwd: repoRoot, timeout: 20_000 });
   if (result.status !== 0) fail('EdgeOne health verification failed.');
 }
 

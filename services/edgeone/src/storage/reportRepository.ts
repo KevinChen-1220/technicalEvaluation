@@ -16,17 +16,16 @@ export class BlobReportRepository {
 
   async create(record: ReportRecord): Promise<ReportRecord> {
     const written = JSON.parse(JSON.stringify(record)) as ReportRecord;
+    await this.cleanupExpired(written.ownerKey);
     await this.blob.put(this.key(written.ownerKey, written.id), written, { onlyIfNew: true });
     return written;
   }
 
   async list(ownerKey: string): Promise<ReportRecord[]> {
-    const keys = (await this.blob.list(this.prefix(ownerKey), { consistency: 'strong', limit: 200 })).blobs;
-    const records = await Promise.all(keys.map((key) => this.blob.get<ReportRecord>(key, { consistency: 'strong' })));
+    const records = await this.records(ownerKey);
     const retained: ReportRecord[] = [];
     let cleanups = 0;
     for (const record of records) {
-      if (record === null || record.ownerKey !== ownerKey) continue;
       if (new Date(record.createdAt).getTime() < this.cutoff()) {
         if (cleanups < this.cleanupLimit) {
           cleanups += 1;
@@ -37,6 +36,21 @@ export class BlobReportRepository {
       retained.push(record);
     }
     return retained.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
+
+  private async cleanupExpired(ownerKey: string): Promise<void> {
+    let cleanups = 0;
+    for (const record of await this.records(ownerKey)) {
+      if (new Date(record.createdAt).getTime() >= this.cutoff() || cleanups >= this.cleanupLimit) continue;
+      cleanups += 1;
+      await this.blob.delete(this.key(ownerKey, record.id));
+    }
+  }
+
+  private async records(ownerKey: string): Promise<ReportRecord[]> {
+    const keys = (await this.blob.list(this.prefix(ownerKey), { consistency: 'strong', limit: 200 })).blobs;
+    const records = await Promise.all(keys.map((key) => this.blob.get<ReportRecord>(key, { consistency: 'strong' })));
+    return records.filter((record): record is ReportRecord => record !== null && record.ownerKey === ownerKey);
   }
 
   private cutoff(): number { return this.options.now().getTime() - (this.options.retentionDays ?? 365) * 86_400_000; }

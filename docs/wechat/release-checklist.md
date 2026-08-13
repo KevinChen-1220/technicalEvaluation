@@ -21,11 +21,11 @@
 
 - [ ] EdgeOne project 已创建，Node Functions 与 Blob 已部署到 production deployment。
 - [ ] `TARO_APP_EDGEONE_API_BASE_URL` 为 production HTTPS origin 根路径，不含 `/api`、端口、查询参数或凭据。
-- [ ] 运行时环境变量配置在 EdgeOne 项目中；同一组受保护值仅镜像到 GitHub environment `wechat-production`，作为审批后的部署 gate、EdgeOne deploy 和微信上传输入使用。小程序只能读取 `TARO_APP_EDGEONE_API_BASE_URL`，不得把模型、微信会话、审核凭据或上传私钥写入客户端包、artifact、日志、仓库、issue、截图或 manifest。
+- [ ] 服务端运行时环境变量仅配置在 EdgeOne 项目中，绝不镜像到 GitHub。GitHub `wechat-production` 仅保留 `EDGEONE_API_TOKEN`、`EDGEONE_PROJECT_NAME`、`EDGEONE_DEPLOYMENT_VERSION`、`TARO_APP_EDGEONE_API_BASE_URL`、`WECHAT_APP_ID`、`WECHAT_PRIVATE_KEY_PEM` 和 release inputs。小程序只能读取 `TARO_APP_EDGEONE_API_BASE_URL`，不得把模型、微信会话、审核凭据或上传私钥写入客户端包、artifact、日志、仓库、issue、截图或 manifest。
 - [ ] Blob 命名空间、保留策略和恢复责任人已记录在 release manifest。
 - [ ] 微信公众平台已把同一个 HTTPS origin 加入 `request合法域名`，并完成域名校验。
 - [ ] preview smoke 与 production smoke 均已覆盖隐私 gate、50 题生成、HTML/XML 解析失败、审核阻断、离线答题和历史恢复。
-- [ ] 已核对 EdgeOne Makers 当期免费额度与政策变化；仓库未开启付费套餐或自动扩容，`GENERATION_ENABLED=false` 可立即熔断生成。
+- [ ] 已核对 EdgeOne Makers 当期免费额度与政策变化；仓库未开启付费套餐或自动扩容，`GENERATION_ENABLED=false` 和 Blob `ops/generation-disabled.json` 可立即熔断生成。
 - [ ] 已确认选用 LLM、内容审核和网关的账单可能独立于 EdgeOne 免费额度，并设置供应商侧消费上限。
 - [ ] 已按 `docs/wechat/edgeone-env.production.example` 配齐服务器环境变量，包含 `OPENID_ENCRYPTION_KEY`、`GENERATION_ENABLED` 和 `EDGEONE_DEPLOYMENT_VERSION`；小程序构建仅注入 `TARO_APP_EDGEONE_API_BASE_URL`。
 - [ ] 已制定并演练 API token、微信 AppSecret、HMAC、OpenID 加密和 LLM 密钥轮换，轮换记录不含密钥值。
@@ -39,8 +39,8 @@
 ## GitHub 与上传权限
 
 - [ ] GitHub environment `wechat-production` 已配置 required reviewers；上传 job 只能手动触发并等待环境审批。
-- [ ] `wechat-production` 中的 protected secrets 仅作为发布输入传给 EdgeOne 部署 wrapper、运行时配置 gate 和微信上传 wrapper；服务端密钥不得进入小程序包、artifact、仓库、issue、截图或 manifest。
-- [ ] `npm run edgeone:deploy -- --production --verify-runtime-env --verify-health` 已验证 EdgeOne health 的 `configurationReady=true`、`generationEnabled` 与发布期望一致、`EDGEONE_DEPLOYMENT_VERSION` 匹配，且部署 CLI 输出的 HTTPS origin 与 `TARO_APP_EDGEONE_API_BASE_URL` 相同。
+- [ ] `wechat-production` 中的 protected secrets 只包含部署、上传和 release inputs；微信 AppSecret、HMAC、OpenID 加密、模型与审核密钥只存在于 EdgeOne runtime，绝不进入 GitHub。
+- [ ] `npm run edgeone:deploy -- --production --verify-runtime-env --verify-health` 已通过远程 EdgeOne health 验证 `configurationReady=true`、`generationEnabled` 已报告且 `EDGEONE_DEPLOYMENT_VERSION` 匹配，且部署 CLI 输出的 HTTPS origin 与 `TARO_APP_EDGEONE_API_BASE_URL` 相同。
 - [ ] Fork/PR 只运行 `release-checks`，该 job 不引用 GitHub secrets。
 - [ ] 复制 `docs/wechat/release-manifest.template.json` 后填写 EdgeOne project、deployment URL、build SHA、Blob、审核单与回滚版本；manifest 不记录密钥或用户数据。
 

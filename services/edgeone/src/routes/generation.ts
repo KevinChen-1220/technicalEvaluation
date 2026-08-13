@@ -43,6 +43,9 @@ export async function createGenerationRoute(
     if (settings?.privacyPolicyVersion !== policyVersion || typeof settings.privacyConsentAt !== 'string') {
       return routeFailure(new ApiError('PRIVACY_CONSENT_REQUIRED', 403, false));
     }
+    if (await generationDisabled(context)) {
+      return routeFailure(new ApiError('FREE_TIER_LIMIT', 429, true));
+    }
 
     const identityKey = clientRequestId ?? randomUUID();
     const digest = createHash('sha256').update(`${identity.ownerKey}\0${identityKey}`, 'utf8').digest('hex').slice(0, 32);
@@ -107,6 +110,11 @@ export async function createGenerationRoute(
   } catch (error) {
     return routeFailure(error);
   }
+}
+
+async function generationDisabled(context: EdgeOneContext): Promise<boolean> {
+  const breaker = await context.blob.get<unknown>('ops/generation-disabled.json', { consistency: 'strong' });
+  return typeof breaker === 'object' && breaker !== null && (breaker as { disabled?: unknown }).disabled === true;
 }
 
 async function bestEffortFail(

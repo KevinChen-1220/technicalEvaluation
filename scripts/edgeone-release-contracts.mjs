@@ -55,7 +55,10 @@ export function assertHealthContract(body, expected) {
   if (body.data.configurationReady !== true) {
     throw new Error('EdgeOne runtime configuration is not ready.');
   }
-  if (body.data.generationEnabled !== expected.generationEnabled) {
+  if (typeof body.data.generationEnabled !== 'boolean') {
+    throw new Error('EdgeOne health response does not report the generation switch.');
+  }
+  if (expected.generationEnabled !== undefined && body.data.generationEnabled !== expected.generationEnabled) {
     throw new Error('EdgeOne generation switch does not match the expected value.');
   }
 }

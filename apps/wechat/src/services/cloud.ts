@@ -9,7 +9,7 @@ import type { EdgeOneRequestInput } from './edgeOneRuntime';
 
 declare const require: (moduleName: string) => { createReleaseFixtureCloudClient: () => ReturnType<typeof createCloudClient> };
 
-export type CreateGenerationInput = NewAssessmentRequest;
+export type CreateGenerationInput = NewAssessmentRequest & { retry?: boolean };
 
 export type GenerationJobStatus = {
   jobId: string;
@@ -105,6 +105,7 @@ export function createCloudClient(
         topic: input.topic,
         ...(input.notes === undefined ? {} : { notes: input.notes }),
         ...(input.clientRequestId === undefined ? {} : { clientRequestId: input.clientRequestId }),
+        ...(input.retry === true ? { retry: true } : {}),
       };
       const result = await call<unknown>({ path: '/api/generation', method: 'POST', body: data, timeoutMs: generationTimeoutMs });
       if (!isGenerationJobStatus(result)) {

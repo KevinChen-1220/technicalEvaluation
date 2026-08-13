@@ -38,6 +38,27 @@ describe('EdgeOne REST contracts', () => {
     } });
   });
 
+  test('checks the Blob-backed free-tier circuit breaker before reserving quota or invoking generation', async () => {
+    const fixture = await routeFixture();
+    await fixture.stores.settings.set(fixture.ownerKey, {
+      privacyPolicyVersion: '2026-08-10', privacyConsentAt: now().toISOString(),
+    });
+    await fixture.context.blob.put('ops/generation-disabled.json', { disabled: true, updatedAt: now().toISOString() });
+    const reserve = jest.spyOn(fixture.stores.quota, 'reserve');
+    const generate = jest.fn();
+
+    const response = await createGenerationRoute(fixture.request('/api/generation', 'POST', {
+      topic: 'TypeScript', clientRequestId: 'global-breaker',
+    }), fixture.context, { stores: fixture.stores, generate, now });
+
+    expect(response.status).toBe(429);
+    expect(await response.json()).toEqual({ ok: false, error: {
+      code: 'FREE_TIER_LIMIT', message: expect.any(String), retryable: true,
+    } });
+    expect(reserve).not.toHaveBeenCalled();
+    expect(generate).not.toHaveBeenCalled();
+  });
+
   test('generation is idempotent by owner and clientRequestId and returns a completed job envelope', async () => {
     const fixture = await routeFixture();
     await fixture.stores.settings.set(fixture.ownerKey, {

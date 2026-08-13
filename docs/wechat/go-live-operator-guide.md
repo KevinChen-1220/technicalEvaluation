@@ -15,7 +15,7 @@
 
 1. 创建 EdgeOne project，并准备 preview 与 production deployment。
 2. 在 EdgeOne 中部署 `services/edgeone` 的 Node Functions，启用 Blob 存储。
-3. 在 EdgeOne 运行时和 GitHub protected environment `wechat-production` 填写 `docs/wechat/edgeone-env.production.example` 中的微信会话、OpenID 加密、模型、内容安全、熔断和版本环境变量；GitHub 里的值只作为发布输入，禁止把任何密钥放入 Taro 环境变量、release manifest、GitHub issue、截图或构建产物。客户端只接收 `TARO_APP_EDGEONE_API_BASE_URL`。
+3. 只在 EdgeOne 运行时填写 `docs/wechat/edgeone-env.production.example` 中的微信会话、OpenID 加密、模型、内容安全、熔断和版本环境变量。GitHub `wechat-production` 仅保存部署、上传和 release inputs，禁止镜像任何服务端运行时值。禁止把任何密钥放入 Taro 环境变量、release manifest、GitHub issue、截图或构建产物。客户端只接收 `TARO_APP_EDGEONE_API_BASE_URL`。
 4. 记录 project ID、deployment URL、production HTTPS origin、deployment version、Node Functions build SHA 和 Blob namespace。
 
 **验收：** `/api/health`、`/api/session`、`/api/generation`、`/api/assessments`、`/api/settings` 与 `/api/reports` 在 preview 可用，production origin 为无路径的 HTTPS origin。生产部署须以锁定的 `edgeone@1.6.23` 完成，并通过 health 的 `configurationReady`、`generationEnabled` 和版本校验。
@@ -56,5 +56,5 @@ npm run wechat:ci:dry-run
 
 1. 每月核对 EdgeOne Makers 免费额度与政策变化。本项目不会自动转为付费套餐或自动扩容。
 2. 模型供应商、内容审核与 API 网关的费用可能独立计费，发布负责人需单独设定预算上限和告警。
-3. 按供应商策略、人员变动和安全事件同时轮换 EdgeOne runtime 环境变量、GitHub protected secrets、EdgeOne token、微信 AppSecret、HMAC、OpenID 加密、微信上传私钥与 LLM 密钥。先在 preview 验证，再切 production；任何轮换记录只保留版本与时间，不写入密钥值。
+3. 按供应商策略、人员变动和安全事件轮换 EdgeOne runtime 环境变量、EdgeOne token、微信 AppSecret、HMAC、OpenID 加密、微信上传私钥与 LLM 密钥。服务端运行时值不得进入 GitHub；先在 preview 验证，再切 production；任何轮换记录只保留版本与时间，不写入密钥值。
 4. 微信后台 `request合法域名` 必须始终与生产 HTTPS origin 相同，变更域名后先完成平台校验再发布。

@@ -188,6 +188,54 @@ describe('GenerationController', () => {
     expect(controller.getState().status).toBe('completed');
   });
 
+  test('re-posts a persisted idempotent request when a restarted client cannot poll its old in-memory job', async () => {
+    const intentStore = memoryIntentStore();
+    intentStore.save({ clientRequestId: 'request-1', input: request, jobId: 'job-1' });
+    const calls: Array<{ path: string; method: string; body?: Record<string, unknown> }> = [];
+    const client = createCloudClient(async (call) => {
+      calls.push(call);
+      return { jobId: 'job-1', status: 'completed', progress: 100, retryable: false, assessmentId: 'assessment-1' };
+    });
+    const controller = new GenerationController({
+      createJob: client.createGenerationJob,
+      getJob: (jobId) => client.getGenerationJob({ jobId }),
+      getAssessment: async () => assessment,
+      cacheAssessment: () => undefined,
+      navigate: async () => undefined,
+      sleep: async () => undefined,
+    }, { intentStore } as never);
+
+    await controller.resumePending();
+
+    expect(calls).toEqual([{ path: '/api/generation', method: 'POST', body: {
+      topic: 'TypeScript', notes: 'Generics', clientRequestId: 'request-1',
+    }, timeoutMs: 120_000 }]);
+    expect(controller.getState()).toMatchObject({ status: 'completed', assessmentId: 'assessment-1' });
+  });
+
+  test('retries a failed server job through an explicit retry request', async () => {
+    const intentStore = memoryIntentStore();
+    const createJob = jest.fn()
+      .mockResolvedValueOnce({ jobId: 'job-1', status: 'queued' })
+      .mockResolvedValueOnce({ jobId: 'job-1', status: 'queued' });
+    const getJob = jest.fn()
+      .mockResolvedValueOnce({ jobId: 'job-1', status: 'failed', progress: 0, retryable: true, errorCode: 'PROVIDER_ERROR' })
+      .mockResolvedValueOnce({ jobId: 'job-1', status: 'completed', progress: 100, retryable: false, assessmentId: 'assessment-1' });
+    const controller = new GenerationController({
+      createJob, getJob, getAssessment: async () => assessment,
+      cacheAssessment: () => undefined, navigate: async () => undefined, sleep: async () => undefined,
+    }, { intentStore, createRequestId: () => 'request-1' } as never);
+
+    await controller.start(request);
+    await controller.retry(request);
+
+    expect(createJob.mock.calls.map((call) => call[0])).toEqual([
+      { topic: 'TypeScript', notes: 'Generics', clientRequestId: 'request-1' },
+      { topic: 'TypeScript', notes: 'Generics', clientRequestId: 'request-1', retry: true },
+    ]);
+    expect(controller.getState().status).toBe('completed');
+  });
+
   test('normalizes a legacy 100-question intent before resuming its cloud request', async () => {
     const storage = memoryIntentStorage();
     storage.set('skill-scope:generation-intent', {
@@ -242,6 +290,22 @@ describe('GenerationController', () => {
     expect(controller.getState()).toMatchObject({
       status: 'failed', error: '生成结果不完整，请重新生成。', retryable: true,
     });
+  });
+
+  test.each([
+    ['FREE_TIER_LIMIT', '免费生成额度已用完，请稍后再试。'],
+    ['GENERATION_DISABLED', '生成服务暂时关闭，请稍后再试。'],
+  ])('localizes %s without a generic network error', async (errorCode, message) => {
+    const controller = new GenerationController({
+      createJob: async () => ({ jobId: 'job-1', status: 'queued' }),
+      getJob: async () => ({ jobId: 'job-1', status: 'failed', progress: 0, retryable: true, errorCode }),
+      getAssessment: async () => assessment,
+      cacheAssessment: () => undefined,
+      navigate: async () => undefined,
+      sleep: async () => undefined,
+    });
+    await controller.start(request);
+    expect(controller.getState()).toMatchObject({ status: 'failed', error: message });
   });
 
   test('stops polling at the overall deadline', async () => {

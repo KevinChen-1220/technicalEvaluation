@@ -849,6 +849,7 @@ var INDEX_DISCOVERY_LIMIT = 64;
 var REVISION_DISCOVERY_LIMIT = 256;
 var INDEX_WRITE_RETRIES = 8;
 var DEFAULT_DRAFT_RETENTION_DAYS = 30;
+var DEFAULT_COMPLETED_RETENTION_DAYS = 365;
 var DEFAULT_CLEANUP_LIMIT = 20;
 var BlobAssessmentRepository = class {
   constructor(blob, options) {
@@ -857,7 +858,7 @@ var BlobAssessmentRepository = class {
   }
   async get(ownerKey, id) {
     const record = await this.readLatest(ownerKey, id);
-    if (record !== null && this.isExpiredDraft(record)) {
+    if (record !== null && this.isExpiredRecord(record)) {
       await this.deleteAssessment(ownerKey, id);
       return null;
     }
@@ -899,6 +900,7 @@ var BlobAssessmentRepository = class {
     }
     await this.writePointer(normalized.ownerKey, normalized.id, 1);
     await this.upsertSummary(normalized);
+    await this.pruneAssessmentRevisions(normalized.ownerKey, normalized.id, 1);
     return normalized;
   }
   async compareAndSwap(update) {
@@ -936,6 +938,7 @@ var BlobAssessmentRepository = class {
     }
     await this.writePointer(next.ownerKey, next.id, next.revision);
     await this.upsertSummary(next);
+    await this.pruneAssessmentRevisions(next.ownerKey, next.id, next.revision);
     return { type: "updated", record: next };
   }
   async readLatest(ownerKey, id) {
@@ -961,6 +964,7 @@ var BlobAssessmentRepository = class {
       };
       try {
         await this.blob.put(this.indexRevisionKey(ownerKey, next.revision), next, { onlyIfNew: true });
+        await this.pruneIndexRevisions(ownerKey, next.revision);
         return;
       } catch (error) {
         if (!(error instanceof BlobPreconditionFailedError)) throw error;
@@ -987,14 +991,28 @@ var BlobAssessmentRepository = class {
     if (complete) await this.blob.delete(`${this.baseKey(ownerKey, id)}.json`);
     return { complete, deleted: deleteKeys.length };
   }
-  isExpiredDraft(record) {
-    return record.status === "draft" && this.isExpiredAt(record.updatedAt);
+  async pruneAssessmentRevisions(ownerKey, id, currentRevision) {
+    await this.bestEffortPrune(`${this.baseKey(ownerKey, id)}/revisions/`, this.revisionKey(ownerKey, id, currentRevision));
+  }
+  async pruneIndexRevisions(ownerKey, currentRevision) {
+    await this.bestEffortPrune(`${this.indexPrefix(ownerKey)}/`, this.indexRevisionKey(ownerKey, currentRevision));
+  }
+  async bestEffortPrune(prefix, protectedKey) {
+    try {
+      const keys = (await this.blob.list(prefix, { consistency: "strong", limit: this.cleanupLimit + 1 })).blobs;
+      await Promise.all(keys.filter((key) => key !== protectedKey).slice(0, this.cleanupLimit).map(async (key) => await this.blob.delete(key)));
+    } catch {
+    }
+  }
+  isExpiredRecord(record) {
+    return this.isExpiredAt(record.status === "completed" ? record.submittedAt ?? record.updatedAt : record.updatedAt, record.status);
   }
   isExpiredSummary(summary) {
-    return summary.status === "draft" && this.isExpiredAt(summary.updatedAt);
+    return this.isExpiredAt(summary.status === "completed" ? summary.submittedAt ?? summary.updatedAt : summary.updatedAt, summary.status);
   }
-  isExpiredAt(value) {
-    const cutoff = this.options.now().getTime() - (this.options.draftRetentionDays ?? DEFAULT_DRAFT_RETENTION_DAYS) * 864e5;
+  isExpiredAt(value, status) {
+    const retentionDays = status === "completed" ? DEFAULT_COMPLETED_RETENTION_DAYS : this.options.draftRetentionDays ?? DEFAULT_DRAFT_RETENTION_DAYS;
+    const cutoff = this.options.now().getTime() - retentionDays * 864e5;
     return new Date(value).getTime() < cutoff;
   }
   get cleanupLimit() {
@@ -1244,16 +1262,15 @@ var BlobReportRepository = class {
   }
   async create(record) {
     const written = JSON.parse(JSON.stringify(record));
+    await this.cleanupExpired(written.ownerKey);
     await this.blob.put(this.key(written.ownerKey, written.id), written, { onlyIfNew: true });
     return written;
   }
   async list(ownerKey) {
-    const keys = (await this.blob.list(this.prefix(ownerKey), { consistency: "strong", limit: 200 })).blobs;
-    const records = await Promise.all(keys.map((key) => this.blob.get(key, { consistency: "strong" })));
+    const records = await this.records(ownerKey);
     const retained = [];
     let cleanups = 0;
     for (const record of records) {
-      if (record === null || record.ownerKey !== ownerKey) continue;
       if (new Date(record.createdAt).getTime() < this.cutoff()) {
         if (cleanups < this.cleanupLimit) {
           cleanups += 1;
@@ -1264,6 +1281,19 @@ var BlobReportRepository = class {
       retained.push(record);
     }
     return retained.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
+  async cleanupExpired(ownerKey) {
+    let cleanups = 0;
+    for (const record of await this.records(ownerKey)) {
+      if (new Date(record.createdAt).getTime() >= this.cutoff() || cleanups >= this.cleanupLimit) continue;
+      cleanups += 1;
+      await this.blob.delete(this.key(ownerKey, record.id));
+    }
+  }
+  async records(ownerKey) {
+    const keys = (await this.blob.list(this.prefix(ownerKey), { consistency: "strong", limit: 200 })).blobs;
+    const records = await Promise.all(keys.map((key) => this.blob.get(key, { consistency: "strong" })));
+    return records.filter((record) => record !== null && record.ownerKey === ownerKey);
   }
   cutoff() {
     return this.options.now().getTime() - (this.options.retentionDays ?? 365) * 864e5;

@@ -69,7 +69,7 @@ describe('EdgeOne production release gates', () => {
     expect(contracts.unhealthy).toBe(true);
   });
 
-  test('production deploy fails closed for missing runtime env and mismatched CLI origins', () => {
+  test('production deploy needs only deployment inputs and fails closed for mismatched CLI origins', () => {
     const temp = mkdtempSync(join(tmpdir(), 'edgeone-release-'));
     const fakeCli = join(temp, process.platform === 'win32' ? 'edgeone.cmd' : 'edgeone');
     if (process.platform === 'win32') {
@@ -88,26 +88,10 @@ describe('EdgeOne production release gates', () => {
       TARO_APP_EDGEONE_API_BASE_URL: 'https://skill.example.com',
     };
 
-    const missing = runNode('scripts/edgeone-deploy.mjs', ['--production'], baseEnv);
-    expect(missing.status).not.toBe(0);
-    expect(`${missing.stdout}${missing.stderr}`).toMatch(/runtime environment/i);
-    expect(`${missing.stdout}${missing.stderr}`).not.toContain('token-that-must-not-appear');
-
-    const mismatch = runNode('scripts/edgeone-deploy.mjs', ['--production'], {
-      ...baseEnv,
-      WECHAT_APP_ID: 'wx-runtime-appid',
-      WECHAT_APP_SECRET: 'wechat-secret-that-must-not-appear',
-      SESSION_HMAC_KEY: 'session-secret',
-      OWNER_HMAC_KEY: 'owner-secret',
-      OPENID_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString('base64'),
-      LLM_BASE_URL: 'https://llm.example.test',
-      LLM_API_KEY: 'llm-secret-that-must-not-appear',
-      LLM_MODEL: 'model',
-      GENERATION_ENABLED: 'true',
-    });
+    const mismatch = runNode('scripts/edgeone-deploy.mjs', ['--production'], baseEnv);
     expect(mismatch.status).not.toBe(0);
     expect(`${mismatch.stdout}${mismatch.stderr}`).toMatch(/deployment origin/i);
-    expect(`${mismatch.stdout}${mismatch.stderr}`).not.toMatch(/wechat-secret-that-must-not-appear|llm-secret-that-must-not-appear/);
+    expect(`${mismatch.stdout}${mismatch.stderr}`).not.toContain('token-that-must-not-appear');
     rmSync(temp, { recursive: true, force: true });
   });
 
@@ -175,7 +159,7 @@ describe('EdgeOne production release gates', () => {
     expect(verifier).toMatch(/CloudBase|CLOUDBASE/);
   });
 
-  test('keeps production configuration server-only, complete, and free-tier gated', () => {
+  test('keeps production configuration in EdgeOne and GitHub limited to deployment and upload inputs', () => {
     const environmentTemplate = readFileSync(join(repoRoot, 'docs', 'wechat', 'edgeone-env.production.example'), 'utf8');
     const workflow = readFileSync(join(repoRoot, '.github', 'workflows', 'wechat-release.yml'), 'utf8');
     const docs = [
@@ -185,9 +169,6 @@ describe('EdgeOne production release gates', () => {
     ].map((path) => readFileSync(join(repoRoot, path), 'utf8')).join('\n');
 
     for (const name of [
-      'EDGEONE_API_TOKEN',
-      'EDGEONE_PROJECT_NAME',
-      'WECHAT_APP_ID',
       'WECHAT_APP_SECRET',
       'SESSION_HMAC_KEY',
       'OWNER_HMAC_KEY',
@@ -196,17 +177,23 @@ describe('EdgeOne production release gates', () => {
       'LLM_API_KEY',
       'LLM_MODEL',
       'GENERATION_ENABLED',
-      'EDGEONE_DEPLOYMENT_VERSION',
     ]) {
       expect(environmentTemplate).toContain(`${name}=`);
+      expect(workflow).not.toContain(`secrets.${name}`);
     }
 
-    expect(environmentTemplate).toMatch(/TARO_APP_EDGEONE_API_BASE_URL/);
+    expect(environmentTemplate).not.toMatch(/EDGEONE_API_TOKEN=|TARO_APP_EDGEONE_API_BASE_URL=/);
     expect(environmentTemplate).toMatch(/GENERATION_ENABLED=false/);
     expect(workflow).toMatch(/environment:\s*\n\s+name: wechat-production/);
     expect(workflow).toMatch(/Deploy EdgeOne production/);
     expect(workflow.indexOf('Deploy EdgeOne production')).toBeLessThan(workflow.indexOf('Run formal release verification'));
     expect(workflow).not.toMatch(/cloudbase|TARO_APP_CLOUDBASE_ENV_ID/i);
+    expect(workflow).toContain('secrets.EDGEONE_API_TOKEN');
+    expect(workflow).toContain('secrets.EDGEONE_PROJECT_NAME');
+    expect(workflow).toContain('secrets.EDGEONE_DEPLOYMENT_VERSION');
+    expect(workflow).toContain('secrets.TARO_APP_EDGEONE_API_BASE_URL');
+    expect(workflow).toContain('secrets.WECHAT_APP_ID');
+    expect(workflow).toContain('secrets.WECHAT_PRIVATE_KEY_PEM');
     expect(docs).toMatch(/免费|free tier|免费额度/i);
     expect(docs).toMatch(/熔断|GENERATION_ENABLED/);
     expect(docs).toMatch(/LLM.*(?:计费|收费|cost)/i);

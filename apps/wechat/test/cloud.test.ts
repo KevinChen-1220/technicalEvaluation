@@ -51,6 +51,27 @@ describe('Mini Program EdgeOne API adapter', () => {
     await expect(client.getGenerationJob({ jobId: 'job-1' })).resolves.toEqual(completedJob());
   });
 
+  test('sends explicit retries and does not depend on an in-memory job map after restart', async () => {
+    const calls: Array<{ path: string; method: string; body?: Record<string, unknown> }> = [];
+    const firstClient = createCloudClient(async (input) => {
+      calls.push(input);
+      return { jobId: 'job-1', status: 'failed', progress: 0, retryable: true, errorCode: 'PROVIDER_ERROR' };
+    });
+    await firstClient.createGenerationJob({ topic: 'TypeScript', clientRequestId: 'request-1', retry: true });
+
+    const restartedClient = createCloudClient(async (input) => {
+      calls.push(input);
+      return completedJob();
+    });
+    await expect(restartedClient.getGenerationJob({ jobId: 'job-1' })).rejects.toMatchObject({ errorCode: 'INCOMPLETE_JOB' });
+    await restartedClient.createGenerationJob({ topic: 'TypeScript', clientRequestId: 'request-1' });
+
+    expect(calls).toEqual([
+      { path: '/api/generation', method: 'POST', body: { topic: 'TypeScript', clientRequestId: 'request-1', retry: true }, timeoutMs: 120_000 },
+      { path: '/api/generation', method: 'POST', body: { topic: 'TypeScript', clientRequestId: 'request-1' }, timeoutMs: 120_000 },
+    ]);
+  });
+
   test('rejects malformed server DTOs and preserves typed service errors', async () => {
     const malformed = createCloudClient(async () => ({ jobId: '', status: 'completed', progress: 100, retryable: false, assessmentId: 'assessment-1' }));
     await expect(malformed.createGenerationJob({ topic: 'TypeScript' })).rejects.toMatchObject({ errorCode: 'INTERNAL_ERROR' });

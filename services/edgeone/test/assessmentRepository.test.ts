@@ -8,6 +8,10 @@ function draft(id: string, ownerKey = 'owner-a', updatedAt = stamp): AssessmentR
   return { id, ownerKey, revision: 1, status: 'draft', paper: { id, topic: id, questionCount: 50, generatedAt: stamp, scoring: { maxScore: 50, levels: [{ minPercent: 0, maxPercent: 100, title: 'ok', summary: 'ok' }] }, questions: [] }, answers: {}, result: null, createdAt: stamp, updatedAt, submittedAt: null };
 }
 
+function completed(id: string, ownerKey = 'owner-a', updatedAt = stamp): AssessmentRecord {
+  return { ...draft(id, ownerKey, updatedAt), status: 'completed', result: { score: 50 }, submittedAt: updatedAt };
+}
+
 describe('assessment repository', () => {
   test('keeps records owner namespaced and caps list indexes at 200 summaries', async () => {
     const stores = createMemoryStores({ now: () => new Date('2026-08-11T00:00:00.000Z') });
@@ -38,6 +42,17 @@ describe('assessment repository', () => {
     await stores.assessments.createIfAbsent(draft('expired-b', 'owner-a', '2026-08-09T00:00:00.000Z'));
     await stores.assessments.createIfAbsent(draft('current', 'owner-a', stamp));
     await expect(stores.assessments.list('owner-a')).resolves.toEqual([expect.objectContaining({ id: 'current' })]);
+  });
+
+  test('expires completed assessments after the 365-day retention window', async () => {
+    const blob = new MemoryBlobPort();
+    const repository = new BlobAssessmentRepository(blob, {
+      now: () => new Date('2027-08-12T00:00:00.000Z'), cleanupLimit: 20,
+    });
+    await repository.createIfAbsent(completed('expired-completed', 'owner-a', '2026-08-11T00:00:00.000Z'));
+
+    await expect(repository.list('owner-a')).resolves.toEqual([]);
+    expect([...blob.records.keys()].filter((key) => key.includes('expired-completed'))).toEqual([]);
   });
 
   test('retries immutable owner-index revisions so concurrent assessments are both listed', async () => {
@@ -90,5 +105,16 @@ describe('assessment repository', () => {
     await repository.list('owner-a');
     await expect(repository.list('owner-a')).resolves.toEqual([]);
     expect([...blob.records.keys()].filter((key) => key.startsWith('assessments/owner-a/expired-many'))).toHaveLength(0);
+  });
+
+  test('prunes obsolete immutable assessment and index revisions after a successful CAS write', async () => {
+    const blob = new MemoryBlobPort();
+    const repository = new BlobAssessmentRepository(blob, { now: () => new Date(stamp), cleanupLimit: 20 });
+    await repository.createIfAbsent(draft('pruned'));
+    await repository.compareAndSwap({ ownerKey: 'owner-a', id: 'pruned', expectedRevision: 1, answers: { q1: ['a'] }, updatedAt: stamp });
+
+    expect([...blob.records.keys()].filter((key) => key.includes('/pruned/revisions/'))).toHaveLength(1);
+    expect([...blob.records.keys()].filter((key) => key.includes('/index-revisions/'))).toHaveLength(1);
+    await expect(repository.get('owner-a', 'pruned')).resolves.toMatchObject({ revision: 2, answers: { q1: ['a'] } });
   });
 });

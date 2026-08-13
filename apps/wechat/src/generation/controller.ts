@@ -35,6 +35,7 @@ export class GenerationController {
   private state: GenerationState = { status: 'idle', progress: 0 };
   private active = false;
   private runId = 0;
+  private retryRequiresNewAttempt = false;
 
   private readonly maxPollingDurationMs: number;
   private readonly now: () => number;
@@ -67,13 +68,21 @@ export class GenerationController {
     const persisted = this.intentStore.load();
     if (persisted === undefined || !sameInput(persisted.input, input)) return this.start(input);
     if (persisted.jobId === undefined) return this.createAndPoll(persisted);
+    if (this.state.status === 'failed' && this.state.retryable && this.retryRequiresNewAttempt) {
+      return this.createAndPoll(persisted, true);
+    }
 
     this.active = true;
+    this.retryRequiresNewAttempt = false;
     const currentRun = this.runId += 1;
     this.setState({ status: 'polling', progress: this.state.progress, jobId: persisted.jobId });
     try {
       await this.poll(persisted.jobId, currentRun);
     } catch (error) {
+      if (this.isCurrent(currentRun) && errorCode(error) === 'INCOMPLETE_JOB') {
+        this.active = false;
+        return this.createAndPoll(persisted);
+      }
       if (this.isCurrent(currentRun)) this.fail(error);
     } finally {
       if (this.runId === currentRun) this.active = false;
@@ -87,13 +96,15 @@ export class GenerationController {
     return this.retry(persisted.input);
   }
 
-  private async createAndPoll(intent: GenerationIntent): Promise<boolean> {
+  private async createAndPoll(intent: GenerationIntent, retry = false): Promise<boolean> {
     this.active = true;
     const currentRun = this.runId += 1;
     this.setState({ status: 'creating', progress: 0 });
 
     try {
-      const job = await this.dependencies.createJob({ ...intent.input, clientRequestId: intent.clientRequestId });
+      const job = await this.dependencies.createJob({
+        ...intent.input, clientRequestId: intent.clientRequestId, ...(retry ? { retry: true } : {}),
+      });
       if (!this.isCurrent(currentRun)) return true;
       this.intentStore.save({ ...intent, jobId: job.jobId });
       this.setState({ status: 'polling', progress: 0, jobId: job.jobId });
@@ -124,6 +135,7 @@ export class GenerationController {
       const job = await this.dependencies.getJob(jobId);
       if (!this.isCurrent(runId)) return;
       if (job.status === 'failed') {
+        this.retryRequiresNewAttempt = job.retryable;
         this.setState({
           status: 'failed', jobId, progress: job.progress,
           error: localizeError(job.errorCode), retryable: job.retryable,
@@ -171,6 +183,7 @@ export class GenerationController {
   }
 
   private fail(error: unknown): void {
+    this.retryRequiresNewAttempt = false;
     this.setState({
       status: 'failed',
       progress: this.state.progress,
@@ -210,16 +223,21 @@ function memoryIntentStore(): GenerationIntentStore {
 }
 
 function localizeError(error: unknown): string {
-  const code = typeof error === 'string'
-    ? error
-    : typeof error === 'object' && error !== null && 'errorCode' in error
-      ? String(error.errorCode)
-      : '';
-  if (code === 'QUOTA_EXCEEDED') return '今日生成次数已用完，请明天再试。';
+  const code = errorCode(error);
+  if (code === 'QUOTA_EXCEEDED' || code === 'FREE_TIER_LIMIT') return '免费生成额度已用完，请稍后再试。';
+  if (code === 'GENERATION_DISABLED') return '生成服务暂时关闭，请稍后再试。';
   if (code === 'INVALID_REQUEST') return '生成参数无效，请检查后重试。';
   if (code === 'PROVIDER_ERROR') return '生成服务暂时不可用，请稍后重试。';
   if (code === 'INVALID_MODEL_RESPONSE') return '生成内容校验失败，请重新生成。';
   if (code === 'INCOMPLETE_JOB') return '生成结果不完整，请重新生成。';
   if (code === 'POLLING_TIMEOUT' || code === 'REQUEST_TIMEOUT') return '生成等待超时，请重新生成。';
   return '网络连接异常，请稍后重试。';
+}
+
+function errorCode(error: unknown): string {
+  return typeof error === 'string'
+    ? error
+    : typeof error === 'object' && error !== null && 'errorCode' in error
+      ? String(error.errorCode)
+      : '';
 }
