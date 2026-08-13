@@ -594,6 +594,84 @@ describe('EdgeOne production release gates', () => {
     rmSync(temp, { recursive: true, force: true });
   });
 
+  test('blocks go-live status when the GitHub environment still has CloudBase secrets', () => {
+    const temp = mkdtempSync(join(tmpdir(), 'wechat-status-cloudbase-'));
+    const fakeGh = join(temp, process.platform === 'win32' ? 'gh.cmd' : 'gh');
+    const names = [
+      'EDGEONE_API_TOKEN',
+      'EDGEONE_DEPLOYMENT_VERSION',
+      'EDGEONE_PROJECT_NAME',
+      'TARO_APP_EDGEONE_API_BASE_URL',
+      'TARO_APP_CLOUDBASE_ENV_ID',
+      'WECHAT_APP_ID',
+      'WECHAT_PRIVATE_KEY_PEM',
+    ].map((name) => ({ name }));
+    if (process.platform === 'win32') {
+      writeFileSync(fakeGh, `@echo off\r\necho ${JSON.stringify(names)}\r\nexit /b 0\r\n`);
+    } else {
+      writeFileSync(fakeGh, `#!/bin/sh\necho '${JSON.stringify(names)}'\nexit 0\n`);
+      chmodSync(fakeGh, 0o700);
+    }
+
+    const result = runNode('scripts/wechat-go-live-status.mjs', [
+      '--app-id',
+      'wx31dd3d7448aac8e3',
+      '--api-base-url',
+      'https://api.skillscope.cn',
+      '--dns-result',
+      '93.184.216.34',
+      '--skip-health',
+      '--json',
+    ], {
+      ...process.env,
+      GH_CLI_BIN: fakeGh,
+    });
+
+    expect(result.status).toBe(0);
+    const report = JSON.parse(result.stdout);
+    expect(report.ready).toBe(false);
+    expect(report.githubEnvironment.forbiddenSecrets).toEqual(['TARO_APP_CLOUDBASE_ENV_ID']);
+    expect(report.nextActions).toContain('Remove TARO_APP_CLOUDBASE_ENV_ID from GitHub environment wechat-production before formal EdgeOne release.');
+    rmSync(temp, { recursive: true, force: true });
+  });
+
+  test('rejects go-live readiness when the GitHub environment still has CloudBase secrets', () => {
+    const temp = mkdtempSync(join(tmpdir(), 'wechat-golive-cloudbase-'));
+    const fakeGh = join(temp, process.platform === 'win32' ? 'gh.cmd' : 'gh');
+    const names = [
+      'EDGEONE_API_TOKEN',
+      'EDGEONE_DEPLOYMENT_VERSION',
+      'EDGEONE_PROJECT_NAME',
+      'TARO_APP_EDGEONE_API_BASE_URL',
+      'TARO_APP_CLOUDBASE_ENV_ID',
+      'WECHAT_APP_ID',
+      'WECHAT_PRIVATE_KEY_PEM',
+    ].map((name) => ({ name }));
+    if (process.platform === 'win32') {
+      writeFileSync(fakeGh, `@echo off\r\necho ${JSON.stringify(names)}\r\nexit /b 0\r\n`);
+    } else {
+      writeFileSync(fakeGh, `#!/bin/sh\necho '${JSON.stringify(names)}'\nexit 0\n`);
+      chmodSync(fakeGh, 0o700);
+    }
+
+    const result = runNode('scripts/verify-wechat-go-live.mjs', [
+      '--app-id',
+      'wx31dd3d7448aac8e3',
+      '--api-base-url',
+      'https://api.skillscope.cn',
+      '--dns-result',
+      '93.184.216.34',
+      '--skip-health',
+    ], {
+      ...process.env,
+      GH_CLI_BIN: fakeGh,
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(`${result.stdout}${result.stderr}`).toContain('TARO_APP_CLOUDBASE_ENV_ID is forbidden');
+    rmSync(temp, { recursive: true, force: true });
+  });
+
   test('shares WeChat domain readiness checks across status, go-live, and candidate scripts', () => {
     const shared = readFileSync(join(repoRoot, 'scripts', 'wechat-domain-readiness.mjs'), 'utf8');
     const status = readFileSync(join(repoRoot, 'scripts', 'wechat-go-live-status.mjs'), 'utf8');

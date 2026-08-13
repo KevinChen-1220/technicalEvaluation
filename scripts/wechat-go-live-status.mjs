@@ -15,6 +15,9 @@ const requiredGithubSecrets = [
   'WECHAT_APP_ID',
   'WECHAT_PRIVATE_KEY_PEM',
 ];
+const forbiddenGithubSecrets = [
+  'TARO_APP_CLOUDBASE_ENV_ID',
+];
 
 const githubEnvironment = readGithubEnvironmentSecretNames(githubEnvironmentName);
 const productionDisclosure = inspectProductionDisclosure(disclosureFile);
@@ -26,6 +29,9 @@ const nextActions = [];
 
 if (githubEnvironment.missingSecrets.length > 0) {
   nextActions.push(`Configure ${githubEnvironment.missingSecrets.join(' and ')} in GitHub environment ${githubEnvironmentName}.`);
+}
+for (const secret of githubEnvironment.forbiddenSecrets) {
+  nextActions.push(`Remove ${secret} from GitHub environment ${githubEnvironmentName} before formal EdgeOne release.`);
 }
 if (!productionDisclosure.ready) {
   nextActions.push(`Create ${disclosureFile} with real non-placeholder production disclosure.`);
@@ -39,6 +45,7 @@ const nextCommands = buildNextCommands({ apiBaseUrl, appId: args.appId ?? proces
 
 const report = {
   ready: githubEnvironment.missingSecrets.length === 0
+    && githubEnvironment.forbiddenSecrets.length === 0
     && productionDisclosure.ready
     && apiOrigin.productionOrigin
     && domainCandidate.ready
@@ -72,6 +79,7 @@ function readGithubEnvironmentSecretNames(name) {
       readable: false,
       presentSecrets: [],
       missingSecrets: requiredGithubSecrets,
+      forbiddenSecrets: [],
     };
   }
   try {
@@ -85,6 +93,7 @@ function readGithubEnvironmentSecretNames(name) {
       readable: true,
       presentSecrets,
       missingSecrets: requiredGithubSecrets.filter((secret) => !present.has(secret)),
+      forbiddenSecrets: forbiddenGithubSecrets.filter((secret) => present.has(secret)),
     };
   } catch {
     return {
@@ -92,6 +101,7 @@ function readGithubEnvironmentSecretNames(name) {
       readable: false,
       presentSecrets: [],
       missingSecrets: requiredGithubSecrets,
+      forbiddenSecrets: [],
     };
   }
 }

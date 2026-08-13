@@ -17,6 +17,9 @@ const requiredGithubSecrets = [
   'WECHAT_APP_ID',
   'WECHAT_PRIVATE_KEY_PEM',
 ];
+const forbiddenGithubSecrets = [
+  'TARO_APP_CLOUDBASE_ENV_ID',
+];
 
 const requiredProtectedEnvironmentVariables = [
   'EDGEONE_DEPLOYMENT_VERSION',
@@ -37,12 +40,18 @@ if (args.fromEnv) {
   for (const name of requiredProtectedEnvironmentVariables) {
     if (!hasUsableValue(environment[name])) findings.push(`protected upload environment is missing ${name}`);
   }
+  for (const name of forbiddenGithubSecrets) {
+    if (hasUsableValue(environment[name])) findings.push(`${name} is forbidden for formal EdgeOne release`);
+  }
 } else {
   const githubSecrets = readGithubEnvironmentSecretNames(githubEnvironment);
   if (githubSecrets.ok) {
     const names = new Set(githubSecrets.names);
     for (const name of requiredGithubSecrets) {
       if (!names.has(name)) findings.push(`GitHub environment ${githubEnvironment} is missing ${name}`);
+    }
+    for (const name of forbiddenGithubSecrets) {
+      if (names.has(name)) findings.push(`${name} is forbidden in GitHub environment ${githubEnvironment} for formal EdgeOne release`);
     }
   } else {
     findings.push(githubSecrets.message);
