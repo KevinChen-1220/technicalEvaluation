@@ -188,6 +188,29 @@ describe('GenerationController', () => {
     expect(controller.getState().status).toBe('completed');
   });
 
+  test('uses an explicit retry when a retryable generation POST fails before returning a job id', async () => {
+    const createJob = jest.fn()
+      .mockRejectedValueOnce(Object.assign(new Error('provider unavailable'), { errorCode: 'PROVIDER_ERROR', retryable: true }))
+      .mockResolvedValueOnce({ jobId: 'job-1', status: 'queued' });
+    const intentStore = memoryIntentStore();
+    const controller = new GenerationController({
+      createJob,
+      getJob: async () => ({ jobId: 'job-1', status: 'completed', progress: 100, retryable: false, assessmentId: 'assessment-1' }),
+      getAssessment: async () => assessment,
+      cacheAssessment: () => undefined,
+      navigate: async () => undefined,
+      sleep: async () => undefined,
+    }, { intentStore, createRequestId: () => 'request-1' } as never);
+
+    await controller.start(request);
+    await controller.retry(request);
+
+    expect(createJob.mock.calls.map((call) => call[0])).toEqual([
+      { topic: 'TypeScript', notes: 'Generics', clientRequestId: 'request-1' },
+      { topic: 'TypeScript', notes: 'Generics', clientRequestId: 'request-1', retry: true },
+    ]);
+  });
+
   test('re-posts a persisted idempotent request when a restarted client cannot poll its old in-memory job', async () => {
     const intentStore = memoryIntentStore();
     intentStore.save({ clientRequestId: 'request-1', input: request, jobId: 'job-1' });

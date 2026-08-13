@@ -8,6 +8,7 @@ const INDEX_WRITE_RETRIES = 8;
 const DEFAULT_DRAFT_RETENTION_DAYS = 30;
 const DEFAULT_COMPLETED_RETENTION_DAYS = 365;
 const DEFAULT_CLEANUP_LIMIT = 20;
+const REVISION_RECOVERY_KEEP_COUNT = 2;
 
 export type AssessmentRecord = {
   id: string;
@@ -218,18 +219,23 @@ export class BlobAssessmentRepository implements AssessmentRepository {
     return { complete, deleted: deleteKeys.length };
   }
 
-  private async pruneAssessmentRevisions(ownerKey: string, id: string, currentRevision: number): Promise<void> {
-    await this.bestEffortPrune(`${this.baseKey(ownerKey, id)}/revisions/`, this.revisionKey(ownerKey, id, currentRevision));
+  private async pruneAssessmentRevisions(ownerKey: string, id: string, _currentRevision: number): Promise<void> {
+    await this.bestEffortPrune(`${this.baseKey(ownerKey, id)}/revisions/`, assessmentRevisionFromKey);
   }
 
-  private async pruneIndexRevisions(ownerKey: string, currentRevision: number): Promise<void> {
-    await this.bestEffortPrune(`${this.indexPrefix(ownerKey)}/`, this.indexRevisionKey(ownerKey, currentRevision));
+  private async pruneIndexRevisions(ownerKey: string, _currentRevision: number): Promise<void> {
+    await this.bestEffortPrune(`${this.indexPrefix(ownerKey)}/`, indexRevisionFromKey);
   }
 
-  private async bestEffortPrune(prefix: string, protectedKey: string): Promise<void> {
+  private async bestEffortPrune(prefix: string, revisionFromKey: (key: string) => number | null): Promise<void> {
     try {
       const keys = (await this.blob.list(prefix, { consistency: 'strong', limit: this.cleanupLimit + 1 })).blobs;
-      await Promise.all(keys.filter((key) => key !== protectedKey).slice(0, this.cleanupLimit).map(async (key) => await this.blob.delete(key)));
+      const revisions = keys.map((key) => ({ key, revision: revisionFromKey(key) }))
+        .filter((entry): entry is { key: string; revision: number } => entry.revision !== null);
+      const latestRevision = Math.max(...revisions.map((entry) => entry.revision));
+      const oldestRetained = latestRevision - REVISION_RECOVERY_KEEP_COUNT + 1;
+      await Promise.all(revisions.filter((entry) => entry.revision < oldestRetained).slice(0, this.cleanupLimit)
+        .map(async ({ key }) => await this.blob.delete(key)));
     } catch {
       // Immutable cleanup cannot invalidate the current revision and is retried by later writes.
     }
@@ -273,3 +279,13 @@ function isSummary(value: unknown): value is AssessmentSummary { return typeof v
 function conflict(): AssessmentWriteResult { return { type: 'conflict', code: 'REVISION_CONFLICT' }; }
 function part(value: string): string { return encodeURIComponent(value); }
 function clone<T>(value: T): T { return JSON.parse(JSON.stringify(value)) as T; }
+function assessmentRevisionFromKey(key: string): number | null {
+  const inverse = Number(/\/revisions\/(\d{12})\.json$/.exec(key)?.[1]);
+  const revision = 999_999_999_999 - inverse;
+  return Number.isInteger(revision) && revision > 0 ? revision : null;
+}
+function indexRevisionFromKey(key: string): number | null {
+  const inverse = Number(/\/index-revisions\/(\d{12})\.json$/.exec(key)?.[1]);
+  const revision = 999_999_999_999 - inverse;
+  return Number.isInteger(revision) && revision > 0 ? revision : null;
+}

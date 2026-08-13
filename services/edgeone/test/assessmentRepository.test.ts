@@ -113,8 +113,83 @@ describe('assessment repository', () => {
     await repository.createIfAbsent(draft('pruned'));
     await repository.compareAndSwap({ ownerKey: 'owner-a', id: 'pruned', expectedRevision: 1, answers: { q1: ['a'] }, updatedAt: stamp });
 
-    expect([...blob.records.keys()].filter((key) => key.includes('/pruned/revisions/'))).toHaveLength(1);
-    expect([...blob.records.keys()].filter((key) => key.includes('/index-revisions/'))).toHaveLength(1);
+    expect([...blob.records.keys()].filter((key) => key.includes('/pruned/revisions/'))).toHaveLength(2);
+    expect([...blob.records.keys()].filter((key) => key.includes('/index-revisions/'))).toHaveLength(2);
     await expect(repository.get('owner-a', 'pruned')).resolves.toMatchObject({ revision: 2, answers: { q1: ['a'] } });
   });
+
+  test('does not let a delayed assessment cleanup delete a later committed revision', async () => {
+    const backing = new MemoryBlobPort();
+    const revisionPrefix = 'assessments/owner-a/race/revisions/';
+    const revisionTwoKey = `${revisionPrefix}${String(999_999_999_999 - 2).padStart(12, '0')}.json`;
+    const paused = deferred();
+    const release = deferred();
+    let pauseNextRevisionList = false;
+    const blob: BlobPort = {
+      get: backing.get.bind(backing), delete: backing.delete.bind(backing),
+      put: async (key, value, options) => {
+        await backing.put(key, value, options);
+        if (key === revisionTwoKey) pauseNextRevisionList = true;
+      },
+      list: async (prefix, options) => {
+        if (prefix === revisionPrefix && pauseNextRevisionList) {
+          pauseNextRevisionList = false;
+          paused.resolve();
+          await release.promise;
+        }
+        return await backing.list(prefix, options);
+      },
+    };
+    const repository = new BlobAssessmentRepository(blob, { now: () => new Date(stamp), cleanupLimit: 20 });
+    await repository.createIfAbsent(draft('race'));
+
+    const delayed = repository.compareAndSwap({ ownerKey: 'owner-a', id: 'race', expectedRevision: 1, answers: { q1: ['a'] }, updatedAt: stamp });
+    await paused.promise;
+    await expect(repository.compareAndSwap({ ownerKey: 'owner-a', id: 'race', expectedRevision: 2, answers: { q1: ['b'] }, updatedAt: stamp }))
+      .resolves.toMatchObject({ type: 'updated', record: { revision: 3 } });
+    release.resolve();
+    await delayed;
+
+    await expect(repository.get('owner-a', 'race')).resolves.toMatchObject({ revision: 3, answers: { q1: ['b'] } });
+  });
+
+  test('does not let a delayed index cleanup delete a later committed index revision', async () => {
+    const backing = new MemoryBlobPort();
+    const indexPrefix = 'assessments/owner-a/index-revisions/';
+    const indexRevisionTwoKey = `${indexPrefix}${String(999_999_999_999 - 2).padStart(12, '0')}.json`;
+    const paused = deferred();
+    const release = deferred();
+    let pauseNextIndexList = false;
+    const blob: BlobPort = {
+      get: backing.get.bind(backing), delete: backing.delete.bind(backing),
+      put: async (key, value, options) => {
+        await backing.put(key, value, options);
+        if (key === indexRevisionTwoKey) pauseNextIndexList = true;
+      },
+      list: async (prefix, options) => {
+        if (prefix === indexPrefix && pauseNextIndexList) {
+          pauseNextIndexList = false;
+          paused.resolve();
+          await release.promise;
+        }
+        return await backing.list(prefix, options);
+      },
+    };
+    const repository = new BlobAssessmentRepository(blob, { now: () => new Date(stamp), cleanupLimit: 20 });
+    await repository.createIfAbsent(draft('index-race'));
+
+    const delayed = repository.compareAndSwap({ ownerKey: 'owner-a', id: 'index-race', expectedRevision: 1, answers: { q1: ['a'] }, updatedAt: stamp });
+    await paused.promise;
+    await expect(repository.compareAndSwap({ ownerKey: 'owner-a', id: 'index-race', expectedRevision: 2, answers: { q1: ['b'] }, updatedAt: stamp }))
+      .resolves.toMatchObject({ type: 'updated', record: { revision: 3 } });
+    release.resolve();
+    await delayed;
+
+    await expect(repository.list('owner-a')).resolves.toEqual([expect.objectContaining({ id: 'index-race', revision: 3 })]);
+  });
 });
+
+function deferred() {
+  let resolve!: () => void;
+  return { promise: new Promise<void>((next) => { resolve = next; }), resolve };
+}

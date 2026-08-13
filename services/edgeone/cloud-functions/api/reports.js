@@ -851,6 +851,7 @@ var INDEX_WRITE_RETRIES = 8;
 var DEFAULT_DRAFT_RETENTION_DAYS = 30;
 var DEFAULT_COMPLETED_RETENTION_DAYS = 365;
 var DEFAULT_CLEANUP_LIMIT = 20;
+var REVISION_RECOVERY_KEEP_COUNT = 2;
 var BlobAssessmentRepository = class {
   constructor(blob, options) {
     this.blob = blob;
@@ -991,16 +992,19 @@ var BlobAssessmentRepository = class {
     if (complete) await this.blob.delete(`${this.baseKey(ownerKey, id)}.json`);
     return { complete, deleted: deleteKeys.length };
   }
-  async pruneAssessmentRevisions(ownerKey, id, currentRevision) {
-    await this.bestEffortPrune(`${this.baseKey(ownerKey, id)}/revisions/`, this.revisionKey(ownerKey, id, currentRevision));
+  async pruneAssessmentRevisions(ownerKey, id, _currentRevision) {
+    await this.bestEffortPrune(`${this.baseKey(ownerKey, id)}/revisions/`, assessmentRevisionFromKey);
   }
-  async pruneIndexRevisions(ownerKey, currentRevision) {
-    await this.bestEffortPrune(`${this.indexPrefix(ownerKey)}/`, this.indexRevisionKey(ownerKey, currentRevision));
+  async pruneIndexRevisions(ownerKey, _currentRevision) {
+    await this.bestEffortPrune(`${this.indexPrefix(ownerKey)}/`, indexRevisionFromKey);
   }
-  async bestEffortPrune(prefix, protectedKey) {
+  async bestEffortPrune(prefix, revisionFromKey) {
     try {
       const keys = (await this.blob.list(prefix, { consistency: "strong", limit: this.cleanupLimit + 1 })).blobs;
-      await Promise.all(keys.filter((key) => key !== protectedKey).slice(0, this.cleanupLimit).map(async (key) => await this.blob.delete(key)));
+      const revisions = keys.map((key) => ({ key, revision: revisionFromKey(key) })).filter((entry) => entry.revision !== null);
+      const latestRevision2 = Math.max(...revisions.map((entry) => entry.revision));
+      const oldestRetained = latestRevision2 - REVISION_RECOVERY_KEEP_COUNT + 1;
+      await Promise.all(revisions.filter((entry) => entry.revision < oldestRetained).slice(0, this.cleanupLimit).map(async ({ key }) => await this.blob.delete(key)));
     } catch {
     }
   }
@@ -1051,6 +1055,16 @@ function part(value) {
 }
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
+}
+function assessmentRevisionFromKey(key) {
+  const inverse = Number(/\/revisions\/(\d{12})\.json$/.exec(key)?.[1]);
+  const revision = 999999999999 - inverse;
+  return Number.isInteger(revision) && revision > 0 ? revision : null;
+}
+function indexRevisionFromKey(key) {
+  const inverse = Number(/\/index-revisions\/(\d{12})\.json$/.exec(key)?.[1]);
+  const revision = 999999999999 - inverse;
+  return Number.isInteger(revision) && revision > 0 ? revision : null;
 }
 
 // src/storage/quotaRepository.ts
@@ -1263,35 +1277,50 @@ var BlobReportRepository = class {
   async create(record) {
     const written = JSON.parse(JSON.stringify(record));
     await this.cleanupExpired(written.ownerKey);
-    await this.blob.put(this.key(written.ownerKey, written.id), written, { onlyIfNew: true });
+    await this.blob.put(this.recordKey(written.ownerKey, written.id), written, { onlyIfNew: true });
+    await this.blob.put(this.indexKey(written.ownerKey, written.createdAt, written.id), {
+      id: written.id,
+      createdAt: written.createdAt
+    }, { onlyIfNew: true });
     return written;
   }
   async list(ownerKey) {
+    await this.cleanupExpired(ownerKey);
     const records = await this.records(ownerKey);
-    const retained = [];
-    let cleanups = 0;
-    for (const record of records) {
-      if (new Date(record.createdAt).getTime() < this.cutoff()) {
-        if (cleanups < this.cleanupLimit) {
-          cleanups += 1;
-          await this.blob.delete(this.key(ownerKey, record.id));
-        }
-        continue;
-      }
-      retained.push(record);
-    }
-    return retained.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return records.filter((record) => new Date(record.createdAt).getTime() >= this.cutoff()).sort((left, right) => right.createdAt.localeCompare(left.createdAt));
   }
   async cleanupExpired(ownerKey) {
-    let cleanups = 0;
-    for (const record of await this.records(ownerKey)) {
-      if (new Date(record.createdAt).getTime() >= this.cutoff() || cleanups >= this.cleanupLimit) continue;
-      cleanups += 1;
-      await this.blob.delete(this.key(ownerKey, record.id));
+    let remaining = this.cleanupLimit;
+    const entries = (await this.blob.list(this.indexPrefix(ownerKey), { consistency: "strong", limit: remaining })).blobs;
+    for (const key of entries) {
+      const entry = await this.blob.get(key, { consistency: "strong" });
+      if (entry === null || typeof entry.id !== "string" || typeof entry.createdAt !== "string") {
+        await this.blob.delete(key);
+        continue;
+      }
+      if (new Date(entry.createdAt).getTime() >= this.cutoff()) break;
+      await this.blob.delete(this.recordKey(ownerKey, entry.id));
+      await this.blob.delete(key);
+      remaining -= 1;
+      if (remaining === 0) return;
+    }
+    for (const record of await this.legacyRecords(ownerKey)) {
+      if (remaining === 0) return;
+      if (new Date(record.createdAt).getTime() >= this.cutoff()) continue;
+      await this.blob.delete(this.legacyKey(ownerKey, record.id));
+      remaining -= 1;
     }
   }
   async records(ownerKey) {
-    const keys = (await this.blob.list(this.prefix(ownerKey), { consistency: "strong", limit: 200 })).blobs;
+    const keys = (await this.blob.list(this.recordsPrefix(ownerKey), { consistency: "strong", limit: 200 })).blobs;
+    const records = await Promise.all(keys.map((key) => this.blob.get(key, { consistency: "strong" })));
+    return [
+      ...records.filter((record) => record !== null && record.ownerKey === ownerKey),
+      ...await this.legacyRecords(ownerKey)
+    ];
+  }
+  async legacyRecords(ownerKey) {
+    const keys = (await this.blob.list(this.prefix(ownerKey), { consistency: "strong", directories: true })).blobs;
     const records = await Promise.all(keys.map((key) => this.blob.get(key, { consistency: "strong" })));
     return records.filter((record) => record !== null && record.ownerKey === ownerKey);
   }
@@ -1304,8 +1333,20 @@ var BlobReportRepository = class {
   prefix(ownerKey) {
     return `reports/${encodeURIComponent(ownerKey)}/`;
   }
-  key(ownerKey, id) {
+  recordsPrefix(ownerKey) {
+    return `${this.prefix(ownerKey)}records/`;
+  }
+  indexPrefix(ownerKey) {
+    return `${this.prefix(ownerKey)}index/`;
+  }
+  recordKey(ownerKey, id) {
+    return `${this.recordsPrefix(ownerKey)}${encodeURIComponent(id)}.json`;
+  }
+  legacyKey(ownerKey, id) {
     return `${this.prefix(ownerKey)}${encodeURIComponent(id)}.json`;
+  }
+  indexKey(ownerKey, createdAt, id) {
+    return `${this.indexPrefix(ownerKey)}${encodeURIComponent(createdAt)}/${encodeURIComponent(id)}.json`;
   }
 };
 

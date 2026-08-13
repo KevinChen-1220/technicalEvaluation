@@ -39,7 +39,30 @@ describe('settings and reports', () => {
     });
     await reports.create({ id: 'new', ownerKey: 'owner-a', reason: 'other', createdAt: '2027-08-12T00:00:00.000Z', updatedAt: '2027-08-12T00:00:00.000Z' });
 
-    expect([...blob.records.keys()]).toEqual(['reports/owner-a/new.json']);
+    expect([...blob.records.keys()]).toEqual([
+      'reports/owner-a/records/new.json',
+      'reports/owner-a/index/2027-08-12T00%3A00%3A00.000Z/new.json',
+    ]);
+  });
+
+  test('discovers and cleans a legacy expired report beyond 200 lexically earlier retained reports', async () => {
+    const blob = new MemoryBlobPort();
+    const reports = new BlobReportRepository(blob, {
+      now: () => new Date('2026-08-12T00:00:00.000Z'), retentionDays: 1, cleanupLimit: 20,
+    });
+    for (let index = 0; index < 201; index += 1) {
+      const id = `a-current-${String(index).padStart(3, '0')}`;
+      await blob.put(`reports/owner-a/${id}.json`, {
+        id, ownerKey: 'owner-a', reason: 'other', createdAt: '2026-08-11T00:00:00.000Z', updatedAt: '2026-08-11T00:00:00.000Z',
+      });
+    }
+    await blob.put('reports/owner-a/z-expired.json', {
+      id: 'z-expired', ownerKey: 'owner-a', reason: 'other', createdAt: '2026-08-10T00:00:00.000Z', updatedAt: '2026-08-10T00:00:00.000Z',
+    });
+
+    await reports.create({ id: 'new', ownerKey: 'owner-a', reason: 'other', createdAt: '2026-08-12T00:00:00.000Z', updatedAt: '2026-08-12T00:00:00.000Z' });
+
+    await expect(blob.get('reports/owner-a/z-expired.json')).resolves.toBeNull();
   });
 
   test('uses strong and bounded report discovery', async () => {
@@ -48,6 +71,8 @@ describe('settings and reports', () => {
     const reports = new BlobReportRepository(blob, { now: () => new Date('2026-08-11T00:00:00.000Z') });
     await reports.create({ id: 'r1', ownerKey: 'owner-a', reason: 'other', createdAt: '2026-08-11T00:00:00.000Z', updatedAt: '2026-08-11T00:00:00.000Z' });
     await expect(reports.list('owner-a')).resolves.toHaveLength(1);
-    expect(list).toHaveBeenCalledWith('reports/owner-a/', { consistency: 'strong', limit: 200 });
+    expect(list).toHaveBeenCalledWith('reports/owner-a/index/', { consistency: 'strong', limit: 20 });
+    expect(list).toHaveBeenCalledWith('reports/owner-a/records/', { consistency: 'strong', limit: 200 });
+    expect(list).toHaveBeenCalledWith('reports/owner-a/', { consistency: 'strong', directories: true });
   });
 });

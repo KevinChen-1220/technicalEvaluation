@@ -67,7 +67,7 @@ export class GenerationController {
     if (this.active) return false;
     const persisted = this.intentStore.load();
     if (persisted === undefined || !sameInput(persisted.input, input)) return this.start(input);
-    if (persisted.jobId === undefined) return this.createAndPoll(persisted);
+    if (persisted.jobId === undefined) return this.createAndPoll(persisted, this.retryRequiresNewAttempt);
     if (this.state.status === 'failed' && this.state.retryable && this.retryRequiresNewAttempt) {
       return this.createAndPoll(persisted, true);
     }
@@ -110,7 +110,7 @@ export class GenerationController {
       this.setState({ status: 'polling', progress: 0, jobId: job.jobId });
       await this.poll(job.jobId, currentRun);
     } catch (error) {
-      if (this.isCurrent(currentRun)) this.fail(error);
+      if (this.isCurrent(currentRun)) this.fail(error, isExplicitlyRetryable(error));
     } finally {
       if (this.runId === currentRun) this.active = false;
     }
@@ -182,8 +182,8 @@ export class GenerationController {
     this.dependencies.onChange?.(state);
   }
 
-  private fail(error: unknown): void {
-    this.retryRequiresNewAttempt = false;
+  private fail(error: unknown, retryRequiresNewAttempt = false): void {
+    this.retryRequiresNewAttempt = retryRequiresNewAttempt;
     this.setState({
       status: 'failed',
       progress: this.state.progress,
@@ -240,4 +240,9 @@ function errorCode(error: unknown): string {
     : typeof error === 'object' && error !== null && 'errorCode' in error
       ? String(error.errorCode)
       : '';
+}
+
+function isExplicitlyRetryable(error: unknown): boolean {
+  return typeof error === 'object' && error !== null && 'retryable' in error
+    && (error as { retryable?: unknown }).retryable === true;
 }

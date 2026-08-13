@@ -109,3 +109,60 @@ npm run build:edgeone
 Output: all commands exited 0.
 
 The fix wave verifies explicit generation retries, idempotent restart recovery, free-tier error localization, bounded assessment/report cleanup, immutable revision pruning, the Blob-backed circuit breaker, and the EdgeOne-only server-runtime secret boundary.
+
+## Round 2 RED Evidence
+
+Command:
+
+```sh
+npm run test:wechat -- --runInBand apps/wechat/test/generationController.test.ts
+```
+
+Output: exit 1. After a `createJob` error marked `retryable: true`, the first Retry call omitted `retry: true`.
+
+Command:
+
+```sh
+npm run test:edgeone -- --runInBand services/edgeone/test/assessmentRepository.test.ts
+```
+
+Output: exit 1. A delayed revision-2 cleanup made the real repository return no latest assessment after revision 3 committed; the matching delayed index cleanup lost the revision-3 index summary.
+
+Command:
+
+```sh
+npm run test:edgeone -- --runInBand services/edgeone/test/settingsAndReports.test.ts
+```
+
+Output: exit 1. An expired legacy report sorted after 201 retained report keys remained present after report creation cleanup.
+
+## Round 2 GREEN Evidence
+
+Command:
+
+```sh
+npm run test:wechat -- --runInBand apps/wechat/test/generationController.test.ts
+```
+
+Output: exit 0. `1` suite passed; `16` tests passed.
+
+Command:
+
+```sh
+npm run test:edgeone -- --runInBand services/edgeone/test/assessmentRepository.test.ts
+npm run test:edgeone -- --runInBand services/edgeone/test/settingsAndReports.test.ts
+```
+
+Output: both commands exited 0. `18` suites passed; `147` tests passed.
+
+## Round 2 Final Verification
+
+Command:
+
+```sh
+npm run test:wechat -- --runInBand
+npm run test:edgeone -- --runInBand
+npm run build:edgeone
+```
+
+Output: all commands exited 0. WeChat: `16` suites and `86` tests passed. EdgeOne: `18` suites and `147` tests passed. The EdgeOne cloud-function artifacts were regenerated from the tested sources.
