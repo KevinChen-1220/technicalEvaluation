@@ -1,4 +1,3 @@
-"use strict";
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -7,10 +6,6 @@ var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __commonJS = (cb, mod) => function __require() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
-};
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
 };
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
@@ -28,11 +23,10 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
-var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // ../../node_modules/@edgeone/pages-blob/dist/index.js
 var require_dist = __commonJS({
-  "../../node_modules/@edgeone/pages-blob/dist/index.js"(exports2, module2) {
+  "../../node_modules/@edgeone/pages-blob/dist/index.js"(exports, module) {
     "use strict";
     var U = Object.defineProperty;
     var le = Object.getOwnPropertyDescriptor;
@@ -48,7 +42,7 @@ var require_dist = __commonJS({
     var me = (t) => he(U({}, "__esModule", { value: true }), t);
     var Oe = {};
     fe(Oe, { InvalidKeyError: () => w, InvalidStoreNameError: () => y, MissingProjectIdError: () => T, PagesBlobError: () => h, PreconditionFailedError: () => x, QuotaExceededError: () => O, RateLimitedError: () => j, Store: () => E, getStore: () => Me, listStores: () => De });
-    module2.exports = me(Oe);
+    module.exports = me(Oe);
     var h = class extends Error {
       code;
       constructor(e, r) {
@@ -627,13 +621,6 @@ ${await pe(p)}
   }
 });
 
-// node-functions/api/health.ts
-var health_exports = {};
-__export(health_exports, {
-  onRequest: () => onRequest
-});
-module.exports = __toCommonJS(health_exports);
-
 // src/platform/context.ts
 var import_pages_blob = __toESM(require_dist());
 
@@ -762,7 +749,6 @@ function isConfigured(value) {
 async function onRequest({ request, env }) {
   return createHealthRoute(request, createEdgeOneContext(request, env));
 }
-// Annotate the CommonJS export names for ESM import in node:
-0 && (module.exports = {
+export {
   onRequest
-});
+};

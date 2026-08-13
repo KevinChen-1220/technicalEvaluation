@@ -1,4 +1,3 @@
-"use strict";
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -7,10 +6,6 @@ var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __commonJS = (cb, mod) => function __require() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
-};
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
 };
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
@@ -28,11 +23,10 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
-var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // ../../node_modules/@edgeone/pages-blob/dist/index.js
 var require_dist = __commonJS({
-  "../../node_modules/@edgeone/pages-blob/dist/index.js"(exports2, module2) {
+  "../../node_modules/@edgeone/pages-blob/dist/index.js"(exports, module) {
     "use strict";
     var U = Object.defineProperty;
     var le = Object.getOwnPropertyDescriptor;
@@ -48,7 +42,7 @@ var require_dist = __commonJS({
     var me = (t) => he(U({}, "__esModule", { value: true }), t);
     var Oe = {};
     fe(Oe, { InvalidKeyError: () => w, InvalidStoreNameError: () => y, MissingProjectIdError: () => T, PagesBlobError: () => h, PreconditionFailedError: () => x, QuotaExceededError: () => O, RateLimitedError: () => j, Store: () => E, getStore: () => Me, listStores: () => De });
-    module2.exports = me(Oe);
+    module.exports = me(Oe);
     var h = class extends Error {
       code;
       constructor(e, r) {
@@ -627,13 +621,6 @@ ${await pe(p)}
   }
 });
 
-// node-functions/api/session.ts
-var session_exports = {};
-__export(session_exports, {
-  onRequest: () => onRequest
-});
-module.exports = __toCommonJS(session_exports);
-
 // src/platform/context.ts
 var import_pages_blob = __toESM(require_dist());
 
@@ -780,12 +767,12 @@ async function exchangeWeChatCode(code, env, fetch2) {
 }
 
 // src/auth/sessionToken.ts
-var import_node_crypto2 = require("node:crypto");
+import { createCipheriv, createDecipheriv, createHash, createHmac as createHmac2, randomBytes, timingSafeEqual } from "node:crypto";
 
 // src/auth/ownerKey.ts
-var import_node_crypto = require("node:crypto");
+import { createHmac } from "node:crypto";
 function deriveOwnerKey(openId, ownerHmacKey) {
-  return (0, import_node_crypto.createHmac)("sha256", ownerHmacKey).update(openId, "utf8").digest("hex");
+  return createHmac("sha256", ownerHmacKey).update(openId, "utf8").digest("hex");
 }
 
 // src/auth/sessionToken.ts
@@ -793,7 +780,7 @@ var SESSION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1e3;
 async function issueSession(openId, dependencies) {
   const keys = requireSessionKeys(dependencies);
   if (!openId) throw new ApiError("INVALID_REQUEST", 400);
-  const token = Buffer.from((dependencies.randomBytes ?? import_node_crypto2.randomBytes)(32)).toString("base64url");
+  const token = Buffer.from((dependencies.randomBytes ?? randomBytes)(32)).toString("base64url");
   const tokenHash = hashToken(token);
   const ownerKey = deriveOwnerKey(openId, keys.ownerHmacKey);
   const now = (dependencies.now ?? (() => /* @__PURE__ */ new Date()))();
@@ -833,9 +820,9 @@ function requireSessionKeys(dependencies) {
   return { sessionHmacKey: dependencies.sessionHmacKey, ownerHmacKey: dependencies.ownerHmacKey, openIdEncryptionKey };
 }
 function encryptOpenId(openId, tokenHash, ownerKey, key, random) {
-  const iv = Buffer.from((random ?? (() => (0, import_node_crypto2.randomBytes)(12)))()).subarray(0, 12);
+  const iv = Buffer.from((random ?? (() => randomBytes(12)))()).subarray(0, 12);
   if (iv.length !== 12) throw backendUnavailable();
-  const cipher = (0, import_node_crypto2.createCipheriv)("aes-256-gcm", key, iv);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
   cipher.setAAD(aad(tokenHash, ownerKey));
   const ciphertext = Buffer.concat([cipher.update(openId, "utf8"), cipher.final()]);
   return {
@@ -853,10 +840,10 @@ function decodeEncryptionKey(value) {
   return key.length === 32 ? key : null;
 }
 function hashToken(token) {
-  return (0, import_node_crypto2.createHash)("sha256").update(token, "utf8").digest("hex");
+  return createHash("sha256").update(token, "utf8").digest("hex");
 }
 function tokenProof(token, sessionHmacKey) {
-  return (0, import_node_crypto2.createHmac)("sha256", sessionHmacKey).update(token, "utf8").digest("hex");
+  return createHmac2("sha256", sessionHmacKey).update(token, "utf8").digest("hex");
 }
 function sessionBlobKey(tokenHash) {
   return `sessions/${tokenHash}.json`;
@@ -897,7 +884,6 @@ async function requestPayload(request) {
 async function onRequest({ request, env }) {
   return createSessionRoute(request, createEdgeOneContext(request, env), async (url) => fetch(url));
 }
-// Annotate the CommonJS export names for ESM import in node:
-0 && (module.exports = {
+export {
   onRequest
-});
+};

@@ -41,7 +41,7 @@ function verifyStaticContracts() {
   if (lockfile.packages?.['node_modules/edgeone']?.version !== '1.6.23') findings.push('package-lock must pin EdgeOne CLI to 1.6.23');
 
   const config = JSON.parse(readFileSync(join(repoRoot, 'services/edgeone/edgeone.json'), 'utf8'));
-  if (config.cloudFunctions?.nodejs?.maxDuration !== 120) findings.push('EdgeOne Node Functions must retain the 120-second generation budget');
+  if (config.cloudFunctions?.maxDuration !== 120) findings.push('EdgeOne Node Functions must retain the 120-second generation budget');
 
   const requiredFunctions = ['health.js', 'session.js', 'generation.js', 'settings.js', 'reports.js', 'assessments/[[path]].js'];
   for (const file of requiredFunctions) {
@@ -56,6 +56,8 @@ function verifyStaticContracts() {
 
   const deploymentWrapper = readFileSync(join(repoRoot, 'scripts/edgeone-deploy.mjs'), 'utf8');
   if (!/['"]makers['"]\s*,\s*['"]deploy['"]/.test(deploymentWrapper)) findings.push('EdgeOne deployment wrapper must use the Makers deploy command');
+  if (!/['"]makers['"]\s*,\s*['"]build['"]/.test(deploymentWrapper)) findings.push('EdgeOne deployment wrapper must run the Makers build command before deploy');
+  if (!deploymentWrapper.includes("api-node', 'config.json")) findings.push('EdgeOne deployment wrapper must verify provider-built Node Function routes');
   if (!deploymentWrapper.includes('--dry-run')) findings.push('EdgeOne deployment wrapper must support credential-free dry runs');
   if (!deploymentWrapper.includes('assertDeploymentOrigin')) findings.push('EdgeOne deployment wrapper must validate the provider-reported deployment origin');
   if (!deploymentWrapper.includes('--verify-runtime-env')) findings.push('EdgeOne deployment wrapper must verify remote runtime configuration before production deploy');

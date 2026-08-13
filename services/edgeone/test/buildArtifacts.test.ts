@@ -12,11 +12,11 @@ describe('EdgeOne deployment artifacts', () => {
     });
 
     const config = JSON.parse(readFileSync(join(serviceRoot, 'edgeone.json'), 'utf8')) as {
-      cloudFunctions?: { nodejs?: { maxDuration?: number } };
+      cloudFunctions?: { maxDuration?: number };
       headers?: Array<{ source?: string; headers?: Array<{ key?: string; value?: string }> }>;
     };
 
-    expect(config.cloudFunctions?.nodejs?.maxDuration).toBe(120);
+    expect(config.cloudFunctions?.maxDuration).toBe(120);
     expect(config.headers).toEqual(expect.arrayContaining([
       expect.objectContaining({
         source: '/api/*',
@@ -31,7 +31,10 @@ describe('EdgeOne deployment artifacts', () => {
       ['api', 'reports.js'],
       ['api', 'assessments', '[[path]].js'],
     ]) {
-      expect(existsSync(join(serviceRoot, 'cloud-functions', ...relativePath))).toBe(true);
+      const artifactPath = join(serviceRoot, 'cloud-functions', ...relativePath);
+      expect(existsSync(artifactPath)).toBe(true);
+      const artifact = readFileSync(artifactPath, 'utf8');
+      expect(artifact).toMatch(/export\s*\{[\s\S]*onRequest/);
     }
   });
 

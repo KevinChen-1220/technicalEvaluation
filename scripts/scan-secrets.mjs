@@ -78,7 +78,7 @@ for (const [absolutePath, displayPath] of files) {
 
 function isSecretFilename(file) {
   const name = basename(file);
-  if (name === 'project.private.config.example.json') return false;
+  if (name === 'project.private.config.example.json' || name === 'project.private.config.json') return false;
   return secretFilenamePattern.test(name);
 }
 
@@ -136,7 +136,7 @@ function collectFiles(root) {
   const info = statSync(root);
   if (info.isFile()) return [root];
   if (!info.isDirectory()) return [];
-  const ignored = new Set(['.git', '.worktrees', 'node_modules', 'dist', 'build', '.expo']);
+  const ignored = new Set(['.git', '.worktrees', 'node_modules', 'dist', 'build', '.expo', '.edgeone', '.tef_dist']);
   return readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
     if (ignored.has(entry.name)) return [];
     const fullPath = join(root, entry.name);

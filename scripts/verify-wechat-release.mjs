@@ -203,7 +203,7 @@ function verifyStaticReleaseContracts(profile, options = { inspectDist: true }) 
   verifyNoLegacyClientConfiguration(options.inspectDist);
 
   const edgeone = JSON.parse(readFileSync(join(repoRoot, 'services/edgeone/edgeone.json'), 'utf8'));
-  if (edgeone.cloudFunctions?.nodejs?.maxDuration !== 120) fail(['EdgeOne Node Functions must allow the 120-second generation budget']);
+  if (edgeone.cloudFunctions?.maxDuration !== 120) fail(['EdgeOne Node Functions must allow the 120-second generation budget']);
   const requiredFunctions = ['health.js', 'session.js', 'generation.js', 'settings.js', 'reports.js', 'assessments/[[path]].js'];
   const absentFunctions = requiredFunctions.filter((file) => !existsSync(join(repoRoot, 'services/edgeone/cloud-functions/api', file)));
   if (absentFunctions.length > 0) fail(absentFunctions.map((file) => `missing EdgeOne function ${file}`));

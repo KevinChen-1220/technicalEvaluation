@@ -1,4 +1,3 @@
-"use strict";
 var __create = Object.create;
 var __defProp = Object.defineProperty;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
@@ -7,10 +6,6 @@ var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __commonJS = (cb, mod) => function __require() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
-};
-var __export = (target, all) => {
-  for (var name in all)
-    __defProp(target, name, { get: all[name], enumerable: true });
 };
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
@@ -28,11 +23,10 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
   isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
   mod
 ));
-var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
 // ../../node_modules/@edgeone/pages-blob/dist/index.js
 var require_dist = __commonJS({
-  "../../node_modules/@edgeone/pages-blob/dist/index.js"(exports2, module2) {
+  "../../node_modules/@edgeone/pages-blob/dist/index.js"(exports, module) {
     "use strict";
     var U = Object.defineProperty;
     var le = Object.getOwnPropertyDescriptor;
@@ -48,7 +42,7 @@ var require_dist = __commonJS({
     var me = (t) => he(U({}, "__esModule", { value: true }), t);
     var Oe = {};
     fe(Oe, { InvalidKeyError: () => w, InvalidStoreNameError: () => y, MissingProjectIdError: () => T, PagesBlobError: () => h, PreconditionFailedError: () => x, QuotaExceededError: () => O, RateLimitedError: () => j, Store: () => E, getStore: () => Me, listStores: () => De });
-    module2.exports = me(Oe);
+    module.exports = me(Oe);
     var h = class extends Error {
       code;
       constructor(e, r) {
@@ -627,13 +621,6 @@ ${await pe(p)}
   }
 });
 
-// node-functions/api/generation.ts
-var generation_exports = {};
-__export(generation_exports, {
-  onRequest: () => onRequest
-});
-module.exports = __toCommonJS(generation_exports);
-
 // src/platform/context.ts
 var import_pages_blob = __toESM(require_dist());
 
@@ -696,10 +683,10 @@ function isPreconditionFailure(error) {
 }
 
 // src/routes/generation.ts
-var import_node_crypto4 = require("node:crypto");
+import { createHash as createHash4, randomUUID as randomUUID2 } from "node:crypto";
 
 // src/auth/sessionToken.ts
-var import_node_crypto = require("node:crypto");
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 
 // src/http/errors.ts
 var ApiError = class extends Error {
@@ -762,7 +749,7 @@ function decryptOpenId(encrypted, tokenHash, ownerKey, key) {
   const tag = Buffer.from(encrypted.tag, "base64url");
   const ciphertext = Buffer.from(encrypted.ciphertext, "base64url");
   if (iv.length !== 12 || tag.length !== 16 || ciphertext.length === 0) throw backendUnavailable();
-  const decipher = (0, import_node_crypto.createDecipheriv)("aes-256-gcm", key, iv);
+  const decipher = createDecipheriv("aes-256-gcm", key, iv);
   decipher.setAAD(aad(tokenHash, ownerKey));
   decipher.setAuthTag(tag);
   return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
@@ -781,10 +768,10 @@ function bearerToken(value) {
   return match[1];
 }
 function hashToken(token) {
-  return (0, import_node_crypto.createHash)("sha256").update(token, "utf8").digest("hex");
+  return createHash("sha256").update(token, "utf8").digest("hex");
 }
 function tokenProof(token, sessionHmacKey) {
-  return (0, import_node_crypto.createHmac)("sha256", sessionHmacKey).update(token, "utf8").digest("hex");
+  return createHmac("sha256", sessionHmacKey).update(token, "utf8").digest("hex");
 }
 function sessionBlobKey(tokenHash) {
   return `sessions/${tokenHash}.json`;
@@ -792,7 +779,7 @@ function sessionBlobKey(tokenHash) {
 function constantTimeEqual(left, right) {
   const leftBytes = Buffer.from(left, "utf8");
   const rightBytes = Buffer.from(right, "utf8");
-  return leftBytes.length === rightBytes.length && (0, import_node_crypto.timingSafeEqual)(leftBytes, rightBytes);
+  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
 }
 function isValidStoredSession(value) {
   if (!value || typeof value !== "object") return false;
@@ -2428,7 +2415,7 @@ function indexRevisionFromKey(key) {
 }
 
 // src/storage/quotaRepository.ts
-var import_node_crypto2 = require("node:crypto");
+import { createHash as createHash2 } from "node:crypto";
 var MAX_REVISION = 999999999999;
 var MAX_CAS_ATTEMPTS = 8;
 var RATE_RESERVATION_RETENTION_MS = 30 * 24 * 60 * 60 * 1e3;
@@ -2604,7 +2591,7 @@ function normalizedReservationIds(record) {
   return ids.slice(0, 5);
 }
 function hashReservationId(reservationId) {
-  return (0, import_node_crypto2.createHash)("sha256").update(reservationId, "utf8").digest("hex");
+  return createHash2("sha256").update(reservationId, "utf8").digest("hex");
 }
 function retainedRateReservations(record, requestAt) {
   if (record === null || !Array.isArray(record.reservations)) return [];
@@ -2988,7 +2975,7 @@ function createEdgeOneStores(blob, options) {
 }
 
 // src/moderation/wechatAccessToken.ts
-var import_node_crypto3 = require("node:crypto");
+import { createHash as createHash3, randomUUID } from "node:crypto";
 var TOKEN_EXPIRY_MARGIN_MS = 5 * 60 * 1e3;
 var TOKEN_REQUEST_TIMEOUT_MS = 8e3;
 var TOKEN_REFRESH_BUDGET_MS = 1e4;
@@ -3048,7 +3035,7 @@ async function refreshAcrossInstances(dependencies, appId, appSecret, deadline) 
     const revision = (currentLock?.lock.revision ?? 0) + 1;
     if (revision > MAX_LOCK_REVISION) throw backendUnavailable2();
     const lockKey = refreshLockKey(appId, revision, now);
-    const ownerToken = (0, import_node_crypto3.randomUUID)();
+    const ownerToken = randomUUID();
     const claimedLock = {
       revision,
       ownerToken,
@@ -3131,11 +3118,11 @@ function isUsable(value, now) {
   return value !== null && typeof value.accessToken === "string" && Number.isFinite(new Date(value.expiresAt).getTime()) && new Date(value.expiresAt).getTime() - now.getTime() > TOKEN_EXPIRY_MARGIN_MS;
 }
 function legacyTokenCacheKey(appId) {
-  const digest = (0, import_node_crypto3.createHash)("sha256").update(appId, "utf8").digest("hex").slice(0, 24);
+  const digest = createHash3("sha256").update(appId, "utf8").digest("hex").slice(0, 24);
   return `moderation/wechat-access-token/${digest}.json`;
 }
 function tokenCachePrefix(appId, utcDay) {
-  const digest = (0, import_node_crypto3.createHash)("sha256").update(appId, "utf8").digest("hex").slice(0, 24);
+  const digest = createHash3("sha256").update(appId, "utf8").digest("hex").slice(0, 24);
   return `moderation/wechat-access-token/${digest}.tokens/${utcDay}/`;
 }
 function tokenCacheKey(appId, revision, issuedAt) {
@@ -3166,7 +3153,7 @@ async function pruneOlderTokens(blob, appId, keepRevision, issuedAt) {
   }));
 }
 function refreshLockPrefix(appId, utcDay) {
-  const digest = (0, import_node_crypto3.createHash)("sha256").update(appId, "utf8").digest("hex").slice(0, 24);
+  const digest = createHash3("sha256").update(appId, "utf8").digest("hex").slice(0, 24);
   return `moderation/wechat-access-token/${digest}.refresh-locks/${utcDay}/`;
 }
 function refreshLockKey(appId, revision, now) {
@@ -3462,15 +3449,15 @@ async function createGenerationRoute(request, context, injected) {
     if (await generationDisabled(context)) {
       return routeFailure(new ApiError("FREE_TIER_LIMIT", 429, true));
     }
-    const identityKey = clientRequestId ?? (0, import_node_crypto4.randomUUID)();
-    const digest = (0, import_node_crypto4.createHash)("sha256").update(`${identity.ownerKey}\0${identityKey}`, "utf8").digest("hex").slice(0, 32);
+    const identityKey = clientRequestId ?? randomUUID2();
+    const digest = createHash4("sha256").update(`${identity.ownerKey}\0${identityKey}`, "utf8").digest("hex").slice(0, 32);
     const assessmentId = `assessment-${digest}`;
     const jobId = `job-${digest}`;
-    const leaseToken = (0, import_node_crypto4.randomUUID)();
+    const leaseToken = randomUUID2();
     const begun = await withinDeadline(dependencies.stores.jobs.begin({
       ownerKey: identity.ownerKey,
       jobId,
-      clientRequestIdHash: (0, import_node_crypto4.createHash)("sha256").update(identityKey, "utf8").digest("hex"),
+      clientRequestIdHash: createHash4("sha256").update(identityKey, "utf8").digest("hex"),
       assessmentId,
       leaseToken,
       now: dependencies.now().toISOString(),
@@ -3597,7 +3584,6 @@ function jobEnvelope(job) {
 async function onRequest({ request, env }) {
   return await createGenerationRoute(request, createEdgeOneContext(request, env));
 }
-// Annotate the CommonJS export names for ESM import in node:
-0 && (module.exports = {
+export {
   onRequest
-});
+};

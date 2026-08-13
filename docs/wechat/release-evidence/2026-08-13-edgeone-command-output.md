@@ -2,14 +2,14 @@
 
 Profile: development/local release candidate
 Generated at: 2026-08-13T00:00:00+08:00
-Branch: `codex/edgeone-free-backend`
-Head: `e6aa8df`
+Branch: `main`
+Head: pending follow-up commit after `022969b`
 
 ## Review Gates
 
 - Task 7 scoped release-engineering review: PASS after fixes `872916c` and `30037e1`.
 - Task 8 whole-branch review: PASS after fixes through `e6aa8df`.
-- Remaining production evidence is external: real EdgeOne deployment, WeChat request domain, real-device smoke, WeChat review, and final publish.
+- Real EdgeOne deployment now builds and publishes Node Functions. Remaining production evidence is external: runtime secret configuration, stable WeChat request domain, real-device smoke, WeChat review, and final publish.
 
 ## Commands
 
@@ -49,6 +49,48 @@ Status: exit 0
 Test Suites: 18 passed, 18 total
 Tests:       154 passed, 154 total
 ```
+
+### npx edgeone@1.6.23 makers build
+
+Status: exit 0
+
+Key output:
+
+```text
+Node functions build start
+Node functions build completed successfully
+```
+
+Generated route config:
+
+```text
+^/api/generation$
+^/api/health$
+^/api/reports$
+^/api/session$
+^/api/settings$
+^/api/assessments/(.*)$
+```
+
+### npx edgeone@1.6.23 makers deploy -n skillscope-wechat -e production --json
+
+Status: exit 0
+
+Deployment:
+
+```text
+Project ID: makers-xt0lfsjyivza
+Deployment ID: dpsrcz4f3x37
+Console URL: https://console.cloud.tencent.com/edgeone/pages/project/makers-xt0lfsjyivza/deployment/dpsrcz4f3x37
+```
+
+Remote health check:
+
+```json
+{"ok":true,"data":{"service":"skillscope-edgeone","version":"unknown","configurationReady":false,"generationEnabled":false}}
+```
+
+The false configuration flags are expected before production runtime environment variables are configured in EdgeOne.
 
 ### Typecheck
 

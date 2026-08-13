@@ -3,17 +3,100 @@
 CLI: C:\Program Files (x86)\Tencent\微信web开发者工具\cli.bat
 Project: E:\Project\technicalEvaluation\apps\wechat
 
-Status: 微信开发者工具已安装，但 CLI 用户态未初始化。
+## islogin
+
+Command: C:\Program Files (x86)\Tencent\微信web开发者工具\cli.bat islogin
+Status: error spawnSync powershell.exe ETIMEDOUT
 
 ```text
-C:\Users\Administrator\AppData\Local\微信开发者工具\User Data exists, but no Default/.cli marker was found; earlier direct CLI islogin failed at initialization with missing .cli.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+... 793 lines omitted ...
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
+Maximum setlocal recursion level reached.
 ```
 
 ## Skipped Commands
 
-- `islogin`、`open --project`、`compile --project` 已作为外部 blocker 跳过，避免重复触发长时间 setlocal recursion 或 `.cli` 初始化失败。
-- 先在微信开发者工具 GUI 中完成首次启动/登录并生成 User Data `.cli` 后，再重新运行 `npm run wechat:devtools:smoke`。
+- 后续 DevTools 命令已跳过；请先完成登录/AppID/初始化后再重新运行。
 
 ## 结论
 
-- 未导入/编译/截图/真机验证；缺少 DevTools CLI 初始化态、真实 AppID 和登录态。
+- 该文件记录 CLI 的真实返回；未登录、缺少 AppID 或无法初始化均作为外部 blocker 记录。
+- 未记录截图或真机通过，因为当前机器没有可验证的微信账号登录态和 AppID。

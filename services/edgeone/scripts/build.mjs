@@ -16,7 +16,7 @@ await build({
   outdir: outputRoot,
   outbase: sourceRoot,
   bundle: true,
-  format: 'cjs',
+  format: 'esm',
   platform: 'node',
   target: 'node20',
   sourcemap: false,

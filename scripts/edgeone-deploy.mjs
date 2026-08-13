@@ -25,9 +25,12 @@ if (!args.production) fail('EdgeOne deployment requires --production');
 if (args.verifyRuntimeEnv) verifyHealth({ version, requireVersion: false });
 
 const edgeoneCommand = resolveEdgeOneCommand();
+runLocalBuild();
+runEdgeOneBuild(edgeoneCommand);
+verifyEdgeOneBuildPackage();
 const result = spawnSync(
   edgeoneCommand.command,
-  [...edgeoneCommand.args, 'makers', 'deploy', '-n', project, '-t', token, '-e', 'production'],
+  [...edgeoneCommand.args, 'makers', 'deploy', '-n', project, '-t', token, '-e', 'production', '--json'],
   { cwd: serviceRoot, encoding: 'utf8', windowsHide: true, timeout: 600_000, env: process.env },
 );
 if (result.status !== 0) fail('EdgeOne deployment failed; inspect the protected provider log.');
@@ -42,11 +45,43 @@ process.stdout.write(`EdgeOne deployment completed: project=${safe(project)} ver
 
 function verifyArtifacts() {
   const config = JSON.parse(readFileSync(join(repoRoot, 'services/edgeone/edgeone.json'), 'utf8'));
-  if (config.cloudFunctions?.nodejs?.maxDuration !== 120) fail('EdgeOne deployment requires a 120-second Node Function budget');
+  if (config.cloudFunctions?.maxDuration !== 120) fail('EdgeOne deployment requires a 120-second Node Function budget');
   const functions = ['health.js', 'session.js', 'generation.js', 'settings.js', 'reports.js', 'assessments/[[path]].js'];
   for (const file of functions) {
     const path = join(repoRoot, 'services/edgeone/cloud-functions/api', file);
     if (!existsSync(path) || statSync(path).size === 0) fail(`EdgeOne deployment package is incomplete: ${file}`);
+    const source = readFileSync(path, 'utf8');
+    if (!/export\s*\{[\s\S]*onRequest/.test(source)) fail(`EdgeOne deployment package is not a Node Function module: ${file}`);
+  }
+}
+
+function runLocalBuild() {
+  const result = spawnSync(process.execPath, [join(serviceRoot, 'scripts', 'build.mjs')], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+    windowsHide: true,
+    timeout: 120_000,
+    env: process.env,
+  });
+  if (result.status !== 0) fail('EdgeOne local function build failed.');
+}
+
+function runEdgeOneBuild(edgeoneCommand) {
+  const result = spawnSync(
+    edgeoneCommand.command,
+    [...edgeoneCommand.args, 'makers', 'build'],
+    { cwd: serviceRoot, encoding: 'utf8', windowsHide: true, timeout: 600_000, env: process.env },
+  );
+  if (result.status !== 0) fail('EdgeOne provider build failed; inspect the protected provider log.');
+}
+
+function verifyEdgeOneBuildPackage() {
+  const configPath = join(serviceRoot, '.edgeone', 'cloud-functions', 'api-node', 'config.json');
+  if (!existsSync(configPath)) fail('EdgeOne provider build did not produce api-node config.json.');
+  const config = JSON.parse(readFileSync(configPath, 'utf8'));
+  const routes = Array.isArray(config.routes) ? config.routes : [];
+  if (!routes.some((route) => typeof route?.src === 'string' && route.src.includes('/api/'))) {
+    fail('EdgeOne provider build did not include API Node Function routes.');
   }
 }
 

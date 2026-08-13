@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import yaml from 'yaml';
@@ -837,6 +837,30 @@ describe('WeChat release verification assets', () => {
       ], { cwd: repoRoot, encoding: 'utf8' });
       expect(tracked.status).not.toBe(0);
       expect(`${tracked.stdout}${tracked.stderr}`).toMatch(/tracked secret filename/i);
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
+  });
+
+  test('secret scanner skips generated EdgeOne output and local WeChat private config', () => {
+    const directory = mkdtempSync(join(tmpdir(), 'skill-scope-generated-scan-'));
+    try {
+      const generated = join(directory, 'services', 'edgeone', '.edgeone', 'cloud-functions', 'api-node');
+      const localWechat = join(directory, 'apps', 'wechat');
+      mkdirSync(generated, { recursive: true });
+      mkdirSync(localWechat, { recursive: true });
+      writeFileSync(join(generated, 'index.mjs'), 'const providerBundle = "ANTHROPIC_API_KEY";');
+      writeFileSync(join(localWechat, 'project.private.config.json'), '{"appid":"wx123"}');
+
+      const result = spawnSync(process.execPath, [
+        join(repoRoot, 'scripts', 'scan-secrets.mjs'),
+        '--target',
+        'source',
+        directory,
+      ], { cwd: repoRoot, encoding: 'utf8' });
+
+      expect(result.status).toBe(0);
+      expect(result.stdout).toContain('secret scan passed');
     } finally {
       rmSync(directory, { recursive: true, force: true });
     }

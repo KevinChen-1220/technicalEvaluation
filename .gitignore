@@ -24,3 +24,8 @@ apps/wechat/keys/
 *.sqlite
 *.sqlite3
 web-build/
+
+# Tencent Cloud EdgeOne
+.env
+**/.edgeone/
+**/.tef_dist/

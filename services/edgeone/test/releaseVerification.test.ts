@@ -73,9 +73,9 @@ describe('EdgeOne production release gates', () => {
     const temp = mkdtempSync(join(tmpdir(), 'edgeone-release-'));
     const fakeCli = join(temp, process.platform === 'win32' ? 'edgeone.cmd' : 'edgeone');
     if (process.platform === 'win32') {
-      writeFileSync(fakeCli, '@echo off\r\necho deployed to https://wrong.example.com\r\nexit /b 0\r\n');
+      writeFileSync(fakeCli, '@echo off\r\nmkdir .edgeone\\cloud-functions\\api-node 2>nul\r\necho {"routes":[{"src":"^/api/health$"}]} > .edgeone\\cloud-functions\\api-node\\config.json\r\necho deployed to https://wrong.example.com\r\nexit /b 0\r\n');
     } else {
-      writeFileSync(fakeCli, '#!/bin/sh\necho deployed to https://wrong.example.com\nexit 0\n');
+      writeFileSync(fakeCli, '#!/bin/sh\nmkdir -p .edgeone/cloud-functions/api-node\nprintf \'{"routes":[{"src":"^/api/health$"}]}\' > .edgeone/cloud-functions/api-node/config.json\necho deployed to https://wrong.example.com\nexit 0\n');
       chmodSync(fakeCli, 0o700);
     }
     const baseEnv = {
@@ -92,6 +92,7 @@ describe('EdgeOne production release gates', () => {
     expect(mismatch.status).not.toBe(0);
     expect(`${mismatch.stdout}${mismatch.stderr}`).toMatch(/deployment origin/i);
     expect(`${mismatch.stdout}${mismatch.stderr}`).not.toContain('token-that-must-not-appear');
+    expect(readFileSync(join(repoRoot, 'scripts', 'edgeone-deploy.mjs'), 'utf8')).toMatch(/makers['"],\s*['"]build/);
     rmSync(temp, { recursive: true, force: true });
   });
 
@@ -138,6 +139,7 @@ describe('EdgeOne production release gates', () => {
     const deploymentWrapper = readFileSync(join(repoRoot, 'scripts', 'edgeone-deploy.mjs'), 'utf8');
     expect(deploymentWrapper).toMatch(/const serviceRoot = join\(repoRoot, 'services', 'edgeone'\)/);
     expect(deploymentWrapper).toMatch(/cwd: serviceRoot/);
+    expect(deploymentWrapper).toMatch(/api-node['"],\s*['"]config\.json/);
   });
 
   test('verifies the EdgeOne artifact, 120-second budget, fixed 50-question contract, and public HTTPS origin', () => {
