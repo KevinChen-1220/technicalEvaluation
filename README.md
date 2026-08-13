@@ -97,7 +97,7 @@ services/edgeone
 | `src/services/aiClient.ts` | Direct OpenAI-compatible chat-completions client |
 | `apps/wechat/` | Taro WeChat Mini Program shell and client sync flow |
 | `services/edgeone/` | EdgeOne Node Functions, Blob-backed repositories, and release tests |
-| `services/cloudbase/` | Legacy CloudBase implementation and migration safety tests |
+| `services/cloudbase/` | Legacy-only CloudBase migration reference and safety tests, not the production backend |
 | `docs/wechat/` | WeChat privacy, release, deployment, evidence, and review handoff documents |
 | `public/` | Web metadata, icons, and the social preview |
 

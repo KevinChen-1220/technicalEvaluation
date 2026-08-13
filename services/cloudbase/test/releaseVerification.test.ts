@@ -138,6 +138,15 @@ describe('WeChat release verification assets', () => {
     })).toEqual(expect.arrayContaining([expect.stringMatching(/release profiles.*CloudBase/i)]));
   });
 
+  test('marks CloudBase service docs as legacy-only after the EdgeOne migration', () => {
+    const cloudbaseReadme = readFileSync(join(repoRoot, 'services/cloudbase/README.md'), 'utf8');
+
+    expect(cloudbaseReadme).toMatch(/legacy|历史|migration reference|迁移参考/i);
+    expect(cloudbaseReadme).toMatch(/do not deploy|不得.*生产|not.*production/i);
+    expect(cloudbaseReadme).toContain('services/edgeone');
+    expect(cloudbaseReadme).toContain('docs/wechat/deployment-runbook.md');
+  });
+
   test('validates GitHub workflows and release issue templates without reading secrets on PRs', () => {
     const rootPackage = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
     const releaseWorkflow = readFileSync(join(repoRoot, '.github/workflows/wechat-release.yml'), 'utf8');
