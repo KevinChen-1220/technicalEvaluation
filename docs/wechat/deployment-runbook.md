@@ -53,6 +53,12 @@ TARO_APP_RELEASE_DISCLOSURE_FILE=docs/wechat/release-disclosure.production.json
 npm run verify:wechat-go-live -- --app-id wx31dd3d7448aac8e3 --api-base-url <production-https-origin>
 ```
 
+若已在本机下载微信上传私钥，可以用仓库脚本配置 GitHub 受保护环境的两个上传输入。脚本通过 stdin 写入 `gh secret set`，只打印 secret 名称，不打印 origin 或 PEM 内容：
+
+```sh
+npm run wechat:configure-production-secrets -- --api-base-url <production-https-origin> --private-key-path <本机微信上传私钥路径>
+```
+
 这个命令只读取公开 AppID、公开 HTTPS origin、GitHub environment 中的 secret 名称和 `/api/health` 的公开响应；它不会读取或打印 GitHub secret 值。尚未绑定稳定域名时可临时加 `--skip-health` 查看 GitHub 环境缺口，但正式上传微信草稿前必须移除该参数并通过 health 检查。
 
 GitHub 受保护的 upload workflow 会在 EdgeOne production 部署后自动执行 `npm run verify:wechat-go-live -- --from-env`，使用已注入的 protected secrets 检查部署版本、API origin、AppID 和上传私钥是否齐全，并再次验证公开 health。该步骤不调用 GitHub API 读取 secret 内容，不额外接触 EdgeOne API token，也不会打印 secret 值。

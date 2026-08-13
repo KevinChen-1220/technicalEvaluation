@@ -328,6 +328,52 @@ describe('EdgeOne production release gates', () => {
     expect(ready.stdout).toContain('WeChat go-live readiness passed');
   });
 
+  test('configures GitHub upload inputs without printing the production origin or upload key', () => {
+    const temp = mkdtempSync(join(tmpdir(), 'wechat-secret-setup-'));
+    const fakeGh = join(temp, process.platform === 'win32' ? 'gh.cmd' : 'gh');
+    const calls = join(temp, 'calls.log');
+    const uploadKey = join(temp, 'upload.key');
+    const pem = `${'-----BEGIN'} PRIVATE KEY-----\nmock-secret-private-key\n${'-----END'} PRIVATE KEY-----\n`;
+    writeFileSync(uploadKey, pem);
+    if (process.platform === 'win32') {
+      writeFileSync(fakeGh, [
+        '@echo off',
+        `echo %* >> "${calls}"`,
+        'more > nul',
+        'exit /b 0',
+      ].join('\r\n'));
+    } else {
+      writeFileSync(fakeGh, [
+        '#!/bin/sh',
+        `printf '%s\\n' "$*" >> "${calls}"`,
+        'cat >/dev/null',
+        'exit 0',
+      ].join('\n'));
+      chmodSync(fakeGh, 0o700);
+    }
+
+    const result = runNode('scripts/configure-wechat-production-secrets.mjs', [
+      '--api-base-url',
+      'https://api.skillscope.cn',
+      '--private-key-path',
+      uploadKey,
+    ], {
+      ...process.env,
+      GH_CLI_BIN: fakeGh,
+    });
+
+    expect(result.status).toBe(0);
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).toContain('Configured GitHub environment secret TARO_APP_EDGEONE_API_BASE_URL');
+    expect(output).toContain('Configured GitHub environment secret WECHAT_PRIVATE_KEY_PEM');
+    expect(output).not.toContain('https://api.skillscope.cn');
+    expect(output).not.toContain('mock-secret-private-key');
+    const callLog = readFileSync(calls, 'utf8');
+    expect(callLog).toContain('secret set TARO_APP_EDGEONE_API_BASE_URL --env wechat-production --body-file -');
+    expect(callLog).toContain('secret set WECHAT_PRIVATE_KEY_PEM --env wechat-production --body-file -');
+    rmSync(temp, { recursive: true, force: true });
+  });
+
   test('verifies the EdgeOne artifact, 120-second budget, fixed 50-question contract, and public HTTPS origin', () => {
     const verifier = readFileSync(join(repoRoot, 'scripts', 'verify-edgeone-release.mjs'), 'utf8');
     const edgeoneConfig = readFileSync(join(repoRoot, 'services', 'edgeone', 'edgeone.json'), 'utf8');

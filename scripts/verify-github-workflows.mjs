@@ -220,6 +220,7 @@ function verifyPackageScripts() {
     'verify:wechat-go-live',
     'verify:edgeone-release',
     'edgeone:deploy',
+    'wechat:configure-production-secrets',
     'wechat:ci:dry-run',
     'wechat:ci:upload',
   ];
