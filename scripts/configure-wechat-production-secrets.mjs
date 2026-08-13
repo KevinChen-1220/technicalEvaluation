@@ -33,7 +33,7 @@ for (const [name, value] of updates) {
 
 function setGithubSecret(name, value) {
   const gh = process.env.GH_CLI_BIN || 'gh';
-  const command = resolveExecutable(gh, ['secret', 'set', name, '--env', githubEnvironment, '--body-file', '-']);
+  const command = resolveExecutable(gh, ['secret', 'set', name, '--env', githubEnvironment]);
   const result = spawnSync(command.file, command.args, {
     input: value,
     encoding: 'utf8',

@@ -426,8 +426,9 @@ describe('EdgeOne production release gates', () => {
     expect(output).not.toContain('https://api.skillscope.cn');
     expect(output).not.toContain('mock-secret-private-key');
     const callLog = readFileSync(calls, 'utf8');
-    expect(callLog).toContain('secret set TARO_APP_EDGEONE_API_BASE_URL --env wechat-production --body-file -');
-    expect(callLog).toContain('secret set WECHAT_PRIVATE_KEY_PEM --env wechat-production --body-file -');
+    expect(callLog).toContain('secret set TARO_APP_EDGEONE_API_BASE_URL --env wechat-production');
+    expect(callLog).toContain('secret set WECHAT_PRIVATE_KEY_PEM --env wechat-production');
+    expect(callLog).not.toContain('--body-file');
     rmSync(temp, { recursive: true, force: true });
   });
 
