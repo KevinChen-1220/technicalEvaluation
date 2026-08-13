@@ -50,7 +50,7 @@
     "expo-sqlite": "~15.2.14",
     "expo-status-bar": "~2.2.3",
     "jsonrepair": "^3.15.0",
-    "react": "19.0.0",
+    "react": "19.2.8",
     "react-dom": "19.0.0",
     "react-native": "0.79.6",
     "react-native-safe-area-context": "5.4.0",
@@ -58,7 +58,7 @@
   },
   "devDependencies": {
     "@types/jest": "^29.5.14",
-    "@types/react": "~19.0.10",
+    "@types/react": "~19.2.18",
     "edgeone": "1.6.23",
     "jest": "^29.7.0",
     "miniprogram-ci": "^2.1.31",
