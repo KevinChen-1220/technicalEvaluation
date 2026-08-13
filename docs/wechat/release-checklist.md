@@ -39,7 +39,8 @@
 ## GitHub 与上传权限
 
 - [ ] GitHub environment `wechat-production` 已配置 required reviewers；上传 job 只能手动触发并等待环境审批。
-- [ ] `wechat-production` 中的发布变量仅包括 production HTTPS origin 和上传所需公开配置；服务端密钥只配置在 EdgeOne，不写入仓库、issue、截图或 manifest。
+- [ ] `wechat-production` 中的 protected secrets 仅作为发布输入传给 EdgeOne 部署 wrapper、运行时配置 gate 和微信上传 wrapper；服务端密钥不得进入小程序包、artifact、仓库、issue、截图或 manifest。
+- [ ] `npm run edgeone:deploy -- --production --verify-runtime-env --verify-health` 已验证 EdgeOne health 的 `configurationReady=true`、`generationEnabled` 与发布期望一致、`EDGEONE_DEPLOYMENT_VERSION` 匹配，且部署 CLI 输出的 HTTPS origin 与 `TARO_APP_EDGEONE_API_BASE_URL` 相同。
 - [ ] Fork/PR 只运行 `release-checks`，该 job 不引用 GitHub secrets。
 - [ ] 复制 `docs/wechat/release-manifest.template.json` 后填写 EdgeOne project、deployment URL、build SHA、Blob、审核单与回滚版本；manifest 不记录密钥或用户数据。
 
@@ -50,6 +51,7 @@ npm ci
 npm run verify:github-workflows
 npm run verify:edgeone-release -- --check-only
 npm run edgeone:deploy -- --dry-run
+npm run edgeone:deploy -- --production --verify-runtime-env --verify-health
 npm run verify:wechat-release
 npm run verify:wechat-release:formal -- --disclosure-file docs/wechat/release-disclosure.production.json
 npm run wechat:ci:dry-run

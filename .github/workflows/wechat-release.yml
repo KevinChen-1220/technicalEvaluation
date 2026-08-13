@@ -159,15 +159,6 @@ jobs:
         env:
           DISCLOSURE_FILE: ${{ inputs.disclosure_file }}
 
-      - name: Write WeChat upload key
-        shell: bash
-        env:
-          WECHAT_PRIVATE_KEY_PEM: ${{ secrets.WECHAT_PRIVATE_KEY_PEM }}
-        run: |
-          test -n "$WECHAT_PRIVATE_KEY_PEM"
-          umask 077
-          printf '%s' "$WECHAT_PRIVATE_KEY_PEM" > "$RUNNER_TEMP/wechat-upload.key"
-
       - name: Run formal EdgeOne environment gate
         run: npm run verify:edgeone-release -- --production --check-only
         env:
@@ -186,10 +177,19 @@ jobs:
           TARO_APP_EDGEONE_API_BASE_URL: ${{ secrets.TARO_APP_EDGEONE_API_BASE_URL }}
 
       - name: Deploy EdgeOne production
-        run: npm run edgeone:deploy -- --production --verify-health
+        run: npm run edgeone:deploy -- --production --verify-runtime-env --verify-health
         env:
           EDGEONE_API_TOKEN: ${{ secrets.EDGEONE_API_TOKEN }}
           EDGEONE_PROJECT_NAME: ${{ secrets.EDGEONE_PROJECT_NAME }}
+          WECHAT_APP_ID: ${{ secrets.WECHAT_APP_ID }}
+          WECHAT_APP_SECRET: ${{ secrets.WECHAT_APP_SECRET }}
+          SESSION_HMAC_KEY: ${{ secrets.SESSION_HMAC_KEY }}
+          OWNER_HMAC_KEY: ${{ secrets.OWNER_HMAC_KEY }}
+          OPENID_ENCRYPTION_KEY: ${{ secrets.OPENID_ENCRYPTION_KEY }}
+          LLM_BASE_URL: ${{ secrets.LLM_BASE_URL }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          LLM_MODEL: ${{ secrets.LLM_MODEL }}
+          GENERATION_ENABLED: ${{ secrets.GENERATION_ENABLED }}
           EDGEONE_DEPLOYMENT_VERSION: ${{ secrets.EDGEONE_DEPLOYMENT_VERSION }}
           TARO_APP_EDGEONE_API_BASE_URL: ${{ secrets.TARO_APP_EDGEONE_API_BASE_URL }}
 
@@ -204,7 +204,7 @@ jobs:
         run: npm run wechat:ci:upload
         env:
           WECHAT_APP_ID: ${{ secrets.WECHAT_APP_ID }}
-          WECHAT_PRIVATE_KEY_PATH: ${{ runner.temp }}/wechat-upload.key
+          WECHAT_PRIVATE_KEY_PEM: ${{ secrets.WECHAT_PRIVATE_KEY_PEM }}
           WECHAT_RELEASE_VERSION: ${{ inputs.release_version }}
           WECHAT_RELEASE_DESC: ${{ inputs.release_description }}
           WECHAT_CI_ROBOT: ${{ inputs.robot }}

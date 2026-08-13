@@ -15,7 +15,7 @@
 1. 创建开发、preview 与 production deployment；production 不得使用 `dev`、`test`、`example`、`placeholder` 或 `待配置` 的 origin。
 2. 以 `services/edgeone/edgeone.json` 部署 Node Functions，确认 `/api/session`、`/api/generation`、`/api/assessments`、`/api/settings`、`/api/reports` 和 `/api/health` 均可路由。
 3. 配置 Blob 命名空间与访问策略；用户数据只能由服务端按会话归属读取，不能直接暴露给小程序。
-4. 在 EdgeOne 项目中录入服务端环境变量。不得把真实值写进仓库、issue、截图、日志或 release manifest，也不得使用 `TARO_APP_*` 前缀。
+4. 在 EdgeOne 项目中录入服务端环境变量，并在 GitHub protected environment `wechat-production` 保存同轮发布需要的受保护输入，用于部署 wrapper 做运行时配置 gate、EdgeOne CLI 部署和微信上传。不得把真实值写进仓库、issue、截图、日志或 release manifest，也不得使用 `TARO_APP_*` 前缀。
 5. 记录 EdgeOne project ID、deployment URL、deployment version、Node Functions build SHA 和 Blob namespace 到 release manifest。
 
 ## 2. 构建与部署顺序
@@ -32,7 +32,7 @@ npm run build:edgeone
 npm run verify:github-workflows
 ```
 
-部署 Node Functions 与 Blob 配置后，先对 preview deployment 运行 smoke，再切换 production deployment。CI 使用精确锁定的 `edgeone@1.6.23` 执行 `edgeone makers deploy`，完成 `/api/health` 版本检查后才构建和上传小程序。`npm run edgeone:deploy -- --dry-run` 不读取凭据，只验证部署包；仓库不假设本机已登录 EdgeOne，因此不会伪造部署成功。
+部署 Node Functions 与 Blob 配置后，先对 preview deployment 运行 smoke，再切换 production deployment。CI 使用精确锁定的 `edgeone@1.6.23` 执行 `edgeone makers deploy`；生产 wrapper 会先验证当前 `/api/health` 的 `configurationReady=true` 与 `generationEnabled`，部署后解析 CLI 输出中的 HTTPS origin 并与 `TARO_APP_EDGEONE_API_BASE_URL` 比对，再要求 health 版本匹配。若 EdgeOne CLI 不输出 URL，默认失败；只有确认供应商该版本不输出 URL 时，才可临时设置 `EDGEONE_ALLOW_MISSING_DEPLOYMENT_ORIGIN=true` 并在 release manifest 记录人工验证证据。`npm run edgeone:deploy -- --dry-run` 不读取凭据，只验证部署包；仓库不假设本机已登录 EdgeOne，因此不会伪造部署成功。
 
 ## 3. 小程序 production 配置
 
@@ -77,6 +77,6 @@ TARO_APP_RELEASE_DISCLOSURE_FILE=docs/wechat/release-disclosure.production.json
 - 服务端以每日生成次数、滚动 60 秒窗口和 `GENERATION_ENABLED=false` 熔断保护免费额度。触及额度、平台限制或异常峰值时保持关闭生成并返回可识别的限制错误，待运营方人工评估后恢复。
 - EdgeOne 的免费额度不包含所选 LLM 供应商的费用。模型 API、内容审核或第三方网关可能单独计费，运营方须在上线前确认余额、限额与账单归属。
 - 每次正式发布前复核微信 `request合法域名` 与 production HTTPS origin 完全一致。根域名不得包含 `/api`、端口、查询参数或凭据。
-- `EDGEONE_API_TOKEN`、微信 AppSecret、HMAC key、`OPENID_ENCRYPTION_KEY`、LLM key 和内容审核凭据至少按供应商策略及事故后立即轮换。轮换时先在 preview 验证新值，再更新 production，保留旧会话兼容窗口并记录版本，不将值写入日志、截图或 Git。
+- EdgeOne runtime 环境变量、GitHub protected secrets、`EDGEONE_API_TOKEN`、微信 AppSecret、HMAC key、`OPENID_ENCRYPTION_KEY`、微信上传私钥、LLM key 和内容审核凭据至少按供应商策略及事故后立即轮换。轮换时先在 preview 验证新值，再更新 production，保留旧会话兼容窗口并记录版本，不将值写入日志、截图或 Git。
 
 官方参考：EdgeOne <https://edgeone.ai/>，微信小程序 request 合法域名 <https://developers.weixin.qq.com/miniprogram/dev/framework/ability/network.html>。

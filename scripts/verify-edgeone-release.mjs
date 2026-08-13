@@ -3,6 +3,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { isProductionEdgeOneApiBaseUrl } from './wechat-release-validation.mjs';
+import { requiredServerRuntimeEnvNames } from './edgeone-release-contracts.mjs';
 
 const repoRoot = dirname(dirname(fileURLToPath(import.meta.url)));
 const args = parseArgs(process.argv.slice(2));
@@ -65,6 +66,15 @@ function verifyStaticContracts() {
   const deploymentWrapper = readFileSync(join(repoRoot, 'scripts/edgeone-deploy.mjs'), 'utf8');
   if (!/['"]makers['"]\s*,\s*['"]deploy['"]/.test(deploymentWrapper)) findings.push('EdgeOne deployment wrapper must use the Makers deploy command');
   if (!deploymentWrapper.includes('--dry-run')) findings.push('EdgeOne deployment wrapper must support credential-free dry runs');
+  if (!deploymentWrapper.includes('assertDeploymentOrigin')) findings.push('EdgeOne deployment wrapper must validate the provider-reported deployment origin');
+  if (!deploymentWrapper.includes('--verify-runtime-env')) findings.push('EdgeOne deployment wrapper must verify runtime configuration before production deploy');
+  if (!deploymentWrapper.includes('configurationReady')) findings.push('EdgeOne deployment wrapper must require configurationReady from health');
+
+  const healthRoute = readFileSync(join(repoRoot, 'services/edgeone/src/routes/health.ts'), 'utf8');
+  if (!/configurationReady/.test(healthRoute)) findings.push('EdgeOne health route must report configuration readiness without exposing secret values');
+
+  const wechatCi = readFileSync(join(repoRoot, 'scripts/wechat-miniprogram-ci.mjs'), 'utf8');
+  if (!/WECHAT_PRIVATE_KEY_PEM/.test(wechatCi) || !/withEphemeralPrivateKeyFile/.test(wechatCi)) findings.push('WeChat CI wrapper must own ephemeral private-key file creation and cleanup');
 
   const clientFiles = [
     join(repoRoot, 'apps/wechat/src'),
@@ -87,6 +97,9 @@ function verifyProductionEnvironment(environment) {
     if (typeof value !== 'string' || value.trim() === '' || /^(?:placeholder|changeme|example|todo|tbd|待配置)$/i.test(value.trim())) {
       findings.push(`production EdgeOne environment requires ${name}`);
     }
+  }
+  for (const name of requiredServerRuntimeEnvNames) {
+    if (!productionVariables.includes(name)) findings.push(`production allowlist omits runtime env ${name}`);
   }
   if (!isProductionEdgeOneApiBaseUrl(environment.TARO_APP_EDGEONE_API_BASE_URL)) findings.push('production EdgeOne environment requires a public HTTPS API origin root');
   if (environment.GENERATION_ENABLED !== 'true' && environment.GENERATION_ENABLED !== 'false') findings.push('GENERATION_ENABLED must be true or false');

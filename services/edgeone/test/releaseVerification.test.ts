@@ -1,6 +1,8 @@
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { pathToFileURL } from 'node:url';
 
 const repoRoot = join(__dirname, '..', '..', '..');
 
@@ -12,7 +14,124 @@ function runNode(script: string, args: string[] = [], env: NodeJS.ProcessEnv = p
   });
 }
 
+function runModule(code: string) {
+  return spawnSync(process.execPath, ['--input-type=module', '-e', code], {
+    cwd: repoRoot,
+    encoding: 'utf8',
+  });
+}
+
 describe('EdgeOne production release gates', () => {
+  test('requires runtime environment checks, parses deployment origins, and validates health contract', async () => {
+    const moduleUrl = pathToFileURL(join(repoRoot, 'scripts', 'edgeone-release-contracts.mjs')).href;
+    const result = runModule(`
+      import * as contracts from ${JSON.stringify(moduleUrl)};
+      const deploymentMismatch = (() => { try { contracts.assertDeploymentOrigin('https://other.example.com', 'https://skill.example.com', false); return false; } catch { return true; } })();
+      const missingOrigin = (() => { try { contracts.assertDeploymentOrigin('deployment completed', 'https://skill.example.com', false); return false; } catch { return true; } })();
+      const missingOriginAllowed = (() => { try { contracts.assertDeploymentOrigin('deployment completed', 'https://skill.example.com', true); return true; } catch { return false; } })();
+      const healthy = (() => { try { contracts.assertHealthContract({ ok: true, data: { service: 'skillscope-edgeone', version: 'build-123', configurationReady: true, generationEnabled: true } }, { version: 'build-123', generationEnabled: true, requireVersion: true }); return true; } catch { return false; } })();
+      const unhealthy = (() => { try { contracts.assertHealthContract({ ok: true, data: { service: 'skillscope-edgeone', version: 'build-123', configurationReady: false, generationEnabled: true } }, { version: 'build-123', generationEnabled: true, requireVersion: true }); return false; } catch { return true; } })();
+      console.log(JSON.stringify({
+        completeMissing: contracts.getMissingRequiredRuntimeEnv({
+          WECHAT_APP_ID: 'wx-runtime-appid',
+          WECHAT_APP_SECRET: 'secret',
+          SESSION_HMAC_KEY: 'session',
+          OWNER_HMAC_KEY: 'owner',
+          OPENID_ENCRYPTION_KEY: 'encrypted-openid-key',
+          LLM_BASE_URL: 'https://llm.example.test',
+          LLM_API_KEY: 'llm-secret',
+          LLM_MODEL: 'model',
+          GENERATION_ENABLED: 'true',
+          EDGEONE_DEPLOYMENT_VERSION: 'build-123',
+        }),
+        incompleteMissing: contracts.getMissingRequiredRuntimeEnv({ WECHAT_APP_ID: 'wx-runtime-appid' }),
+        origins: contracts.extractHttpsOrigins('deployed to https://skill.example.com/api/health and https://other.example.com'),
+        deploymentMismatch,
+        missingOrigin,
+        missingOriginAllowed,
+        healthy,
+        unhealthy,
+      }));
+    `);
+    expect(result.status).toBe(0);
+    const contracts = JSON.parse(result.stdout);
+
+    expect(contracts.completeMissing).toEqual([]);
+    expect(contracts.incompleteMissing).toContain('WECHAT_APP_SECRET');
+    expect(contracts.origins).toEqual(['https://skill.example.com', 'https://other.example.com']);
+    expect(contracts.deploymentMismatch).toBe(true);
+    expect(contracts.missingOrigin).toBe(true);
+    expect(contracts.missingOriginAllowed).toBe(true);
+    expect(contracts.healthy).toBe(true);
+    expect(contracts.unhealthy).toBe(true);
+  });
+
+  test('production deploy fails closed for missing runtime env and mismatched CLI origins', () => {
+    const temp = mkdtempSync(join(tmpdir(), 'edgeone-release-'));
+    const fakeCli = join(temp, process.platform === 'win32' ? 'edgeone.cmd' : 'edgeone');
+    if (process.platform === 'win32') {
+      writeFileSync(fakeCli, '@echo off\r\necho deployed to https://wrong.example.com\r\nexit /b 0\r\n');
+    } else {
+      writeFileSync(fakeCli, '#!/bin/sh\necho deployed to https://wrong.example.com\nexit 0\n');
+      chmodSync(fakeCli, 0o700);
+    }
+    const baseEnv = {
+      ...process.env,
+      NODE_ENV: 'test',
+      EDGEONE_CLI_BIN: fakeCli,
+      EDGEONE_API_TOKEN: 'token-that-must-not-appear',
+      EDGEONE_PROJECT_NAME: 'skillscope',
+      EDGEONE_DEPLOYMENT_VERSION: 'build-123',
+      TARO_APP_EDGEONE_API_BASE_URL: 'https://skill.example.com',
+    };
+
+    const missing = runNode('scripts/edgeone-deploy.mjs', ['--production'], baseEnv);
+    expect(missing.status).not.toBe(0);
+    expect(`${missing.stdout}${missing.stderr}`).toMatch(/runtime environment/i);
+    expect(`${missing.stdout}${missing.stderr}`).not.toContain('token-that-must-not-appear');
+
+    const mismatch = runNode('scripts/edgeone-deploy.mjs', ['--production'], {
+      ...baseEnv,
+      WECHAT_APP_ID: 'wx-runtime-appid',
+      WECHAT_APP_SECRET: 'wechat-secret-that-must-not-appear',
+      SESSION_HMAC_KEY: 'session-secret',
+      OWNER_HMAC_KEY: 'owner-secret',
+      OPENID_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString('base64'),
+      LLM_BASE_URL: 'https://llm.example.test',
+      LLM_API_KEY: 'llm-secret-that-must-not-appear',
+      LLM_MODEL: 'model',
+      GENERATION_ENABLED: 'true',
+    });
+    expect(mismatch.status).not.toBe(0);
+    expect(`${mismatch.stdout}${mismatch.stderr}`).toMatch(/deployment origin/i);
+    expect(`${mismatch.stdout}${mismatch.stderr}`).not.toMatch(/wechat-secret-that-must-not-appear|llm-secret-that-must-not-appear/);
+    rmSync(temp, { recursive: true, force: true });
+  });
+
+  test('miniprogram-ci creates and cleans an ephemeral private key from env pem', async () => {
+    const moduleUrl = pathToFileURL(join(repoRoot, 'scripts', 'wechat-upload-tempfile.mjs')).href;
+    const result = runModule(`
+      import { existsSync } from 'node:fs';
+      import { withEphemeralPrivateKeyFile } from ${JSON.stringify(moduleUrl)};
+      let observedPath = '';
+      let existedDuringCallback = false;
+      try {
+        await withEphemeralPrivateKeyFile('---PRIVATE KEY---', async (privateKeyPath) => {
+          observedPath = privateKeyPath;
+          existedDuringCallback = existsSync(privateKeyPath);
+          throw new Error('upload failed');
+        });
+      } catch {}
+      console.log(JSON.stringify({ observedPath, existedDuringCallback, existsAfter: existsSync(observedPath) }));
+    `);
+    expect(result.status).toBe(0);
+    const cleanup = JSON.parse(result.stdout);
+
+    expect(cleanup.observedPath).toMatch(/wechat-upload/);
+    expect(cleanup.existedDuringCallback).toBe(true);
+    expect(cleanup.existsAfter).toBe(false);
+  });
+
   test('ships a credential-free release verifier and a dry-run deployment wrapper', () => {
     const packageJson = JSON.parse(readFileSync(join(repoRoot, 'package.json'), 'utf8'));
 

