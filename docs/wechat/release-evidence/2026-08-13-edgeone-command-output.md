@@ -186,3 +186,37 @@ EdgeOne release verification passed
 - WeChat public platform must add the production HTTPS origin to `request合法域名`.
 - Production deployment must pass remote `/api/health` with `configurationReady=true`, expected `generationEnabled`, and matching `EDGEONE_DEPLOYMENT_VERSION`.
 - Real iOS/Android smoke, WeChat review submission, and final publish remain external manual gates.
+
+## Latest go-live status update
+
+Generated at: 2026-08-13T18:50:19+08:00
+Head: `69c8c5ddf37675f27e95358736a228b4ef5e8e40`
+
+Remote GitHub Actions for this head:
+
+- CI: success, <https://github.com/KevinChen-1220/technicalEvaluation/actions/runs/31692429728>
+- Pages: success, <https://github.com/KevinChen-1220/technicalEvaluation/actions/runs/31692429977>
+- WeChat Mini Program Release: success, <https://github.com/KevinChen-1220/technicalEvaluation/actions/runs/31692429773>
+
+`WeChat Mini Program Release` was triggered by `push`, so the protected `upload` job was skipped by design. A WeChat draft upload only runs from `workflow_dispatch` with `publish_target=upload`, after the `wechat-production` environment is approved.
+
+Current protected GitHub environment secret names:
+
+```text
+EDGEONE_API_TOKEN
+EDGEONE_DEPLOYMENT_VERSION
+EDGEONE_PROJECT_NAME
+WECHAT_APP_ID
+```
+
+Current go-live readiness check:
+
+```text
+npm run verify:wechat-go-live -- --app-id wx31dd3d7448aac8e3 --api-base-url https://api.skillscope.cn --skip-health
+
+health check skipped; run again without --skip-health before WeChat upload
+GitHub environment wechat-production is missing TARO_APP_EDGEONE_API_BASE_URL
+GitHub environment wechat-production is missing WECHAT_PRIVATE_KEY_PEM
+```
+
+`https://api.skillscope.cn` is only a candidate production origin in this check. It is not proven ready until it is bound to EdgeOne, added to WeChat `request合法域名`, configured as `TARO_APP_EDGEONE_API_BASE_URL`, and passes the same command without `--skip-health`.
