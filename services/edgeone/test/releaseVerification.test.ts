@@ -193,6 +193,41 @@ describe('EdgeOne production release gates', () => {
     expect(deploymentWrapper).toMatch(/EDGEONE_LINKED_PROJECT_FILE/);
   });
 
+  test('generates a console-only runtime environment checklist without deployment secrets', () => {
+    const result = runNode('scripts/edgeone-runtime-env.mjs', ['--app-id', 'wx31dd3d7448aac8e3', '--version', 'build-123']);
+    expect(result.status).toBe(0);
+    const output = result.stdout;
+
+    for (const name of [
+      'WECHAT_APP_ID',
+      'WECHAT_APP_SECRET',
+      'SESSION_HMAC_KEY',
+      'OWNER_HMAC_KEY',
+      'OPENID_ENCRYPTION_KEY',
+      'LLM_BASE_URL',
+      'LLM_API_KEY',
+      'LLM_MODEL',
+      'GENERATION_ENABLED',
+      'EDGEONE_DEPLOYMENT_VERSION',
+    ]) {
+      expect(output).toContain(`${name}=`);
+    }
+    expect(output).toContain('WECHAT_APP_ID=wx31dd3d7448aac8e3');
+    expect(output).toContain('GENERATION_ENABLED=false');
+    expect(output).toContain('EDGEONE_DEPLOYMENT_VERSION=build-123');
+    expect(output).not.toMatch(/EDGEONE_API_TOKEN|TARO_APP_EDGEONE_API_BASE_URL|WECHAT_PRIVATE_KEY_PEM/);
+
+    const values = Object.fromEntries(output.split(/\r?\n/)
+      .filter((line) => /^[A-Z0-9_]+=/.test(line))
+      .map((line) => {
+        const index = line.indexOf('=');
+        return [line.slice(0, index), line.slice(index + 1)];
+      }));
+    for (const name of ['SESSION_HMAC_KEY', 'OWNER_HMAC_KEY', 'OPENID_ENCRYPTION_KEY']) {
+      expect(Buffer.from(values[name] ?? '', 'base64')).toHaveLength(32);
+    }
+  });
+
   test('verifies the EdgeOne artifact, 120-second budget, fixed 50-question contract, and public HTTPS origin', () => {
     const verifier = readFileSync(join(repoRoot, 'scripts', 'verify-edgeone-release.mjs'), 'utf8');
     const edgeoneConfig = readFileSync(join(repoRoot, 'services', 'edgeone', 'edgeone.json'), 'utf8');

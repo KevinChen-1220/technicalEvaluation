@@ -95,6 +95,24 @@ The false configuration flags are expected before production runtime environment
 The EdgeOne CLI deployment log still reported `No environment variables found`; configure production runtime variables in the EdgeOne console before enabling generation.
 The same default `edgeone.cool` origin without the deployment token returned HTTP 401, so a stable public HTTPS origin must still be bound before it can be used as the WeChat request legal domain.
 
+### npx edgeone@1.6.23 makers env ls/pull/set
+
+Status: exit 0 but no persisted environment values
+
+```text
+npx edgeone@1.6.23 makers env ls
+<no output>
+npx edgeone@1.6.23 makers env pull
+ENV_LENGTH=0
+npx edgeone@1.6.23 makers env set EDGEONE_DEPLOYMENT_VERSION <current-sha>
+--- after set: ls ---
+<no output>
+--- after set: pull ---
+ENV_LENGTH=0
+```
+
+This confirms that runtime environment variables still need to be entered in the EdgeOne console for this project. Use `node scripts/edgeone-runtime-env.mjs --app-id wx31dd3d7448aac8e3 --version <commit-sha>` to generate a console-only checklist with fresh random server keys.
+
 ### GitHub environment update
 
 Status: exit 0
