@@ -25,12 +25,17 @@ export function extractHttpsOrigins(output) {
   for (const match of String(output ?? '').matchAll(/https:\/\/[^\s"'<>),\]]+/gi)) {
     try {
       const url = new URL(match[0]);
+      if (isProviderConsoleOrigin(url.origin)) continue;
       origins.add(url.origin);
     } catch {
       // Ignore non-URL fragments that only look like URLs.
     }
   }
   return [...origins];
+}
+
+function isProviderConsoleOrigin(origin) {
+  return /^https:\/\/console\.cloud\.tencent\.com$/i.test(origin);
 }
 
 export function assertDeploymentOrigin(output, expectedOrigin, allowMissingOrigin) {

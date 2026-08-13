@@ -30,6 +30,7 @@ describe('EdgeOne production release gates', () => {
       const mixedDeploymentOutput = (() => { try { contracts.assertDeploymentOrigin('deployed https://wrong.example.com also https://skill.example.com', 'https://skill.example.com', false); return false; } catch { return true; } })();
       const missingOrigin = (() => { try { contracts.assertDeploymentOrigin('deployment completed', 'https://skill.example.com', false); return false; } catch { return true; } })();
       const missingOriginAllowed = (() => { try { contracts.assertDeploymentOrigin('deployment completed', 'https://skill.example.com', true); return true; } catch { return false; } })();
+      const consoleOriginIgnored = (() => { try { contracts.assertDeploymentOrigin('Deploy URL: https://skill.example.com?eo_token=redacted Console URL: https://console.cloud.tencent.com/edgeone/pages/project/1', 'https://skill.example.com', false); return true; } catch { return false; } })();
       const healthy = (() => { try { contracts.assertHealthContract({ ok: true, data: { service: 'skillscope-edgeone', version: 'build-123', configurationReady: true, generationEnabled: true } }, { version: 'build-123', generationEnabled: true, requireVersion: true }); return true; } catch { return false; } })();
       const unhealthy = (() => { try { contracts.assertHealthContract({ ok: true, data: { service: 'skillscope-edgeone', version: 'build-123', configurationReady: false, generationEnabled: true } }, { version: 'build-123', generationEnabled: true, requireVersion: true }); return false; } catch { return true; } })();
       console.log(JSON.stringify({
@@ -51,6 +52,7 @@ describe('EdgeOne production release gates', () => {
         mixedDeploymentOutput,
         missingOrigin,
         missingOriginAllowed,
+        consoleOriginIgnored,
         healthy,
         unhealthy,
       }));
@@ -65,6 +67,7 @@ describe('EdgeOne production release gates', () => {
     expect(contracts.mixedDeploymentOutput).toBe(true);
     expect(contracts.missingOrigin).toBe(true);
     expect(contracts.missingOriginAllowed).toBe(true);
+    expect(contracts.consoleOriginIgnored).toBe(true);
     expect(contracts.healthy).toBe(true);
     expect(contracts.unhealthy).toBe(true);
   });
