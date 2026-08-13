@@ -45,7 +45,8 @@
     "wechat:ci:dry-run": "node scripts/wechat-miniprogram-ci.mjs --mode dry-run",
     "wechat:ci:preview": "node scripts/wechat-miniprogram-ci.mjs --mode preview",
     "wechat:ci:upload": "node scripts/wechat-miniprogram-ci.mjs --mode upload",
-    "wechat:devtools:smoke": "node scripts/wechat-devtools-smoke.mjs"
+    "wechat:devtools:smoke": "node scripts/wechat-devtools-smoke.mjs",
+    "wechat:devtools:test-upload": "node scripts/wechat-devtools-test-upload.mjs"
   },
   "dependencies": {
     "@expo/metro-runtime": "~5.0.5",

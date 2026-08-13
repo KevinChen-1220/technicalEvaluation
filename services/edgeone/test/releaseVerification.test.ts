@@ -212,6 +212,78 @@ describe('EdgeOne production release gates', () => {
     expect(devtoolsSmoke).not.toMatch(/\['compile project'/);
   });
 
+  test('uploads a test build through the logged-in WeChat DevTools CLI without upload private keys', () => {
+    const temp = mkdtempSync(join(tmpdir(), 'wechat-devtools-upload-'));
+    const projectPath = join(temp, 'wechat');
+    const dist = join(projectPath, 'dist');
+    mkdirSync(dist, { recursive: true });
+    writeFileSync(join(projectPath, 'project.config.json'), JSON.stringify({ miniprogramRoot: 'dist/', appid: 'touristappid' }));
+    writeFileSync(join(projectPath, 'project.private.config.json'), JSON.stringify({ appid: 'wx31dd3d7448aac8e3' }));
+    writeFileSync(join(dist, 'app.js'), 'console.log("test build");');
+    const fakeCli = join(temp, process.platform === 'win32' ? 'cli.cmd' : 'cli');
+    const calls = join(temp, 'calls.log');
+    if (process.platform === 'win32') {
+      writeFileSync(fakeCli, [
+        '@echo off',
+        `echo %* >> "${calls}"`,
+        'if "%1"=="islogin" echo {"login":true}',
+        'if "%1"=="upload" echo {"size":{"total":398776}}',
+        'if "%1"=="preview" echo {"size":{"total":398776}}',
+        'exit /b 0',
+      ].join('\r\n'));
+    } else {
+      writeFileSync(fakeCli, [
+        '#!/bin/sh',
+        `printf '%s\\n' "$*" >> "${calls}"`,
+        'if [ "$1" = "islogin" ]; then echo \'{"login":true}\'; fi',
+        'if [ "$1" = "upload" ]; then echo \'{"size":{"total":398776}}\'; fi',
+        'if [ "$1" = "preview" ]; then echo \'{"size":{"total":398776}}\'; fi',
+        'exit 0',
+      ].join('\n'));
+      chmodSync(fakeCli, 0o700);
+    }
+    const evidence = join(temp, 'test-upload.md');
+    const previewQr = join(temp, 'preview.png');
+    const result = runNode('scripts/wechat-devtools-test-upload.mjs', [
+      '--cli',
+      fakeCli,
+      '--project-path',
+      projectPath,
+      '--version',
+      '1.0.0-test.20260813',
+      '--description',
+      'SkillScope EdgeOne test upload',
+      '--evidence',
+      evidence,
+      '--preview-qrcode-output',
+      previewQr,
+    ], {
+      ...process.env,
+      WECHAT_PRIVATE_KEY_PEM: 'mock-upload-private-key-that-must-not-appear',
+      WECHAT_DEVTOOLS_CLI_TOKEN: 'devtools-token-that-must-not-appear',
+    });
+
+    expect(result.status).toBe(0);
+    const output = `${result.stdout}${result.stderr}`;
+    expect(output).toContain('WeChat DevTools test upload completed');
+    expect(output).not.toContain('mock-upload-private-key-that-must-not-appear');
+    expect(output).not.toContain('devtools-token-that-must-not-appear');
+    const callLog = readFileSync(calls, 'utf8');
+    expect(callLog).toContain('islogin');
+    expect(callLog).toContain('upload --project');
+    expect(callLog).toContain('--version 1.0.0-test.20260813');
+    expect(callLog).toContain('preview --project');
+    expect(callLog).not.toContain('private-key');
+    expect(callLog).not.toContain('devtools-token-that-must-not-appear');
+    const evidenceText = readFileSync(evidence, 'utf8');
+    expect(evidenceText).toContain('AppID: wx31dd3d7448aac8e3');
+    expect(evidenceText).toContain('Version: 1.0.0-test.20260813');
+    expect(evidenceText).toContain('Preview QR:');
+    expect(evidenceText).not.toContain('mock-upload-private-key');
+    expect(evidenceText).not.toContain('devtools-token');
+    rmSync(temp, { recursive: true, force: true });
+  });
+
   test('generates a console-only runtime environment checklist without deployment secrets', () => {
     const result = runNode('scripts/edgeone-runtime-env.mjs', ['--app-id', 'wx31dd3d7448aac8e3', '--version', 'build-123']);
     expect(result.status).toBe(0);
