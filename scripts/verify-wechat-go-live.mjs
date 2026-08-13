@@ -1,4 +1,6 @@
 import { spawnSync } from 'node:child_process';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import { isProductionEdgeOneApiBaseUrl } from './wechat-release-validation.mjs';
 
 const args = parseArgs(process.argv.slice(2));
@@ -46,6 +48,11 @@ if (args.fromEnv) {
   } else {
     findings.push(githubSecrets.message);
   }
+}
+
+if (findings.length === 0) {
+  const dns = await inspectDns(apiBaseUrl, args);
+  if (!dns.ok) findings.push(dns.message);
 }
 
 if (!args.skipHealth && findings.length === 0) {
@@ -108,6 +115,72 @@ function hasUsableValue(value) {
     && !/^(?:placeholder|changeme|example|todo|tbd|待配置|replace-)/i.test(value.trim());
 }
 
+async function inspectDns(origin, options) {
+  let host = '';
+  try {
+    host = new URL(origin).hostname;
+  } catch {
+    return { ok: false, message: 'TARO_APP_EDGEONE_API_BASE_URL must be a valid HTTPS origin before DNS verification' };
+  }
+  const addresses = options.dnsResult
+    ? splitList(options.dnsResult)
+    : await resolveHost(host);
+  const publicAddresses = addresses.filter(isPublicAddress);
+  if (addresses.length === 0) return { ok: false, message: 'production request domain DNS lookup returned no addresses' };
+  if (publicAddresses.length === 0) {
+    return { ok: false, message: 'production request domain DNS resolves only to non-public addresses; verify a publicly reachable HTTPS origin before WeChat upload' };
+  }
+  return { ok: true };
+}
+
+async function resolveHost(host) {
+  try {
+    const records = await lookup(host, { all: true });
+    return records.map((record) => record.address).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+function splitList(value) {
+  return String(value).split(',').map((item) => item.trim()).filter(Boolean);
+}
+
+function isPublicAddress(address) {
+  const kind = isIP(address);
+  if (kind === 4) return isPublicIpv4(address);
+  if (kind === 6) return isPublicIpv6(address);
+  return false;
+}
+
+function isPublicIpv4(address) {
+  const parts = address.split('.').map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false;
+  const [a, b] = parts;
+  if (a === 0 || a === 10 || a === 127 || a >= 224) return false;
+  if (a === 100 && b >= 64 && b <= 127) return false;
+  if (a === 169 && b === 254) return false;
+  if (a === 172 && b >= 16 && b <= 31) return false;
+  if (a === 192 && b === 168) return false;
+  if (a === 192 && b === 0) return false;
+  if (a === 198 && (b === 18 || b === 19)) return false;
+  if (a === 198 && b === 51) return false;
+  if (a === 203 && b === 0) return false;
+  return true;
+}
+
+function isPublicIpv6(address) {
+  const normalized = address.toLowerCase();
+  return !(
+    normalized === '::'
+    || normalized === '::1'
+    || normalized.startsWith('fc')
+    || normalized.startsWith('fd')
+    || normalized.startsWith('fe80')
+    || normalized.startsWith('2001:db8')
+  );
+}
+
 async function fetchHealth(origin) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 15_000);
@@ -152,6 +225,7 @@ function parseArgs(values) {
     if (key === '--app-id') parsed.appId = value;
     else if (key === '--api-base-url') parsed.apiBaseUrl = value;
     else if (key === '--github-env') parsed.githubEnv = value;
+    else if (key === '--dns-result') parsed.dnsResult = value;
     else fail(`Unsupported go-live readiness argument: ${key}`);
     index += 1;
   }
