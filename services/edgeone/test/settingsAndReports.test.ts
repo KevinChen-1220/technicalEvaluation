@@ -65,6 +65,41 @@ describe('settings and reports', () => {
     await expect(blob.get('reports/owner-a/z-expired.json')).resolves.toBeNull();
   });
 
+  test('cleans an expired records report left behind when ordered index creation fails', async () => {
+    const blob = new MemoryBlobPort();
+    let failNextIndexWrite = true;
+    const failingIndexBlob: MemoryBlobPort = {
+      records: blob.records,
+      get: blob.get.bind(blob),
+      put: jest.fn(async (key: string, value: unknown, options?: Parameters<MemoryBlobPort['put']>[2]) => {
+        if (key === 'reports/owner-a/index/2026-08-10T00%3A00%3A00.000Z/orphan.json' && failNextIndexWrite) {
+          failNextIndexWrite = false;
+          throw new Error('index write failed');
+        }
+        await blob.put(key, value, options);
+      }),
+      delete: blob.delete.bind(blob),
+      list: blob.list.bind(blob),
+    };
+    const reportsWithFailingIndex = new BlobReportRepository(failingIndexBlob, {
+      now: () => new Date('2026-08-11T00:00:00.000Z'), retentionDays: 1, cleanupLimit: 20,
+    });
+
+    await expect(reportsWithFailingIndex.create({
+      id: 'orphan', ownerKey: 'owner-a', reason: 'other', createdAt: '2026-08-10T00:00:00.000Z', updatedAt: '2026-08-10T00:00:00.000Z',
+    })).rejects.toThrow('index write failed');
+    await expect(blob.get('reports/owner-a/records/orphan.json')).resolves.toEqual(expect.objectContaining({ id: 'orphan' }));
+
+    const reports = new BlobReportRepository(blob, {
+      now: () => new Date('2026-08-12T00:00:00.000Z'), retentionDays: 1, cleanupLimit: 20,
+    });
+    await reports.create({
+      id: 'new', ownerKey: 'owner-a', reason: 'other', createdAt: '2026-08-12T00:00:00.000Z', updatedAt: '2026-08-12T00:00:00.000Z',
+    });
+
+    await expect(blob.get('reports/owner-a/records/orphan.json')).resolves.toBeNull();
+  });
+
   test('uses strong and bounded report discovery', async () => {
     const blob = new MemoryBlobPort();
     const list = jest.spyOn(blob, 'list');

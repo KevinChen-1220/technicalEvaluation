@@ -54,6 +54,12 @@ export class BlobReportRepository {
       await this.blob.delete(this.legacyKey(ownerKey, record.id));
       remaining -= 1;
     }
+    for (const record of await this.allRecordReports(ownerKey)) {
+      if (remaining === 0) return;
+      if (new Date(record.createdAt).getTime() >= this.cutoff()) continue;
+      await this.blob.delete(this.recordKey(ownerKey, record.id));
+      remaining -= 1;
+    }
   }
 
   private async records(ownerKey: string): Promise<ReportRecord[]> {
@@ -67,6 +73,12 @@ export class BlobReportRepository {
 
   private async legacyRecords(ownerKey: string): Promise<ReportRecord[]> {
     const keys = (await this.blob.list(this.prefix(ownerKey), { consistency: 'strong', directories: true })).blobs;
+    const records = await Promise.all(keys.map((key) => this.blob.get<ReportRecord>(key, { consistency: 'strong' })));
+    return records.filter((record): record is ReportRecord => record !== null && record.ownerKey === ownerKey);
+  }
+
+  private async allRecordReports(ownerKey: string): Promise<ReportRecord[]> {
+    const keys = (await this.blob.list(this.recordsPrefix(ownerKey), { consistency: 'strong' })).blobs;
     const records = await Promise.all(keys.map((key) => this.blob.get<ReportRecord>(key, { consistency: 'strong' })));
     return records.filter((record): record is ReportRecord => record !== null && record.ownerKey === ownerKey);
   }

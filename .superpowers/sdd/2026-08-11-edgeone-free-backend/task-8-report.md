@@ -166,3 +166,47 @@ npm run build:edgeone
 ```
 
 Output: all commands exited 0. WeChat: `16` suites and `86` tests passed. EdgeOne: `18` suites and `147` tests passed. The EdgeOne cloud-function artifacts were regenerated from the tested sources.
+
+## Round 3 RED Evidence
+
+Command:
+
+```sh
+npm run test:edgeone -- --runInBand services/edgeone/test/settingsAndReports.test.ts
+```
+
+Output: exit 1. The new regression `cleans an expired records report left behind when ordered index creation fails` failed because `reports/owner-a/records/orphan.json` still contained the expired orphan after later report creation cleanup:
+
+```text
+expect(received).resolves.toBeNull()
+
+Received: {"createdAt": "2026-08-10T00:00:00.000Z", "id": "orphan", "ownerKey": "owner-a", "reason": "other", "updatedAt": "2026-08-10T00:00:00.000Z"}
+```
+
+## Round 3 GREEN Evidence
+
+Command:
+
+```sh
+npm run test:edgeone -- --runInBand services/edgeone/test/settingsAndReports.test.ts
+```
+
+Output: exit 0. `18` suites passed; `148` tests passed.
+
+## Round 3 Final Verification
+
+Command:
+
+```sh
+npm run test:edgeone -- --runInBand
+```
+
+Output: exit 0. `18` suites passed; `148` tests passed.
+
+Command:
+
+```sh
+npm run build:edgeone
+```
+
+Output: exit 0. EdgeOne cloud-function artifacts were regenerated from the tested sources.
