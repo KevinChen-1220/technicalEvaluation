@@ -517,6 +517,23 @@ describe('EdgeOne production release gates', () => {
     rmSync(temp, { recursive: true, force: true });
   });
 
+  test('shares WeChat domain readiness checks across status, go-live, and candidate scripts', () => {
+    const shared = readFileSync(join(repoRoot, 'scripts', 'wechat-domain-readiness.mjs'), 'utf8');
+    const status = readFileSync(join(repoRoot, 'scripts', 'wechat-go-live-status.mjs'), 'utf8');
+    const goLive = readFileSync(join(repoRoot, 'scripts', 'verify-wechat-go-live.mjs'), 'utf8');
+    const candidate = readFileSync(join(repoRoot, 'scripts', 'wechat-domain-candidate.mjs'), 'utf8');
+
+    expect(shared).toContain('inspectDns');
+    expect(shared).toContain('inspectHealth');
+    expect(shared).toContain('isPublicAddress');
+    expect(status).toContain("from './wechat-domain-readiness.mjs'");
+    expect(goLive).toContain("from './wechat-domain-readiness.mjs'");
+    expect(candidate).toContain("from './wechat-domain-readiness.mjs'");
+    expect(status).not.toMatch(/function isPublicIpv4/);
+    expect(goLive).not.toMatch(/function isPublicIpv4/);
+    expect(candidate).not.toMatch(/function isPublicIpv4/);
+  });
+
   test('checks candidate WeChat request domains without accepting preview or path URLs', () => {
     const preview = runNode('scripts/wechat-domain-candidate.mjs', [
       '--api-base-url',
