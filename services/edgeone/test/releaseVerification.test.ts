@@ -547,6 +547,7 @@ describe('EdgeOne production release gates', () => {
     ]));
     expect(report.nextCommands).toEqual(expect.arrayContaining([
       'npm run wechat:domain-candidate -- --url https://api.skillscope.cn --json',
+      'node scripts/edgeone-runtime-env.mjs --app-id wx31dd3d7448aac8e3 --version <edgeone-deployment-version>',
       'npm run wechat:configure-production-secrets -- --api-base-url https://api.skillscope.cn --private-key-path <wechat-upload-private-key.pem>',
       'npm run wechat:go-live-status -- --app-id wx31dd3d7448aac8e3 --api-base-url https://api.skillscope.cn --json',
     ]));

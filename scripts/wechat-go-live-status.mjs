@@ -180,6 +180,7 @@ function buildNextCommands({ apiBaseUrl, appId, disclosureFile }) {
     : '<wechat-app-id>';
   return [
     `npm run wechat:domain-candidate -- --url ${origin} --json`,
+    `node scripts/edgeone-runtime-env.mjs --app-id ${miniProgramAppId} --version <edgeone-deployment-version>`,
     `npm run wechat:configure-production-secrets -- --api-base-url ${origin} --private-key-path <wechat-upload-private-key.pem>`,
     [
       'npm run wechat:create-production-disclosure --',
