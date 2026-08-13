@@ -120,10 +120,13 @@ describe('EdgeOne production release gates', () => {
       ].join('\n'));
       chmodSync(fakeCli, 0o700);
     }
+    const linkedProjectFile = join(temp, 'project.json');
+    writeFileSync(linkedProjectFile, JSON.stringify({ Name: 'skillscope-ci-linked', ProjectId: 'makers-test' }));
     const result = runNode('scripts/edgeone-deploy.mjs', ['--production', '--local-login'], {
       ...process.env,
       NODE_ENV: 'test',
       EDGEONE_CLI_BIN: fakeCli,
+      EDGEONE_LINKED_PROJECT_FILE: linkedProjectFile,
       EDGEONE_DEPLOYMENT_VERSION: 'build-123',
       TARO_APP_EDGEONE_API_BASE_URL: 'https://skill.example.com',
       EDGEONE_API_TOKEN: '',
@@ -133,7 +136,7 @@ describe('EdgeOne production release gates', () => {
     expect(result.status).toBe(0);
     const args = readFileSync(marker, 'utf8');
     expect(args).toContain('makers deploy');
-    expect(args).toContain('-n skillscope-wechat');
+    expect(args).toContain('-n skillscope-ci-linked');
     expect(args).not.toContain('-t');
     expect(`${result.stdout}${result.stderr}`).not.toMatch(/EDGEONE_API_TOKEN|token-that-must-not-appear/i);
     rmSync(temp, { recursive: true, force: true });
@@ -184,6 +187,7 @@ describe('EdgeOne production release gates', () => {
     expect(deploymentWrapper).toMatch(/cwd: serviceRoot/);
     expect(deploymentWrapper).toMatch(/api-node['"],\s*['"]config\.json/);
     expect(deploymentWrapper).toMatch(/--local-login/);
+    expect(deploymentWrapper).toMatch(/EDGEONE_LINKED_PROJECT_FILE/);
   });
 
   test('verifies the EdgeOne artifact, 120-second budget, fixed 50-question contract, and public HTTPS origin', () => {

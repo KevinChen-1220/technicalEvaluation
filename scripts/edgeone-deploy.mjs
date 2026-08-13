@@ -122,7 +122,7 @@ function resolveProjectName() {
   const configured = process.env.EDGEONE_PROJECT_NAME;
   if (typeof configured === 'string' && configured.trim() !== '') return configured.trim();
   if (!args.localLogin) fail('EdgeOne deployment requires EDGEONE_PROJECT_NAME');
-  const linkedProjectPath = join(serviceRoot, '.edgeone', 'project.json');
+  const linkedProjectPath = linkedProjectFilePath();
   if (!existsSync(linkedProjectPath)) fail('EdgeOne local-login deployment requires a linked EdgeOne project');
   try {
     const linked = JSON.parse(readFileSync(linkedProjectPath, 'utf8'));
@@ -131,6 +131,12 @@ function resolveProjectName() {
     fail('EdgeOne linked project file is not readable');
   }
   fail('EdgeOne linked project file is missing a project name');
+}
+
+function linkedProjectFilePath() {
+  const configured = process.env.EDGEONE_LINKED_PROJECT_FILE;
+  if (typeof configured === 'string' && configured.trim() !== '') return configured.trim();
+  return join(serviceRoot, '.edgeone', 'project.json');
 }
 
 function safe(value) {
