@@ -6,7 +6,7 @@ const expected = {
   assetPrefix: '/technicalEvaluation/',
   canonicalUrl: 'https://kevinchen-1220.github.io/technicalEvaluation/',
   description:
-    '使用自己的 OpenAI 兼容模型生成 50 或 100 道技能测评题，并在本地完成答题、评分和复盘。',
+    '使用自己的 OpenAI 兼容模型生成固定 50 道技能测评题，并在本地完成答题、评分和复盘。',
   faviconUrl: '/technicalEvaluation/favicon.svg',
   manifestUrl: '/technicalEvaluation/manifest.json',
   socialImageUrl: 'https://kevinchen-1220.github.io/technicalEvaluation/social-preview.png',
