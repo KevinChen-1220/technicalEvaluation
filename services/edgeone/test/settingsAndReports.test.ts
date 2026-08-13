@@ -39,9 +39,9 @@ describe('settings and reports', () => {
     });
     await reports.create({ id: 'new', ownerKey: 'owner-a', reason: 'other', createdAt: '2027-08-12T00:00:00.000Z', updatedAt: '2027-08-12T00:00:00.000Z' });
 
-    expect([...blob.records.keys()]).toEqual([
-      'reports/owner-a/records/new.json',
+    expect([...blob.records.keys()].sort()).toEqual([
       'reports/owner-a/index/2027-08-12T00%3A00%3A00.000Z/new.json',
+      'reports/owner-a/records/new.json',
     ]);
   });
 
@@ -65,7 +65,7 @@ describe('settings and reports', () => {
     await expect(blob.get('reports/owner-a/z-expired.json')).resolves.toBeNull();
   });
 
-  test('cleans an expired records report left behind when ordered index creation fails', async () => {
+  test('does not write a records report when ordered index creation fails', async () => {
     const blob = new MemoryBlobPort();
     let failNextIndexWrite = true;
     const failingIndexBlob: MemoryBlobPort = {
@@ -88,7 +88,14 @@ describe('settings and reports', () => {
     await expect(reportsWithFailingIndex.create({
       id: 'orphan', ownerKey: 'owner-a', reason: 'other', createdAt: '2026-08-10T00:00:00.000Z', updatedAt: '2026-08-10T00:00:00.000Z',
     })).rejects.toThrow('index write failed');
-    await expect(blob.get('reports/owner-a/records/orphan.json')).resolves.toEqual(expect.objectContaining({ id: 'orphan' }));
+    await expect(blob.get('reports/owner-a/records/orphan.json')).resolves.toBeNull();
+  });
+
+  test('cleans an expired records report left behind by the previous write order', async () => {
+    const blob = new MemoryBlobPort();
+    await blob.put('reports/owner-a/records/orphan.json', {
+      id: 'orphan', ownerKey: 'owner-a', reason: 'other', createdAt: '2026-08-10T00:00:00.000Z', updatedAt: '2026-08-10T00:00:00.000Z',
+    });
 
     const reports = new BlobReportRepository(blob, {
       now: () => new Date('2026-08-12T00:00:00.000Z'), retentionDays: 1, cleanupLimit: 20,
@@ -98,6 +105,44 @@ describe('settings and reports', () => {
     });
 
     await expect(blob.get('reports/owner-a/records/orphan.json')).resolves.toBeNull();
+  });
+
+  test('does not scan every healthy record during report creation cleanup', async () => {
+    const blob = new MemoryBlobPort();
+    for (let index = 0; index < 500; index += 1) {
+      const id = `healthy-${String(index).padStart(3, '0')}`;
+      await blob.put(`reports/owner-a/records/${id}.json`, {
+        id, ownerKey: 'owner-a', reason: 'other', createdAt: '2026-08-11T00:00:00.000Z', updatedAt: '2026-08-11T00:00:00.000Z',
+      });
+      await blob.put(`reports/owner-a/index/2026-08-11T00%3A00%3A00.000Z/${id}.json`, {
+        id, createdAt: '2026-08-11T00:00:00.000Z',
+      });
+    }
+    let recordReads = 0;
+    const listCalls: Array<{ prefix: string | undefined; limit: number | undefined }> = [];
+    const countingBlob: MemoryBlobPort = {
+      records: blob.records,
+      get: async <T>(key: string, options?: Parameters<MemoryBlobPort['get']>[1]) => {
+        if (key.startsWith('reports/owner-a/records/')) recordReads += 1;
+        return await blob.get<T>(key, options);
+      },
+      put: blob.put.bind(blob),
+      delete: blob.delete.bind(blob),
+      list: jest.fn(async (prefix?: string, options?: Parameters<MemoryBlobPort['list']>[1]) => {
+        listCalls.push({ prefix, limit: options?.limit });
+        return await blob.list(prefix, options);
+      }),
+    };
+    const reports = new BlobReportRepository(countingBlob, {
+      now: () => new Date('2026-08-12T00:00:00.000Z'), retentionDays: 2, cleanupLimit: 20,
+    });
+
+    await reports.create({
+      id: 'new', ownerKey: 'owner-a', reason: 'other', createdAt: '2026-08-12T00:00:00.000Z', updatedAt: '2026-08-12T00:00:00.000Z',
+    });
+
+    expect(recordReads).toBeLessThanOrEqual(20);
+    expect(listCalls).not.toContainEqual({ prefix: 'reports/owner-a/records/', limit: undefined });
   });
 
   test('uses strong and bounded report discovery', async () => {

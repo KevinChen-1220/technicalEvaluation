@@ -210,3 +210,46 @@ npm run build:edgeone
 ```
 
 Output: exit 0. EdgeOne cloud-function artifacts were regenerated from the tested sources.
+
+## Round 4 RED Evidence
+
+Command:
+
+```sh
+npm run test:edgeone -- --runInBand services/edgeone/test/settingsAndReports.test.ts
+```
+
+Output: exit 1. The new regression `does not scan every healthy record during report creation cleanup` failed because one report creation read every healthy record under `records/`:
+
+```text
+Expected: <= 20
+Received:    500
+```
+
+## Round 4 GREEN Evidence
+
+Command:
+
+```sh
+npm run test:edgeone -- --runInBand services/edgeone/test/settingsAndReports.test.ts
+```
+
+Output: exit 0. `18` suites passed; `150` tests passed.
+
+## Round 4 Final Verification
+
+Command:
+
+```sh
+npm run test:edgeone -- --runInBand
+```
+
+Output: exit 0. `18` suites passed; `150` tests passed.
+
+Command:
+
+```sh
+npm run build:edgeone
+```
+
+Output: exit 0. EdgeOne cloud-function artifacts were regenerated from the tested sources.

@@ -1333,11 +1333,11 @@ var BlobReportRepository = class {
   async create(record) {
     const written = JSON.parse(JSON.stringify(record));
     await this.cleanupExpired(written.ownerKey);
-    await this.blob.put(this.recordKey(written.ownerKey, written.id), written, { onlyIfNew: true });
     await this.blob.put(this.indexKey(written.ownerKey, written.createdAt, written.id), {
       id: written.id,
       createdAt: written.createdAt
     }, { onlyIfNew: true });
+    await this.blob.put(this.recordKey(written.ownerKey, written.id), written, { onlyIfNew: true });
     return written;
   }
   async list(ownerKey) {
@@ -1366,7 +1366,7 @@ var BlobReportRepository = class {
       await this.blob.delete(this.legacyKey(ownerKey, record.id));
       remaining -= 1;
     }
-    for (const record of await this.allRecordReports(ownerKey)) {
+    for (const record of await this.orphanRecordCandidates(ownerKey, remaining)) {
       if (remaining === 0) return;
       if (new Date(record.createdAt).getTime() >= this.cutoff()) continue;
       await this.blob.delete(this.recordKey(ownerKey, record.id));
@@ -1386,8 +1386,8 @@ var BlobReportRepository = class {
     const records = await Promise.all(keys.map((key) => this.blob.get(key, { consistency: "strong" })));
     return records.filter((record) => record !== null && record.ownerKey === ownerKey);
   }
-  async allRecordReports(ownerKey) {
-    const keys = (await this.blob.list(this.recordsPrefix(ownerKey), { consistency: "strong" })).blobs;
+  async orphanRecordCandidates(ownerKey, limit) {
+    const keys = (await this.blob.list(this.recordsPrefix(ownerKey), { consistency: "strong", limit })).blobs;
     const records = await Promise.all(keys.map((key) => this.blob.get(key, { consistency: "strong" })));
     return records.filter((record) => record !== null && record.ownerKey === ownerKey);
   }
