@@ -1,11 +1,21 @@
-import type { AssessmentPaper } from '@dynamic-assessment/assessment-core';
+import { ASSESSMENT_QUESTION_COUNT, validateAssessmentPaper, type AssessmentPaper, type AssessmentQuestion } from '@dynamic-assessment/assessment-core';
 import type { AssessmentRecord } from '../storage/assessmentRepository';
 import type { CompletionInput } from './openAIClient';
-import { parseAssessment } from './parseAssessment';
+import { parseAssessmentBatch } from './parseAssessment';
 import type { Deadline } from '../http/deadline';
 import { assertWithinDeadline, withinDeadline } from '../http/deadline';
+import { ApiError } from '../http/errors';
 
-export type GenerateAssessmentInput = CompletionInput & { ownerKey: string; openId: string; assessmentId: string };
+const batchSize = 10;
+const totalBatches = ASSESSMENT_QUESTION_COUNT / batchSize;
+
+export type GenerateAssessmentInput = {
+  topic: string;
+  notes?: string;
+  ownerKey: string;
+  openId: string;
+  assessmentId: string;
+};
 
 export interface GenerateAssessmentDependencies {
   complete(input: CompletionInput, deadline?: Deadline): Promise<string>;
@@ -25,13 +35,35 @@ export async function generateFiftyQuestionAssessment(
     ...(input.notes === undefined ? {} : { notes: input.notes }),
   }), input.openId, deadline);
   if (deadline !== undefined) assertWithinDeadline(deadline);
-  const raw = await dependencies.complete({
-    topic: input.topic,
-    ...(input.notes === undefined ? {} : { notes: input.notes }),
-  }, deadline);
-  if (deadline !== undefined) assertWithinDeadline(deadline);
   const generatedAt = dependencies.now().toISOString();
-  const paper = parseAssessment(raw, { assessmentId: input.assessmentId, topic: input.topic, generatedAt });
+  const questions: AssessmentQuestion[] = [];
+  let scoring: AssessmentPaper['scoring'] | undefined;
+  for (let batchNumber = 0; batchNumber < totalBatches; batchNumber += 1) {
+    const includeScoring = batchNumber === 0;
+    const raw = await dependencies.complete({
+      topic: input.topic,
+      ...(input.notes === undefined ? {} : { notes: input.notes }),
+      questionCount: batchSize,
+      batchNumber,
+      totalBatches,
+      includeScoring,
+    }, deadline);
+    if (deadline !== undefined) assertWithinDeadline(deadline);
+    const batch = parseAssessmentBatch(raw, includeScoring);
+    questions.push(...batch.questions);
+    if (batch.scoring !== undefined) scoring = batch.scoring;
+  }
+  if (scoring === undefined) throw invalidModelResponse();
+  const paper = {
+    id: input.assessmentId,
+    topic: input.topic,
+    questionCount: ASSESSMENT_QUESTION_COUNT,
+    generatedAt,
+    scoring,
+    questions: questions.map((question, index) => ({ ...question, id: `q${index + 1}` })),
+  };
+  const validation = validateAssessmentPaper(paper);
+  if (!validation.ok || validation.paper.questionCount !== ASSESSMENT_QUESTION_COUNT) throw invalidModelResponse();
   await dependencies.checkText(moderationText(paper), input.openId, deadline);
   if (deadline !== undefined) assertWithinDeadline(deadline);
   const persistence = dependencies.createIfAbsent({
@@ -39,7 +71,7 @@ export async function generateFiftyQuestionAssessment(
     ownerKey: input.ownerKey,
     revision: 1,
     status: 'draft',
-    paper,
+    paper: validation.paper,
     answers: {},
     result: null,
     createdAt: generatedAt,
@@ -47,6 +79,10 @@ export async function generateFiftyQuestionAssessment(
     submittedAt: null,
   });
   return deadline === undefined ? await persistence : await withinDeadline(persistence, deadline);
+}
+
+function invalidModelResponse(): ApiError {
+  return new ApiError('INVALID_MODEL_RESPONSE', 502, true);
 }
 
 function moderationText(paper: AssessmentPaper): string {

@@ -6,11 +6,16 @@ import { parseAssessment } from '../src/generation/parseAssessment';
 
 const fixedNow = new Date('2026-08-11T08:00:00.000Z');
 
-describe('single-call assessment generation', () => {
-  test('repairs fenced JSON, normalizes ids, moderates both sides, and persists exactly 50 questions once', async () => {
-    const questions = makeQuestions(50).map((question, index) => ({ ...question, id: `model-${index}` }));
-    const raw = `Model preface\n\`\`\`json\n${JSON.stringify({ questions, scoring: scoring() }).replace(/}$/, ',}')}\n\`\`\`\nDone`;
-    const complete = jest.fn(async () => raw);
+describe('batched assessment generation', () => {
+  test('generates five 10-question batches, normalizes ids, moderates both sides, and persists exactly 50 questions once', async () => {
+    const complete = jest.fn(async (request: { batchNumber?: number }) => {
+      const start = ((request.batchNumber ?? 0) * 10) + 1;
+      const body: Record<string, unknown> = {
+        questions: makeQuestions(10, start).map((question, index) => ({ ...question, id: `model-${start + index}` })),
+      };
+      if (request.batchNumber === 0) body.scoring = scoring();
+      return `Model preface\n\`\`\`json\n${JSON.stringify(body).replace(/}$/, ',}')}\n\`\`\`\nDone`;
+    });
     const checkText = jest.fn(async (_content: string, _openId: string) => undefined);
     const createIfAbsent = jest.fn(async (record) => record);
 
@@ -18,10 +23,16 @@ describe('single-call assessment generation', () => {
       ownerKey: 'owner-a', openId: 'private-open-id', assessmentId: 'assessment-a', topic: 'TypeScript 类型系统', notes: '重点考察泛型',
     }, { complete, checkText, createIfAbsent, now: () => fixedNow });
 
-    expect(complete).toHaveBeenCalledTimes(1);
-    expect(complete).toHaveBeenCalledWith(
-      expect.objectContaining({ topic: 'TypeScript 类型系统', notes: '重点考察泛型' }),
-      undefined,
+    expect(complete).toHaveBeenCalledTimes(5);
+    expect(complete.mock.calls.map(([request]) => request)).toEqual(
+      Array.from({ length: 5 }, (_, index) => expect.objectContaining({
+        topic: 'TypeScript 类型系统',
+        notes: '重点考察泛型',
+        questionCount: 10,
+        batchNumber: index,
+        totalBatches: 5,
+        includeScoring: index === 0,
+      })),
     );
     expect(checkText).toHaveBeenCalledTimes(2);
     const moderatedOutput = String(checkText.mock.calls[1]?.[0]);
@@ -40,8 +51,8 @@ describe('single-call assessment generation', () => {
   });
 
   test.each([
-    ['49 questions', JSON.stringify({ questions: makeQuestions(49), scoring: scoring() })],
-    ['51 questions', JSON.stringify({ questions: makeQuestions(51), scoring: scoring() })],
+    ['9 questions', JSON.stringify({ questions: makeQuestions(9), scoring: scoring() })],
+    ['11 questions', JSON.stringify({ questions: makeQuestions(11), scoring: scoring() })],
     ['HTML response', '<!doctype html><html><body>gateway error</body></html>'],
     ['XML response', '<?xml version="1.0"?><error>upstream</error>'],
     ['schema error', JSON.stringify({ questions: makeQuestions(50).map((question) => ({ ...question, prompt: '' })), scoring: scoring() })],
@@ -64,7 +75,10 @@ describe('single-call assessment generation', () => {
     await expect(generateFiftyQuestionAssessment({
       ownerKey: 'owner-a', openId: 'private-open-id', assessmentId: 'assessment-a', topic: 'JavaScript', notes: 'closures',
     }, {
-      complete: async () => JSON.stringify({ questions: makeQuestions(50), scoring: scoring() }),
+      complete: async (request) => JSON.stringify({
+        questions: makeQuestions(10, (request.batchNumber ?? 0) * 10 + 1),
+        ...(request.includeScoring ? { scoring: scoring() } : {}),
+      }),
       checkText: async () => {
         checks += 1;
         if ((blockedStage === 'input' && checks === 1) || (blockedStage === 'output' && checks === 2)) {
@@ -124,19 +138,23 @@ describe('canonical model parsing', () => {
 });
 
 describe('OpenAI-compatible completion boundary', () => {
-  test('uses one request, asks for exactly 50 questions, and follows the input language', async () => {
+  test('asks for exactly 10 questions for the requested batch and follows the input language', async () => {
     const fetch = jest.fn(async (_url: string, init?: RequestInit) => new Response(JSON.stringify({
       choices: [{ message: { content: JSON.stringify({ questions: makeQuestions(50), scoring: scoring() }) } }],
     })));
-    await requestOpenAICompletion({ topic: 'Python decorators', notes: 'advanced usage' }, {
+    await requestOpenAICompletion({
+      topic: 'Python decorators', notes: 'advanced usage', questionCount: 10, batchNumber: 2, totalBatches: 5, includeScoring: false,
+    }, {
       baseUrl: 'https://llm.example.test/v1', apiKey: 'runtime-key', model: 'provider/model', fetch,
     });
 
     expect(fetch).toHaveBeenCalledTimes(1);
     const [, init] = fetch.mock.calls[0] ?? [];
     const body = JSON.parse(String(init?.body)) as { messages: Array<{ content: string }> };
-    expect(body.messages[0]?.content).toContain('Generate exactly 50 assessment questions');
+    expect(body.messages[0]?.content).toContain('Generate exactly 10 assessment questions');
     expect(body.messages.map((message) => message.content).join(' ')).toContain('same language as the topic and notes');
+    expect(body.messages.map((message) => message.content).join(' ')).toContain('"batchNumber":3');
+    expect(body.messages[0]?.content).toContain('omit scoring');
     expect(init?.signal).toBeInstanceOf(AbortSignal);
   });
 
@@ -145,7 +163,7 @@ describe('OpenAI-compatible completion boundary', () => {
     ['English topic', 'Write every question in English'],
   ])('sends the original input language without forcing Chinese: %s', async (topic, notes) => {
     const bodies: Array<{ messages: Array<{ content: string }> }> = [];
-    await requestOpenAICompletion({ topic, ...(notes === undefined ? {} : { notes }) }, {
+    await requestOpenAICompletion(batchInput(topic, notes), {
       baseUrl: 'https://llm.example.test/v1', apiKey: 'runtime-key', model: 'provider/model',
       fetch: async (_url, init) => {
         bodies.push(JSON.parse(String(init?.body)) as { messages: Array<{ content: string }> });
@@ -160,7 +178,7 @@ describe('OpenAI-compatible completion boundary', () => {
 
   test('rejects a provider response larger than 2 MiB', async () => {
     const oversized = 'x'.repeat(2 * 1024 * 1024 + 1);
-    await expect(requestOpenAICompletion({ topic: 'JavaScript' }, {
+    await expect(requestOpenAICompletion(batchInput('JavaScript'), {
       baseUrl: 'https://llm.example.test/v1', apiKey: 'runtime-key', model: 'provider/model',
       fetch: async () => new Response(oversized),
     })).rejects.toMatchObject({ code: 'INVALID_MODEL_RESPONSE' });
@@ -180,7 +198,7 @@ describe('OpenAI-compatible completion boundary', () => {
       },
     }), { status: sourceResponse.status, headers: sourceResponse.headers });
 
-    const operation = requestOpenAICompletion({ topic: 'JavaScript' }, {
+    const operation = requestOpenAICompletion(batchInput('JavaScript'), {
       baseUrl: 'https://llm.example.test/v1', apiKey: 'runtime-key', model: 'provider/model',
       fetch: async () => response,
     });
@@ -194,7 +212,7 @@ describe('OpenAI-compatible completion boundary', () => {
   test('aborts the provider after 105 seconds', async () => {
     jest.useFakeTimers();
     try {
-      const operation = requestOpenAICompletion({ topic: 'JavaScript' }, {
+      const operation = requestOpenAICompletion(batchInput('JavaScript'), {
         baseUrl: 'https://llm.example.test/v1', apiKey: 'runtime-key', model: 'provider/model',
         fetch: async (_url, init) => await new Promise<Response>((_resolve, reject) => {
           init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')));
@@ -211,7 +229,7 @@ describe('OpenAI-compatible completion boundary', () => {
   test('enforces the provider timeout when fetch ignores abort', async () => {
     jest.useFakeTimers();
     try {
-      const operation = requestOpenAICompletion({ topic: 'JavaScript' }, {
+      const operation = requestOpenAICompletion(batchInput('JavaScript'), {
         baseUrl: 'https://llm.example.test/v1', apiKey: 'runtime-key', model: 'provider/model',
         fetch: async () => await new Promise<Response>(() => undefined),
       });
@@ -224,13 +242,13 @@ describe('OpenAI-compatible completion boundary', () => {
   });
 });
 
-function makeQuestions(count: number): AssessmentQuestion[] {
+function makeQuestions(count: number, start = 1): AssessmentQuestion[] {
   return Array.from({ length: count }, (_, index) => ({
-    id: `source-${index + 1}`,
+    id: `source-${start + index}`,
     type: 'single_choice',
     difficulty: index % 3 === 0 ? 'easy' : index % 3 === 1 ? 'medium' : 'hard',
     knowledgePoint: 'Fundamentals',
-    prompt: `Question ${index + 1}`,
+    prompt: `Question ${start + index}`,
     options: [{ id: 'a', text: 'Option A' }, { id: 'b', text: 'Option B' }],
     correctOptionIds: ['a'],
     explanation: 'Option A is correct.',
@@ -244,6 +262,17 @@ function scoring() {
       { minPercent: 0, maxPercent: 59, title: 'Needs work', summary: 'Keep learning.' },
       { minPercent: 60, maxPercent: 100, title: 'Ready', summary: 'Good foundation.' },
     ],
+  };
+}
+
+function batchInput(topic: string, notes?: string) {
+  return {
+    topic,
+    ...(notes === undefined ? {} : { notes }),
+    questionCount: 10 as const,
+    batchNumber: 0,
+    totalBatches: 5,
+    includeScoring: true,
   };
 }
 

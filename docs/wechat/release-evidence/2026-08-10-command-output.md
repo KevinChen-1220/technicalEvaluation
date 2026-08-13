@@ -1,7 +1,7 @@
 # 2026-08-10 本地发布候选验证输出
 
 Profile: development
-Generated at: 2026-08-13T09:00:53.656Z
+Generated at: 2026-08-13T09:22:53.683Z
 
 ## Commands
 
@@ -12,25 +12,25 @@ clean release artifacts: apps/wechat/dist removed
 Status: exit 0
 
 ```text
-PASS services/edgeone/test/sessionToken.test.ts
 PASS src/features/assessment/wrongQuestionReview.test.ts
-PASS src/features/config/modelConfigStore.test.ts
-PASS services/edgeone/test/healthEntry.test.ts
-PASS src/services/aiClient.test.ts
-PASS src/layout/mobileLayout.test.ts
+PASS src/features/assessment/questionNavigation.test.ts
 PASS services/edgeone/test/ownerIsolation.test.ts
-PASS services/edgeone/test/blobAdapter.test.ts
+PASS services/edgeone/test/healthEntry.test.ts
+PASS src/features/assessment/samplePaper.test.ts
+PASS src/layout/mobileLayout.test.ts
 PASS src/components/questionMaterialLayout.test.ts
 PASS src/components/loadingAnimation.test.ts
-PASS src/features/assessment/samplePaper.test.ts
+PASS services/cloudbase/test/cloudBaseGenerationRepository.test.ts
+PASS services/cloudbase/test/cloudBaseRetentionRepository.test.ts
+PASS services/cloudbase/test/cloudBaseAssessmentRepository.test.ts
+PASS src/features/assessment/scoring.test.ts
 PASS src/features/config/modelConfig.test.ts
-PASS src/features/assessment/questionNavigation.test.ts
 PASS src/features/assessment/assessmentBriefDefaults.test.ts
 
 Test Suites: 52 passed, 52 total
 Tests:       435 passed, 435 total
 Snapshots:   0 total
-Time:        25.232 s
+Time:        10.852 s, estimated 14 s
 Ran all test suites.
 ```
 
@@ -43,21 +43,21 @@ PASS test/assessmentSync.test.ts
 PASS test/cloud.test.ts
 PASS test/generationController.test.ts
 PASS test/releaseFixtureClient.test.ts
-PASS test/privacyFlow.test.ts
-PASS test/draftDto.test.ts
-PASS test/viewModel.test.ts
-PASS test/resultViewModel.test.ts
 PASS test/draftSync.test.ts
-PASS test/submitFlow.test.ts
 PASS test/cloudRuntime.test.ts
-PASS test/navigation.test.ts
-PASS test/materialLayout.test.ts
+PASS test/viewModel.test.ts
 PASS test/appStartup.test.ts
+PASS test/navigation.test.ts
+PASS test/submitFlow.test.ts
+PASS test/privacyFlow.test.ts
+PASS test/resultViewModel.test.ts
+PASS test/materialLayout.test.ts
+PASS test/draftDto.test.ts
 
 Test Suites: 16 passed, 16 total
 Tests:       86 passed, 86 total
 Snapshots:   0 total
-Time:        25.736 s
+Time:        3.778 s, estimated 26 s
 Ran all test suites.
 ```
 
@@ -66,25 +66,25 @@ Ran all test suites.
 Status: exit 0
 
 ```text
-PASS test/assessmentRepository.test.ts
+PASS test/routes.contract.test.ts
 PASS test/generation.test.ts
+PASS test/deadline.test.ts
 PASS test/quotaRepository.test.ts
 PASS test/settingsAndReports.test.ts
-PASS test/deadline.test.ts
 PASS test/sessionRoute.test.ts
-PASS test/storageContracts.test.ts
-PASS test/sessionToken.test.ts
-PASS test/blobAdapter.test.ts
-PASS test/ownerIsolation.test.ts
 PASS test/jobRepository.test.ts
+PASS test/sessionToken.test.ts
 PASS test/healthRoute.test.ts
-PASS test/healthEntry.test.ts
+PASS test/blobAdapter.test.ts
 PASS test/wechatSession.test.ts
+PASS test/healthEntry.test.ts
+PASS test/storageContracts.test.ts
+PASS test/ownerIsolation.test.ts
 
 Test Suites: 18 passed, 18 total
 Tests:       154 passed, 154 total
 Snapshots:   0 total
-Time:        3.7 s, estimated 7 s
+Time:        3.21 s, estimated 4 s
 Ran all test suites matching /services\\edgeone\\test/i.
 ```
 
@@ -152,12 +152,12 @@ EdgeOne release verification passed
 Status: exit 0
 
 ```text
+> expo export --platform web
+
 
 Using (experimental) base path: /technicalEvaluation
 Starting Metro Bundler
-Web node_modules\expo\AppEntry.js ▓▓▓▓▓▓▓▓▓▓░░░░░░ 66.6% (71/87)
-Web node_modules\expo\AppEntry.js ▓▓▓▓▓▓▓▓▓▓▓▓▓▓▓░ 99.9% (150/177)
-Web Bundled 7340ms node_modules\expo\AppEntry.js (338 modules)
+Web Bundled 187ms node_modules\expo\AppEntry.js (213 modules)
 
 › Assets (1):
 node_modules\expo-sqlite\web\wa-sqlite\wa-sqlite.b87fca4d817b5bd329636d467d159c21.wasm (617 kB)
@@ -214,8 +214,8 @@ Status: exit 0
 ```text
 
 
-● Webpack █████████████████████████ sealing (87%)
- code generation
+● Webpack █████████████████████████ sealing (78%)
+ chunk modules optimization
 
 
 ● Webpack █████████████████████████ sealing (88%)
@@ -231,7 +231,7 @@ Status: exit 0
 
 
 √ Webpack
-  Compiled successfully in 23.21s
+  Compiled successfully in 3.18s
 ```
 
 ### npm run scan:secrets:source

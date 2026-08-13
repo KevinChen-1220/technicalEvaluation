@@ -4,7 +4,7 @@
 
 **Goal:** Replace the WeChat Mini Program CloudBase runtime with an EdgeOne Makers free backend and make every new assessment exactly 50 questions.
 
-**Architecture:** Keep the existing local-first Mini Program cache and shared assessment contracts. Add a Node Functions workspace for EdgeOne with WeChat session exchange, HMAC owner keys, Blob-backed metadata and assessment documents, synchronous idempotent 50-question generation, and REST endpoints; replace `Taro.cloud.callFunction` with an authenticated HTTPS client.
+**Architecture:** Keep the existing local-first Mini Program cache and shared assessment contracts. Add a Node Functions workspace for EdgeOne with WeChat session exchange, HMAC owner keys, Blob-backed metadata and assessment documents, synchronous idempotent 50-question generation in five 10-question model batches, and REST endpoints; replace `Taro.cloud.callFunction` with an authenticated HTTPS client.
 
 **Tech Stack:** TypeScript, Taro 4, React 18, Jest, esbuild, EdgeOne Makers Node Functions, EdgeOne Blob, WeChat REST APIs, OpenAI-compatible LLM APIs.
 
@@ -12,7 +12,7 @@
 
 - New assessments always contain exactly 50 questions; no 50/100 selector or request field remains.
 - Existing 100-question local records remain readable.
-- One LLM request produces all 50 questions and must finish inside a 120-second Cloud Function.
+- Five LLM requests produce fixed 10-question batches that are combined into one 50-question assessment inside a 120-second Cloud Function.
 - A response is persisted only after JSON repair, schema validation, exact-count validation, and fail-closed moderation all pass.
 - Free-tier exhaustion returns `FREE_TIER_LIMIT`; code never enables or requests a paid plan.
 - AppSecret, model keys, HMAC keys, and access tokens never enter client bundles, logs, fixtures, or Git.
@@ -270,7 +270,7 @@ git commit -m "feat: add EdgeOne free-tier persistence"
 
 ---
 
-### Task 5: Single-Call Generation, Moderation, and REST Business Routes
+### Task 5: Batched Generation, Moderation, and REST Business Routes
 
 **Files:**
 - Create: `services/edgeone/src/generation/openAIClient.ts`
@@ -312,9 +312,9 @@ Exercise privacy consent, list/get/update/complete, revision conflicts, reports 
 
 Run: `npm run test:edgeone -- --runInBand test/generation.test.ts test/moderation.test.ts test/routes.contract.test.ts`
 
-- [ ] **Step 4: Implement one-call 50-question prompt and parser**
+- [ ] **Step 4: Implement five-call 10-question prompts and parser**
 
-The system message contains `Generate exactly 50 assessment questions`. Normalize IDs to `q1` through `q50`, validate the full paper with assessment-core, and persist only after output moderation passes.
+Each system message contains `Generate exactly 10 assessment questions`. Request five batches, include scoring only in the first batch, normalize IDs to `q1` through `q50`, validate the full paper with assessment-core, and persist only after output moderation passes.
 
 - [ ] **Step 5: Implement WeChat REST moderation**
 
@@ -322,7 +322,7 @@ Cache stable access tokens in Blob with strong-consistency reads, call `security
 
 - [ ] **Step 6: Implement authenticated business routes**
 
-All handlers derive `ownerKey` from the session. The generation route reserves quota, handles idempotency, runs one provider request, persists, and returns a completed job-compatible envelope.
+All handlers derive `ownerKey` from the session. The generation route reserves quota, handles idempotency, runs the five provider batch requests, persists, and returns a completed job-compatible envelope.
 
 - [ ] **Step 7: Run all EdgeOne tests and build**
 

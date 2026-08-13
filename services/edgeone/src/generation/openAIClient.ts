@@ -4,7 +4,14 @@ import type { Deadline } from '../http/deadline';
 const PROVIDER_TIMEOUT_MS = 105_000;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
-export type CompletionInput = { topic: string; notes?: string };
+export type CompletionInput = {
+  topic: string;
+  notes?: string;
+  questionCount: 10;
+  batchNumber: number;
+  totalBatches: number;
+  includeScoring: boolean;
+};
 export type FetchPort = (url: string, init?: RequestInit) => Promise<Response>;
 
 export interface OpenAICompletionDependencies {
@@ -49,23 +56,9 @@ export async function requestOpenAICompletion(
         },
         body: JSON.stringify({
           model,
-          temperature: 0.4,
+          temperature: 0.3,
           response_format: { type: 'json_object' },
-          messages: [
-            {
-              role: 'system',
-              content: [
-                'Generate exactly 50 assessment questions in one response.',
-                'Return one JSON object with questions and scoring. Do not return HTML, XML, Markdown, or commentary.',
-                'Write the assessment in the same language as the topic and notes. When language is unclear, default to Chinese.',
-                'Each question must include id, type, difficulty, knowledgePoint, prompt, options, correctOptionIds, and explanation.',
-              ].join(' '),
-            },
-            {
-              role: 'user',
-              content: JSON.stringify({ topic: input.topic, ...(input.notes === undefined ? {} : { notes: input.notes }) }),
-            },
-          ],
+          messages: buildMessages(input),
         }),
         signal: controller.signal,
       }),
@@ -92,6 +85,34 @@ export async function requestOpenAICompletion(
   } finally {
     if (timeout !== undefined) clearTimeout(timeout);
   }
+}
+
+function buildMessages(input: CompletionInput): Array<{ role: 'system' | 'user'; content: string }> {
+  const scoringInstruction = input.includeScoring
+    ? 'Also include scoring with maxScore and localized levels covering integer percentages 0 through 100 without gaps.'
+    : 'Return questions only and omit scoring.';
+  return [
+    {
+      role: 'system',
+      content: [
+        'Return one JSON object and no HTML, XML, Markdown, or prose.',
+        'Generate exactly 10 assessment questions with id, type, difficulty, knowledgePoint, prompt, options, correctOptionIds, and explanation.',
+        'Option IDs must be unique inside each question and every correctOptionId must reference an option.',
+        'Write the assessment in the same language as the topic and notes. When language is unclear, default to Chinese.',
+        scoringInstruction,
+      ].join(' '),
+    },
+    {
+      role: 'user',
+      content: JSON.stringify({
+        topic: input.topic,
+        ...(input.notes === undefined ? {} : { notes: input.notes }),
+        batchNumber: input.batchNumber + 1,
+        totalBatches: input.totalBatches,
+        questionCount: input.questionCount,
+      }),
+    },
+  ];
 }
 
 async function readBoundedBody(response: Response, limit: number, expiresAt: number, timeoutError: ApiError): Promise<string> {

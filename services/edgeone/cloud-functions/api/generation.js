@@ -795,6 +795,277 @@ function backendUnavailable() {
   return new ApiError("BACKEND_UNAVAILABLE", 503, true);
 }
 
+// ../../packages/assessment-core/src/types.ts
+var ASSESSMENT_QUESTION_COUNT = 50;
+
+// ../../packages/assessment-core/src/validation.ts
+var supportedTypes = /* @__PURE__ */ new Set(["single_choice", "multiple_choice", "true_false"]);
+var supportedDifficulties = /* @__PURE__ */ new Set(["easy", "medium", "hard"]);
+var minimumImageAspectRatio = 0.25;
+var maximumImageAspectRatio = 4;
+var maximumMaterialsPerQuestion = 8;
+var maximumTableColumns = 12;
+var maximumTableRows = 100;
+var maximumBarChartItems = 40;
+function validateAssessmentQuestions(input) {
+  if (!Array.isArray(input)) {
+    return { ok: false, errors: ["Questions must be an array."] };
+  }
+  const errors = [];
+  const questionIds = /* @__PURE__ */ new Set();
+  input.forEach((question, index) => {
+    if (!isRecord(question)) {
+      errors.push(`Question ${index + 1} must be a JSON object.`);
+      return;
+    }
+    validateQuestion(question, errors);
+    if (isNonEmptyString(question.id)) {
+      if (questionIds.has(question.id)) {
+        errors.push(`Question ID ${question.id} must be unique.`);
+      }
+      questionIds.add(question.id);
+    }
+  });
+  return errors.length === 0 ? { ok: true, errors: [], questions: input } : { ok: false, errors };
+}
+function validateAssessmentPaper(input) {
+  const errors = [];
+  if (!isRecord(input)) {
+    return { ok: false, errors: ["Assessment paper must be a JSON object."] };
+  }
+  const paper = input;
+  if (paper.questionCount !== 50 && paper.questionCount !== 100) {
+    errors.push("Question count must be 50 or 100.");
+  }
+  if (!Array.isArray(paper.questions)) {
+    errors.push("Questions must be an array.");
+  } else if ((paper.questionCount === 50 || paper.questionCount === 100) && paper.questions.length !== paper.questionCount) {
+    errors.push(`Expected ${paper.questionCount} questions but received ${paper.questions.length}.`);
+  }
+  if (!isRecord(paper.scoring) || !Array.isArray(paper.scoring.levels)) {
+    errors.push("Scoring levels are required.");
+  } else if (!levelsCoverFullRange(paper.scoring.levels)) {
+    errors.push("Scoring levels must cover 0 through 100 percent without gaps.");
+  }
+  if (Array.isArray(paper.questions)) {
+    const questionValidation = validateAssessmentQuestions(paper.questions);
+    if (!questionValidation.ok) {
+      errors.push(...questionValidation.errors);
+    }
+  }
+  return errors.length === 0 ? { ok: true, errors: [], paper } : { ok: false, errors };
+}
+function validateQuestion(question, errors) {
+  const label = isNonEmptyString(question.id) ? question.id : "unknown";
+  const optionIds = new Set(
+    Array.isArray(question.options) ? question.options.filter(isRecord).map((option) => option.id).filter(isNonEmptyString) : []
+  );
+  if (!isNonEmptyString(question.id)) {
+    errors.push("Question ID is required.");
+  }
+  if (!isNonEmptyString(question.prompt)) {
+    errors.push(`Question ${label} prompt is required.`);
+  }
+  if (!supportedTypes.has(question.type)) {
+    errors.push(`Question ${label} has unsupported type ${String(question.type)}.`);
+  }
+  if (!supportedDifficulties.has(question.difficulty)) {
+    errors.push(`Question ${label} has unsupported difficulty ${String(question.difficulty)}.`);
+  }
+  if (!isNonEmptyString(question.knowledgePoint)) {
+    errors.push(`Question ${label} knowledgePoint is required.`);
+  }
+  if (!Array.isArray(question.options) || question.options.length < 2) {
+    errors.push(`Question ${label} must have at least two options.`);
+  } else {
+    const seenOptionIds = /* @__PURE__ */ new Set();
+    for (const option of question.options) {
+      if (!isRecord(option)) {
+        errors.push(`Question ${label} option must be a JSON object.`);
+        continue;
+      }
+      if (!isNonEmptyString(option.id)) {
+        errors.push(`Question ${label} option ID is required.`);
+      } else if (seenOptionIds.has(option.id)) {
+        errors.push(`Question ${label} option ID ${option.id} must be unique.`);
+      } else {
+        seenOptionIds.add(option.id);
+      }
+      if (!isNonEmptyString(option.text)) {
+        errors.push(`Question ${label} option ${String(option.id || "unknown")} text is required.`);
+      }
+    }
+  }
+  if (!Array.isArray(question.correctOptionIds)) {
+    errors.push(`Question ${label} correctOptionIds must be an array.`);
+  } else {
+    for (const optionId of question.correctOptionIds) {
+      if (!optionIds.has(optionId)) {
+        errors.push(`Question ${label} correct option ${String(optionId)} does not exist in options.`);
+      }
+    }
+  }
+  if ((question.type === "single_choice" || question.type === "true_false") && question.correctOptionIds?.length !== 1) {
+    errors.push(`Question ${label} ${question.type} questions must have exactly one correct option.`);
+  }
+  if (question.type === "multiple_choice" && (!question.correctOptionIds || question.correctOptionIds.length < 1)) {
+    errors.push(`Question ${label} multiple_choice questions must have at least one correct option.`);
+  }
+  if (!isNonEmptyString(question.explanation)) {
+    errors.push(`Question ${label} explanation is required.`);
+  }
+  if (Object.prototype.hasOwnProperty.call(question, "materials")) {
+    validateQuestionMaterials(question.materials, label, errors);
+  }
+}
+function validateQuestionMaterials(materials, label, errors) {
+  if (!Array.isArray(materials)) {
+    errors.push(`Question ${label} materials must be an array.`);
+    return;
+  }
+  if (materials.length > maximumMaterialsPerQuestion) {
+    errors.push(`Question ${label} materials must not contain more than ${maximumMaterialsPerQuestion} blocks.`);
+    return;
+  }
+  for (const [index, material] of materials.entries()) {
+    const materialLabel = `Question ${label} material ${index + 1}`;
+    if (!isRecord(material)) {
+      errors.push(`${materialLabel} must be a JSON object.`);
+      continue;
+    }
+    switch (material.type) {
+      case "text":
+        if (!isNonEmptyString(material.text)) {
+          errors.push(`${materialLabel} text is required.`);
+        }
+        break;
+      case "image":
+        validateImageMaterial(material, materialLabel, errors);
+        break;
+      case "table":
+        validateTableMaterial(material, materialLabel, errors);
+        break;
+      case "bar_chart":
+        validateBarChartMaterial(material, materialLabel, errors);
+        break;
+      default:
+        errors.push(`${materialLabel} has unsupported type ${String(material.type)}.`);
+    }
+  }
+}
+function validateImageMaterial(material, label, errors) {
+  if (!isHttpsUri(material.uri)) {
+    errors.push(`${label} image uri must be a valid HTTPS URL.`);
+  }
+  if (!isNonEmptyString(material.alt)) {
+    errors.push(`${label} image alt is required.`);
+  }
+  if (material.caption !== void 0 && !isNonEmptyString(material.caption)) {
+    errors.push(`${label} image caption must be non-empty when provided.`);
+  }
+  if (material.aspectRatio !== void 0 && (typeof material.aspectRatio !== "number" || !Number.isFinite(material.aspectRatio) || material.aspectRatio < minimumImageAspectRatio || material.aspectRatio > maximumImageAspectRatio)) {
+    errors.push(`${label} image aspectRatio must be between ${minimumImageAspectRatio} and ${maximumImageAspectRatio}.`);
+  }
+}
+function validateTableMaterial(material, label, errors) {
+  if (material.caption !== void 0 && !isNonEmptyString(material.caption)) {
+    errors.push(`${label} table caption must be non-empty when provided.`);
+  }
+  if (!Array.isArray(material.columns) || material.columns.length === 0) {
+    errors.push(`${label} table must have at least one column.`);
+  } else {
+    if (material.columns.length > maximumTableColumns) {
+      errors.push(`${label} table must not contain more than ${maximumTableColumns} columns.`);
+      return;
+    }
+    material.columns.forEach((column, index) => {
+      if (!isNonEmptyString(column)) {
+        errors.push(`${label} table column ${index + 1} text is required.`);
+      }
+    });
+  }
+  if (!Array.isArray(material.rows) || material.rows.length === 0) {
+    errors.push(`${label} table must have at least one row.`);
+    return;
+  }
+  if (material.rows.length > maximumTableRows) {
+    errors.push(`${label} table must not contain more than ${maximumTableRows} rows.`);
+    return;
+  }
+  material.rows.forEach((row, rowIndex) => {
+    if (!Array.isArray(row)) {
+      errors.push(`${label} table row ${rowIndex + 1} must be an array.`);
+      return;
+    }
+    if (Array.isArray(material.columns) && row.length !== material.columns.length) {
+      errors.push(`${label} table row ${rowIndex + 1} must have ${material.columns.length} cells.`);
+    }
+    row.forEach((cell, cellIndex) => {
+      if (!isNonEmptyString(cell)) {
+        errors.push(`${label} table row ${rowIndex + 1} cell ${cellIndex + 1} text is required.`);
+      }
+    });
+  });
+}
+function validateBarChartMaterial(material, label, errors) {
+  if (material.title !== void 0 && !isNonEmptyString(material.title)) {
+    errors.push(`${label} bar_chart title must be non-empty when provided.`);
+  }
+  if (material.unit !== void 0 && !isNonEmptyString(material.unit)) {
+    errors.push(`${label} bar_chart unit must be non-empty when provided.`);
+  }
+  if (!Array.isArray(material.items) || material.items.length < 2) {
+    errors.push(`${label} bar_chart must have at least two items.`);
+    return;
+  }
+  if (material.items.length > maximumBarChartItems) {
+    errors.push(`${label} bar_chart must not contain more than ${maximumBarChartItems} items.`);
+    return;
+  }
+  material.items.forEach((item, index) => {
+    const itemLabel = `${label} bar_chart item ${index + 1}`;
+    if (!isRecord(item)) {
+      errors.push(`${itemLabel} must be a JSON object.`);
+      return;
+    }
+    if (!isNonEmptyString(item.label)) {
+      errors.push(`${itemLabel} label is required.`);
+    }
+    if (typeof item.value !== "number" || !Number.isFinite(item.value) || item.value < 0) {
+      errors.push(`${itemLabel} value must be greater than or equal to 0.`);
+    }
+    if (item.displayValue !== void 0 && !isNonEmptyString(item.displayValue)) {
+      errors.push(`${itemLabel} displayValue must be non-empty when provided.`);
+    }
+  });
+}
+function levelsCoverFullRange(levels) {
+  if (levels.length === 0) return false;
+  const sorted = [...levels].sort((left, right) => left.minPercent - right.minPercent);
+  let expectedMin = 0;
+  for (const level of sorted) {
+    if (level.minPercent !== expectedMin || level.maxPercent < level.minPercent) {
+      return false;
+    }
+    expectedMin = level.maxPercent + 1;
+  }
+  return sorted[sorted.length - 1]?.maxPercent === 100;
+}
+function isRecord(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+function isNonEmptyString(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+function isHttpsUri(value) {
+  if (typeof value !== "string") return false;
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
 // ../../node_modules/jsonrepair/lib/esm/utils/JSONRepairError.js
 var JSONRepairError = class extends Error {
   constructor(message, position) {
@@ -1557,348 +1828,22 @@ function atEndOfBlockComment(text, i) {
   return text[i] === "*" && text[i + 1] === "/";
 }
 
-// ../../packages/assessment-core/src/types.ts
-var ASSESSMENT_QUESTION_COUNT = 50;
-
-// ../../packages/assessment-core/src/validation.ts
-var supportedTypes = /* @__PURE__ */ new Set(["single_choice", "multiple_choice", "true_false"]);
-var supportedDifficulties = /* @__PURE__ */ new Set(["easy", "medium", "hard"]);
-var minimumImageAspectRatio = 0.25;
-var maximumImageAspectRatio = 4;
-var maximumMaterialsPerQuestion = 8;
-var maximumTableColumns = 12;
-var maximumTableRows = 100;
-var maximumBarChartItems = 40;
-function validateAssessmentQuestions(input) {
-  if (!Array.isArray(input)) {
-    return { ok: false, errors: ["Questions must be an array."] };
-  }
-  const errors = [];
-  const questionIds = /* @__PURE__ */ new Set();
-  input.forEach((question, index) => {
-    if (!isRecord(question)) {
-      errors.push(`Question ${index + 1} must be a JSON object.`);
-      return;
-    }
-    validateQuestion(question, errors);
-    if (isNonEmptyString(question.id)) {
-      if (questionIds.has(question.id)) {
-        errors.push(`Question ID ${question.id} must be unique.`);
-      }
-      questionIds.add(question.id);
-    }
-  });
-  return errors.length === 0 ? { ok: true, errors: [], questions: input } : { ok: false, errors };
-}
-function validateAssessmentPaper(input) {
-  const errors = [];
-  if (!isRecord(input)) {
-    return { ok: false, errors: ["Assessment paper must be a JSON object."] };
-  }
-  const paper = input;
-  if (paper.questionCount !== 50 && paper.questionCount !== 100) {
-    errors.push("Question count must be 50 or 100.");
-  }
-  if (!Array.isArray(paper.questions)) {
-    errors.push("Questions must be an array.");
-  } else if ((paper.questionCount === 50 || paper.questionCount === 100) && paper.questions.length !== paper.questionCount) {
-    errors.push(`Expected ${paper.questionCount} questions but received ${paper.questions.length}.`);
-  }
-  if (!isRecord(paper.scoring) || !Array.isArray(paper.scoring.levels)) {
-    errors.push("Scoring levels are required.");
-  } else if (!levelsCoverFullRange(paper.scoring.levels)) {
-    errors.push("Scoring levels must cover 0 through 100 percent without gaps.");
-  }
-  if (Array.isArray(paper.questions)) {
-    const questionValidation = validateAssessmentQuestions(paper.questions);
-    if (!questionValidation.ok) {
-      errors.push(...questionValidation.errors);
-    }
-  }
-  return errors.length === 0 ? { ok: true, errors: [], paper } : { ok: false, errors };
-}
-function validateQuestion(question, errors) {
-  const label = isNonEmptyString(question.id) ? question.id : "unknown";
-  const optionIds = new Set(
-    Array.isArray(question.options) ? question.options.filter(isRecord).map((option) => option.id).filter(isNonEmptyString) : []
-  );
-  if (!isNonEmptyString(question.id)) {
-    errors.push("Question ID is required.");
-  }
-  if (!isNonEmptyString(question.prompt)) {
-    errors.push(`Question ${label} prompt is required.`);
-  }
-  if (!supportedTypes.has(question.type)) {
-    errors.push(`Question ${label} has unsupported type ${String(question.type)}.`);
-  }
-  if (!supportedDifficulties.has(question.difficulty)) {
-    errors.push(`Question ${label} has unsupported difficulty ${String(question.difficulty)}.`);
-  }
-  if (!isNonEmptyString(question.knowledgePoint)) {
-    errors.push(`Question ${label} knowledgePoint is required.`);
-  }
-  if (!Array.isArray(question.options) || question.options.length < 2) {
-    errors.push(`Question ${label} must have at least two options.`);
-  } else {
-    const seenOptionIds = /* @__PURE__ */ new Set();
-    for (const option of question.options) {
-      if (!isRecord(option)) {
-        errors.push(`Question ${label} option must be a JSON object.`);
-        continue;
-      }
-      if (!isNonEmptyString(option.id)) {
-        errors.push(`Question ${label} option ID is required.`);
-      } else if (seenOptionIds.has(option.id)) {
-        errors.push(`Question ${label} option ID ${option.id} must be unique.`);
-      } else {
-        seenOptionIds.add(option.id);
-      }
-      if (!isNonEmptyString(option.text)) {
-        errors.push(`Question ${label} option ${String(option.id || "unknown")} text is required.`);
-      }
-    }
-  }
-  if (!Array.isArray(question.correctOptionIds)) {
-    errors.push(`Question ${label} correctOptionIds must be an array.`);
-  } else {
-    for (const optionId of question.correctOptionIds) {
-      if (!optionIds.has(optionId)) {
-        errors.push(`Question ${label} correct option ${String(optionId)} does not exist in options.`);
-      }
-    }
-  }
-  if ((question.type === "single_choice" || question.type === "true_false") && question.correctOptionIds?.length !== 1) {
-    errors.push(`Question ${label} ${question.type} questions must have exactly one correct option.`);
-  }
-  if (question.type === "multiple_choice" && (!question.correctOptionIds || question.correctOptionIds.length < 1)) {
-    errors.push(`Question ${label} multiple_choice questions must have at least one correct option.`);
-  }
-  if (!isNonEmptyString(question.explanation)) {
-    errors.push(`Question ${label} explanation is required.`);
-  }
-  if (Object.prototype.hasOwnProperty.call(question, "materials")) {
-    validateQuestionMaterials(question.materials, label, errors);
-  }
-}
-function validateQuestionMaterials(materials, label, errors) {
-  if (!Array.isArray(materials)) {
-    errors.push(`Question ${label} materials must be an array.`);
-    return;
-  }
-  if (materials.length > maximumMaterialsPerQuestion) {
-    errors.push(`Question ${label} materials must not contain more than ${maximumMaterialsPerQuestion} blocks.`);
-    return;
-  }
-  for (const [index, material] of materials.entries()) {
-    const materialLabel = `Question ${label} material ${index + 1}`;
-    if (!isRecord(material)) {
-      errors.push(`${materialLabel} must be a JSON object.`);
-      continue;
-    }
-    switch (material.type) {
-      case "text":
-        if (!isNonEmptyString(material.text)) {
-          errors.push(`${materialLabel} text is required.`);
-        }
-        break;
-      case "image":
-        validateImageMaterial(material, materialLabel, errors);
-        break;
-      case "table":
-        validateTableMaterial(material, materialLabel, errors);
-        break;
-      case "bar_chart":
-        validateBarChartMaterial(material, materialLabel, errors);
-        break;
-      default:
-        errors.push(`${materialLabel} has unsupported type ${String(material.type)}.`);
-    }
-  }
-}
-function validateImageMaterial(material, label, errors) {
-  if (!isHttpsUri(material.uri)) {
-    errors.push(`${label} image uri must be a valid HTTPS URL.`);
-  }
-  if (!isNonEmptyString(material.alt)) {
-    errors.push(`${label} image alt is required.`);
-  }
-  if (material.caption !== void 0 && !isNonEmptyString(material.caption)) {
-    errors.push(`${label} image caption must be non-empty when provided.`);
-  }
-  if (material.aspectRatio !== void 0 && (typeof material.aspectRatio !== "number" || !Number.isFinite(material.aspectRatio) || material.aspectRatio < minimumImageAspectRatio || material.aspectRatio > maximumImageAspectRatio)) {
-    errors.push(`${label} image aspectRatio must be between ${minimumImageAspectRatio} and ${maximumImageAspectRatio}.`);
-  }
-}
-function validateTableMaterial(material, label, errors) {
-  if (material.caption !== void 0 && !isNonEmptyString(material.caption)) {
-    errors.push(`${label} table caption must be non-empty when provided.`);
-  }
-  if (!Array.isArray(material.columns) || material.columns.length === 0) {
-    errors.push(`${label} table must have at least one column.`);
-  } else {
-    if (material.columns.length > maximumTableColumns) {
-      errors.push(`${label} table must not contain more than ${maximumTableColumns} columns.`);
-      return;
-    }
-    material.columns.forEach((column, index) => {
-      if (!isNonEmptyString(column)) {
-        errors.push(`${label} table column ${index + 1} text is required.`);
-      }
-    });
-  }
-  if (!Array.isArray(material.rows) || material.rows.length === 0) {
-    errors.push(`${label} table must have at least one row.`);
-    return;
-  }
-  if (material.rows.length > maximumTableRows) {
-    errors.push(`${label} table must not contain more than ${maximumTableRows} rows.`);
-    return;
-  }
-  material.rows.forEach((row, rowIndex) => {
-    if (!Array.isArray(row)) {
-      errors.push(`${label} table row ${rowIndex + 1} must be an array.`);
-      return;
-    }
-    if (Array.isArray(material.columns) && row.length !== material.columns.length) {
-      errors.push(`${label} table row ${rowIndex + 1} must have ${material.columns.length} cells.`);
-    }
-    row.forEach((cell, cellIndex) => {
-      if (!isNonEmptyString(cell)) {
-        errors.push(`${label} table row ${rowIndex + 1} cell ${cellIndex + 1} text is required.`);
-      }
-    });
-  });
-}
-function validateBarChartMaterial(material, label, errors) {
-  if (material.title !== void 0 && !isNonEmptyString(material.title)) {
-    errors.push(`${label} bar_chart title must be non-empty when provided.`);
-  }
-  if (material.unit !== void 0 && !isNonEmptyString(material.unit)) {
-    errors.push(`${label} bar_chart unit must be non-empty when provided.`);
-  }
-  if (!Array.isArray(material.items) || material.items.length < 2) {
-    errors.push(`${label} bar_chart must have at least two items.`);
-    return;
-  }
-  if (material.items.length > maximumBarChartItems) {
-    errors.push(`${label} bar_chart must not contain more than ${maximumBarChartItems} items.`);
-    return;
-  }
-  material.items.forEach((item, index) => {
-    const itemLabel = `${label} bar_chart item ${index + 1}`;
-    if (!isRecord(item)) {
-      errors.push(`${itemLabel} must be a JSON object.`);
-      return;
-    }
-    if (!isNonEmptyString(item.label)) {
-      errors.push(`${itemLabel} label is required.`);
-    }
-    if (typeof item.value !== "number" || !Number.isFinite(item.value) || item.value < 0) {
-      errors.push(`${itemLabel} value must be greater than or equal to 0.`);
-    }
-    if (item.displayValue !== void 0 && !isNonEmptyString(item.displayValue)) {
-      errors.push(`${itemLabel} displayValue must be non-empty when provided.`);
-    }
-  });
-}
-function levelsCoverFullRange(levels) {
-  if (levels.length === 0) return false;
-  const sorted = [...levels].sort((left, right) => left.minPercent - right.minPercent);
-  let expectedMin = 0;
-  for (const level of sorted) {
-    if (level.minPercent !== expectedMin || level.maxPercent < level.minPercent) {
-      return false;
-    }
-    expectedMin = level.maxPercent + 1;
-  }
-  return sorted[sorted.length - 1]?.maxPercent === 100;
-}
-function isRecord(value) {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-function isNonEmptyString(value) {
-  return typeof value === "string" && value.trim().length > 0;
-}
-function isHttpsUri(value) {
-  if (typeof value !== "string") return false;
-  try {
-    return new URL(value).protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
 // src/generation/parseAssessment.ts
-function parseAssessment(raw, input) {
+function parseAssessmentBatch(raw, includeScoring) {
   if (typeof raw !== "string" || raw.trim().length === 0) throw invalidModelResponse();
   try {
     const { candidate, external } = extractJsonObject(raw);
     if (containsMarkup(external)) throw invalidModelResponse();
     const parsed = JSON.parse(jsonrepair(candidate));
-    if (!isRecord2(parsed) || !Array.isArray(parsed.questions) || parsed.questions.length !== ASSESSMENT_QUESTION_COUNT) {
-      throw invalidModelResponse();
-    }
-    const questions = parsed.questions.map((question, index) => canonicalQuestion(question, index));
-    const paper = {
-      id: input.assessmentId,
-      topic: input.topic,
-      questionCount: ASSESSMENT_QUESTION_COUNT,
-      generatedAt: input.generatedAt,
-      scoring: canonicalScoring(parsed.scoring),
-      questions
-    };
-    const validation = validateAssessmentPaper(paper);
-    if (!validation.ok || validation.paper.questionCount !== ASSESSMENT_QUESTION_COUNT) throw invalidModelResponse();
-    return validation.paper;
+    if (!isRecord2(parsed)) throw invalidModelResponse();
+    const questionValidation = validateAssessmentQuestions(parsed.questions);
+    if (!questionValidation.ok || questionValidation.questions.length !== 10) throw invalidModelResponse();
+    if (!includeScoring) return { questions: questionValidation.questions };
+    return { questions: questionValidation.questions, scoring: canonicalScoring(parsed.scoring) };
   } catch (error) {
     if (error instanceof ApiError) throw error;
     throw invalidModelResponse();
   }
-}
-function canonicalQuestion(value, index) {
-  if (!isRecord2(value)) return value;
-  const question = {
-    id: `q${index + 1}`,
-    type: value.type,
-    difficulty: value.difficulty,
-    knowledgePoint: value.knowledgePoint,
-    prompt: value.prompt,
-    options: Array.isArray(value.options) ? value.options.map(canonicalOption) : value.options,
-    correctOptionIds: value.correctOptionIds,
-    explanation: value.explanation
-  };
-  if (Object.prototype.hasOwnProperty.call(value, "materials")) question.materials = canonicalMaterials(value.materials);
-  return question;
-}
-function canonicalOption(value) {
-  return isRecord2(value) ? { id: value.id, text: value.text } : value;
-}
-function canonicalMaterials(value) {
-  if (!Array.isArray(value)) return value;
-  return value.map((material) => {
-    if (!isRecord2(material)) return material;
-    if (material.type === "text") return { type: material.type, text: material.text };
-    if (material.type === "image") return compact({
-      type: material.type,
-      uri: material.uri,
-      alt: material.alt,
-      caption: material.caption,
-      aspectRatio: material.aspectRatio
-    });
-    if (material.type === "table") return compact({
-      type: material.type,
-      caption: material.caption,
-      columns: material.columns,
-      rows: material.rows
-    });
-    if (material.type === "bar_chart") return compact({
-      type: material.type,
-      title: material.title,
-      unit: material.unit,
-      items: Array.isArray(material.items) ? material.items.map((item) => isRecord2(item) ? compact({ label: item.label, value: item.value, displayValue: item.displayValue }) : item) : material.items
-    });
-    return { type: material.type };
-  });
 }
 function canonicalScoring(value) {
   if (!isRecord2(value) || !isFiniteNumber(value.maxScore) || value.maxScore <= 0 || !Array.isArray(value.levels)) {
@@ -1916,9 +1861,6 @@ function canonicalScoring(value) {
     };
   });
   return { maxScore: value.maxScore, levels };
-}
-function compact(value) {
-  return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== void 0));
 }
 function isFiniteNumber(value) {
   return typeof value === "number" && Number.isFinite(value);
@@ -1973,6 +1915,8 @@ function requestTimeout() {
 }
 
 // src/generation/generateAssessment.ts
+var batchSize = 10;
+var totalBatches = ASSESSMENT_QUESTION_COUNT / batchSize;
 async function generateFiftyQuestionAssessment(input, dependencies, deadline) {
   if (deadline !== void 0) assertWithinDeadline(deadline);
   await dependencies.checkText(JSON.stringify({
@@ -1980,13 +1924,35 @@ async function generateFiftyQuestionAssessment(input, dependencies, deadline) {
     ...input.notes === void 0 ? {} : { notes: input.notes }
   }), input.openId, deadline);
   if (deadline !== void 0) assertWithinDeadline(deadline);
-  const raw = await dependencies.complete({
-    topic: input.topic,
-    ...input.notes === void 0 ? {} : { notes: input.notes }
-  }, deadline);
-  if (deadline !== void 0) assertWithinDeadline(deadline);
   const generatedAt = dependencies.now().toISOString();
-  const paper = parseAssessment(raw, { assessmentId: input.assessmentId, topic: input.topic, generatedAt });
+  const questions = [];
+  let scoring;
+  for (let batchNumber = 0; batchNumber < totalBatches; batchNumber += 1) {
+    const includeScoring = batchNumber === 0;
+    const raw = await dependencies.complete({
+      topic: input.topic,
+      ...input.notes === void 0 ? {} : { notes: input.notes },
+      questionCount: batchSize,
+      batchNumber,
+      totalBatches,
+      includeScoring
+    }, deadline);
+    if (deadline !== void 0) assertWithinDeadline(deadline);
+    const batch = parseAssessmentBatch(raw, includeScoring);
+    questions.push(...batch.questions);
+    if (batch.scoring !== void 0) scoring = batch.scoring;
+  }
+  if (scoring === void 0) throw invalidModelResponse2();
+  const paper = {
+    id: input.assessmentId,
+    topic: input.topic,
+    questionCount: ASSESSMENT_QUESTION_COUNT,
+    generatedAt,
+    scoring,
+    questions: questions.map((question, index) => ({ ...question, id: `q${index + 1}` }))
+  };
+  const validation = validateAssessmentPaper(paper);
+  if (!validation.ok || validation.paper.questionCount !== ASSESSMENT_QUESTION_COUNT) throw invalidModelResponse2();
   await dependencies.checkText(moderationText(paper), input.openId, deadline);
   if (deadline !== void 0) assertWithinDeadline(deadline);
   const persistence = dependencies.createIfAbsent({
@@ -1994,7 +1960,7 @@ async function generateFiftyQuestionAssessment(input, dependencies, deadline) {
     ownerKey: input.ownerKey,
     revision: 1,
     status: "draft",
-    paper,
+    paper: validation.paper,
     answers: {},
     result: null,
     createdAt: generatedAt,
@@ -2002,6 +1968,9 @@ async function generateFiftyQuestionAssessment(input, dependencies, deadline) {
     submittedAt: null
   });
   return deadline === void 0 ? await persistence : await withinDeadline(persistence, deadline);
+}
+function invalidModelResponse2() {
+  return new ApiError("INVALID_MODEL_RESPONSE", 502, true);
 }
 function moderationText(paper) {
   return JSON.stringify(paper);
@@ -2039,23 +2008,9 @@ async function requestOpenAICompletion(input, dependencies) {
         },
         body: JSON.stringify({
           model,
-          temperature: 0.4,
+          temperature: 0.3,
           response_format: { type: "json_object" },
-          messages: [
-            {
-              role: "system",
-              content: [
-                "Generate exactly 50 assessment questions in one response.",
-                "Return one JSON object with questions and scoring. Do not return HTML, XML, Markdown, or commentary.",
-                "Write the assessment in the same language as the topic and notes. When language is unclear, default to Chinese.",
-                "Each question must include id, type, difficulty, knowledgePoint, prompt, options, correctOptionIds, and explanation."
-              ].join(" ")
-            },
-            {
-              role: "user",
-              content: JSON.stringify({ topic: input.topic, ...input.notes === void 0 ? {} : { notes: input.notes } })
-            }
-          ]
+          messages: buildMessages(input)
         }),
         signal: controller.signal
       }),
@@ -2082,6 +2037,31 @@ async function requestOpenAICompletion(input, dependencies) {
   } finally {
     if (timeout !== void 0) clearTimeout(timeout);
   }
+}
+function buildMessages(input) {
+  const scoringInstruction = input.includeScoring ? "Also include scoring with maxScore and localized levels covering integer percentages 0 through 100 without gaps." : "Return questions only and omit scoring.";
+  return [
+    {
+      role: "system",
+      content: [
+        "Return one JSON object and no HTML, XML, Markdown, or prose.",
+        "Generate exactly 10 assessment questions with id, type, difficulty, knowledgePoint, prompt, options, correctOptionIds, and explanation.",
+        "Option IDs must be unique inside each question and every correctOptionId must reference an option.",
+        "Write the assessment in the same language as the topic and notes. When language is unclear, default to Chinese.",
+        scoringInstruction
+      ].join(" ")
+    },
+    {
+      role: "user",
+      content: JSON.stringify({
+        topic: input.topic,
+        ...input.notes === void 0 ? {} : { notes: input.notes },
+        batchNumber: input.batchNumber + 1,
+        totalBatches: input.totalBatches,
+        questionCount: input.questionCount
+      })
+    }
+  ];
 }
 async function readBoundedBody(response, limit, expiresAt, timeoutError) {
   const declaredLength = Number(response.headers.get("content-length"));

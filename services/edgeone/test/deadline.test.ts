@@ -35,7 +35,7 @@ describe('global request deadline and bounded readers', () => {
         return new Promise<void>(() => undefined);
       },
     });
-    const operation = requestOpenAICompletion({ topic: 'JavaScript' }, {
+    const operation = requestOpenAICompletion(batchInput('JavaScript'), {
       baseUrl: 'https://llm.example.test/v1', apiKey: 'runtime-key', model: 'provider/model',
       fetch: async () => new Response(body),
       deadline: createDeadline(115_000),
@@ -48,7 +48,7 @@ describe('global request deadline and bounded readers', () => {
   test('limits the provider timeout to the remaining global budget', async () => {
     jest.useFakeTimers();
     try {
-      const operation = requestOpenAICompletion({ topic: 'JavaScript' }, {
+      const operation = requestOpenAICompletion(batchInput('JavaScript'), {
         baseUrl: 'https://llm.example.test/v1', apiKey: 'runtime-key', model: 'provider/model',
         deadline: createDeadline(50),
         fetch: async (_url, init) => await new Promise<Response>((_resolve, reject) => {
@@ -63,6 +63,16 @@ describe('global request deadline and bounded readers', () => {
     }
   });
 });
+
+function batchInput(topic: string) {
+  return {
+    topic,
+    questionCount: 10 as const,
+    batchNumber: 0,
+    totalBatches: 5,
+    includeScoring: true,
+  };
+}
 
 async function settlesWithin(operation: Promise<unknown>, milliseconds: number) {
   let timer: ReturnType<typeof setTimeout> | undefined;

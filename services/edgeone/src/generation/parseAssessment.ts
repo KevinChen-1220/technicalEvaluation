@@ -1,5 +1,12 @@
 import { jsonrepair } from 'jsonrepair';
-import { ASSESSMENT_QUESTION_COUNT, validateAssessmentPaper, type AssessmentPaper } from '@dynamic-assessment/assessment-core';
+import {
+  ASSESSMENT_QUESTION_COUNT,
+  validateAssessmentPaper,
+  validateAssessmentQuestions,
+  type AssessmentPaper,
+  type AssessmentQuestion,
+  type ScoringLevel,
+} from '@dynamic-assessment/assessment-core';
 import { ApiError } from '../http/errors';
 
 export function parseAssessment(
@@ -26,6 +33,28 @@ export function parseAssessment(
     const validation = validateAssessmentPaper(paper);
     if (!validation.ok || validation.paper.questionCount !== ASSESSMENT_QUESTION_COUNT) throw invalidModelResponse();
     return validation.paper;
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw invalidModelResponse();
+  }
+}
+
+export type ParsedAssessmentBatch = {
+  questions: AssessmentQuestion[];
+  scoring?: { maxScore: number; levels: ScoringLevel[] };
+};
+
+export function parseAssessmentBatch(raw: string, includeScoring: boolean): ParsedAssessmentBatch {
+  if (typeof raw !== 'string' || raw.trim().length === 0) throw invalidModelResponse();
+  try {
+    const { candidate, external } = extractJsonObject(raw);
+    if (containsMarkup(external)) throw invalidModelResponse();
+    const parsed: unknown = JSON.parse(jsonrepair(candidate));
+    if (!isRecord(parsed)) throw invalidModelResponse();
+    const questionValidation = validateAssessmentQuestions(parsed.questions);
+    if (!questionValidation.ok || questionValidation.questions.length !== 10) throw invalidModelResponse();
+    if (!includeScoring) return { questions: questionValidation.questions };
+    return { questions: questionValidation.questions, scoring: canonicalScoring(parsed.scoring) as { maxScore: number; levels: ScoringLevel[] } };
   } catch (error) {
     if (error instanceof ApiError) throw error;
     throw invalidModelResponse();

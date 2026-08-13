@@ -1,6 +1,6 @@
 # SkillScope
 
-> Generate, take, and review skill assessments on web/native, plus a CloudBase-backed WeChat Mini Program release path.
+> Generate, take, and review skill assessments on web/native, plus an EdgeOne-backed WeChat Mini Program release path.
 
 [![CI](https://github.com/KevinChen-1220/technicalEvaluation/actions/workflows/ci.yml/badge.svg)](https://github.com/KevinChen-1220/technicalEvaluation/actions/workflows/ci.yml)
 [![Pages](https://github.com/KevinChen-1220/technicalEvaluation/actions/workflows/pages.yml/badge.svg)](https://github.com/KevinChen-1220/technicalEvaluation/actions/workflows/pages.yml)
@@ -16,12 +16,12 @@ Try the public web demo at [SkillScope on GitHub Pages](https://kevinchen-1220.g
 
 ## What It Does
 
-- Creates 50- or 100-question assessments from a topic and optional focus notes.
+- Creates fixed 50-question assessments from a topic and optional focus notes.
 - Accepts single-choice, multiple-choice, and true/false questions.
 - Scores attempts locally, with knowledge-point breakdowns and answer explanations.
 - Saves in-progress drafts and completed assessments for later review.
 - Web/native connects directly to the OpenAI-compatible provider you choose.
-- WeChat Mini Program uses CloudBase functions for model calls, content safety, sync, history, privacy consent, and reports.
+- WeChat Mini Program uses EdgeOne Node Functions for model calls, content safety, sync, history, privacy consent, and reports.
 
 ## Privacy And Storage
 
@@ -30,7 +30,7 @@ SkillScope's web/native app is local-first and bring-your-own-provider. Your top
 - Assessment papers, answers, scores, drafts, and non-secret provider settings (base URL and model) are stored locally in SQLite (`skill_scope.db`).
 - On native platforms, the API key is stored with Expo SecureStore when it is available.
 - When SecureStore is unavailable, including the web experience, the API key can fall back to browser-local storage for the site origin. Browser local storage is not equivalent to hardware-backed secure storage: anyone who can use that browser profile, and scripts running in that origin, may be able to read it.
-- The WeChat Mini Program stores owner-isolated assessment data, generation jobs, privacy consent, and reports in CloudBase. Model keys and content-safety credentials stay in CloudBase server-side environment variables.
+- The WeChat Mini Program stores owner-isolated assessment data, generation jobs, privacy consent, and reports in EdgeOne Blob. Model keys and content-safety credentials stay in EdgeOne server-side environment variables.
 
 Use the web experience only on a trusted personal device. Do not save a provider key in a shared or public browser; prefer a limited, revocable key and clear the site data when you are finished.
 
@@ -39,7 +39,7 @@ Use the web experience only on a trusted personal device. Do not save a provider
 - Node.js 22 or later, including npm
 - An OpenAI-compatible provider endpoint, API key, and model name to generate new assessments
 - Expo Go or a local Android/iOS development environment when running on a device
-- Optional for WeChat: WeChat DevTools, a real Mini Program AppID, CloudBase environments, and production compliance materials
+- Optional for WeChat: WeChat DevTools, a real Mini Program AppID, an EdgeOne Makers project, and production compliance materials
 
 ## Get Started
 
@@ -64,11 +64,11 @@ For web/native local use:
 2. Enter the provider's OpenAI-compatible base URL, such as `https://api.openai.com/v1`.
 3. Enter your API key and the model name offered by that provider.
 4. Choose **Save**, then **Test** to verify the connection.
-5. Return to **Assess**, set a topic and optional notes, choose 50 or 100 questions, and select **Generate**.
+5. Return to **Assess**, set a topic and optional notes, and select **Generate**.
 
 Keep credentials out of source code, issues, screenshots, and logs. A provider must expose the OpenAI-compatible `POST /chat/completions` endpoint.
 
-For WeChat Mini Program production, configure provider and content-safety values only in CloudBase server-side environment variables. Do not put model keys in `TARO_APP_*`, `project.config.json`, GitHub issues, or screenshots.
+For WeChat Mini Program production, configure provider and content-safety values only in EdgeOne server-side environment variables. Do not put model keys in `TARO_APP_*`, `project.config.json`, GitHub issues, or screenshots.
 
 ## Architecture
 
@@ -81,10 +81,10 @@ App.tsx
 
 apps/wechat
   -> Taro pages: generate, answer, result, history, settings, privacy, report
-  -> CloudBase calls: generation jobs, sync, scoring, settings, reports
+  -> Authenticated HTTPS calls: generation jobs, sync, scoring, settings, reports
 
-services/cloudbase
-  -> Owner-isolated data contracts, async generation worker, moderation, retention
+services/edgeone
+  -> Owner-isolated data contracts, EdgeOne Node Functions, moderation, retention
 ```
 
 | Path | Purpose |
@@ -96,7 +96,8 @@ services/cloudbase
 | `src/storage/database.ts` | Shared Expo SQLite connection |
 | `src/services/aiClient.ts` | Direct OpenAI-compatible chat-completions client |
 | `apps/wechat/` | Taro WeChat Mini Program shell and client sync flow |
-| `services/cloudbase/` | CloudBase functions, database schemas, security rules, and release tests |
+| `services/edgeone/` | EdgeOne Node Functions, Blob-backed repositories, and release tests |
+| `services/cloudbase/` | Legacy CloudBase implementation and migration safety tests |
 | `docs/wechat/` | WeChat privacy, release, deployment, evidence, and review handoff documents |
 | `public/` | Web metadata, icons, and the social preview |
 
@@ -116,10 +117,10 @@ npm run verify:web
 
 ```sh
 npm run test:wechat -- --runInBand
-npm run test:cloudbase -- --runInBand
+npm run test:edgeone -- --runInBand
 npm run typecheck:wechat
-npm run typecheck:cloudbase
-npm run build:cloudbase
+npm run typecheck:edgeone
+npm run build:edgeone
 npm run build:weapp
 npm run verify:wechat-release
 ```
@@ -129,14 +130,14 @@ The shared WeChat project config keeps `touristappid`. Copy `apps/wechat/project
 Release handoff docs:
 
 - [WeChat release checklist](docs/wechat/release-checklist.md)
-- [CloudBase deployment runbook](docs/wechat/deployment-runbook.md)
+- [EdgeOne deployment runbook](docs/wechat/deployment-runbook.md)
 - [WeChat review submission guide](docs/wechat/review-submission.md)
 - [Release completion matrix](docs/wechat/release-completion-matrix.md)
 - [Machine-readable release manifest template](docs/wechat/release-manifest.template.json)
 
 ## Project Status
 
-SkillScope is open source, with the GitHub Pages web demo as its current public release. The WeChat Mini Program implementation is locally release-ready, but formal publication still requires the real WeChat subject, AppID, filing, production CloudBase credentials, DevTools login, real-device smoke, and WeChat review approval.
+SkillScope is open source, with the GitHub Pages web demo as its current public release. The WeChat Mini Program implementation is locally release-ready, but formal publication still requires the real WeChat subject, AppID, filing, production EdgeOne environment variables, a stable HTTPS request domain, DevTools upload credentials, real-device smoke, and WeChat review approval.
 
 ## Contributing, Security, And License
 
