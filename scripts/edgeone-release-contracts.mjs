@@ -40,7 +40,7 @@ export function assertDeploymentOrigin(output, expectedOrigin, allowMissingOrigi
     if (allowMissingOrigin) return;
     throw new Error('EdgeOne deployment output did not report a public HTTPS origin.');
   }
-  if (!origins.includes(expected)) {
+  if (origins.length !== 1 || origins[0] !== expected) {
     throw new Error('EdgeOne deployment origin does not match the expected production origin.');
   }
 }

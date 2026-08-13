@@ -27,6 +27,7 @@ describe('EdgeOne production release gates', () => {
     const result = runModule(`
       import * as contracts from ${JSON.stringify(moduleUrl)};
       const deploymentMismatch = (() => { try { contracts.assertDeploymentOrigin('https://other.example.com', 'https://skill.example.com', false); return false; } catch { return true; } })();
+      const mixedDeploymentOutput = (() => { try { contracts.assertDeploymentOrigin('deployed https://wrong.example.com also https://skill.example.com', 'https://skill.example.com', false); return false; } catch { return true; } })();
       const missingOrigin = (() => { try { contracts.assertDeploymentOrigin('deployment completed', 'https://skill.example.com', false); return false; } catch { return true; } })();
       const missingOriginAllowed = (() => { try { contracts.assertDeploymentOrigin('deployment completed', 'https://skill.example.com', true); return true; } catch { return false; } })();
       const healthy = (() => { try { contracts.assertHealthContract({ ok: true, data: { service: 'skillscope-edgeone', version: 'build-123', configurationReady: true, generationEnabled: true } }, { version: 'build-123', generationEnabled: true, requireVersion: true }); return true; } catch { return false; } })();
@@ -47,6 +48,7 @@ describe('EdgeOne production release gates', () => {
         incompleteMissing: contracts.getMissingRequiredRuntimeEnv({ WECHAT_APP_ID: 'wx-runtime-appid' }),
         origins: contracts.extractHttpsOrigins('deployed to https://skill.example.com/api/health and https://other.example.com'),
         deploymentMismatch,
+        mixedDeploymentOutput,
         missingOrigin,
         missingOriginAllowed,
         healthy,
@@ -60,6 +62,7 @@ describe('EdgeOne production release gates', () => {
     expect(contracts.incompleteMissing).toContain('WECHAT_APP_SECRET');
     expect(contracts.origins).toEqual(['https://skill.example.com', 'https://other.example.com']);
     expect(contracts.deploymentMismatch).toBe(true);
+    expect(contracts.mixedDeploymentOutput).toBe(true);
     expect(contracts.missingOrigin).toBe(true);
     expect(contracts.missingOriginAllowed).toBe(true);
     expect(contracts.healthy).toBe(true);
