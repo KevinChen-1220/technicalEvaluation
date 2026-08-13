@@ -478,6 +478,45 @@ describe('EdgeOne production release gates', () => {
     rmSync(temp, { recursive: true, force: true });
   });
 
+  test('reports DNS and health readiness in go-live status without overstating production origin readiness', () => {
+    const temp = mkdtempSync(join(tmpdir(), 'wechat-status-domain-'));
+    const fakeGh = join(temp, process.platform === 'win32' ? 'gh.cmd' : 'gh');
+    if (process.platform === 'win32') {
+      writeFileSync(fakeGh, '@echo off\r\necho [{"name":"EDGEONE_API_TOKEN"},{"name":"EDGEONE_DEPLOYMENT_VERSION"},{"name":"EDGEONE_PROJECT_NAME"},{"name":"TARO_APP_EDGEONE_API_BASE_URL"},{"name":"WECHAT_APP_ID"},{"name":"WECHAT_PRIVATE_KEY_PEM"}]\r\nexit /b 0\r\n');
+    } else {
+      writeFileSync(fakeGh, '#!/bin/sh\necho \'[{"name":"EDGEONE_API_TOKEN"},{"name":"EDGEONE_DEPLOYMENT_VERSION"},{"name":"EDGEONE_PROJECT_NAME"},{"name":"TARO_APP_EDGEONE_API_BASE_URL"},{"name":"WECHAT_APP_ID"},{"name":"WECHAT_PRIVATE_KEY_PEM"}]\'\nexit 0\n');
+      chmodSync(fakeGh, 0o700);
+    }
+
+    const result = runNode('scripts/wechat-go-live-status.mjs', [
+      '--app-id',
+      'wx31dd3d7448aac8e3',
+      '--api-base-url',
+      'https://api.skillscope.cn',
+      '--dns-result',
+      '198.18.0.161,fdfe:dcba:9876::99',
+      '--skip-health',
+      '--json',
+    ], {
+      ...process.env,
+      GH_CLI_BIN: fakeGh,
+    });
+
+    expect(result.status).toBe(0);
+    const report = JSON.parse(result.stdout);
+    expect(report.ready).toBe(false);
+    expect(report.apiOrigin.productionOrigin).toBe(true);
+    expect(report.domainCandidate.ready).toBe(false);
+    expect(report.domainCandidate.checks.dns.ok).toBe(false);
+    expect(report.domainCandidate.checks.dns.message).toContain('non-public');
+    expect(report.domainCandidate.checks.health.skipped).toBe(true);
+    expect(report.nextActions).toEqual(expect.arrayContaining([
+      'Configure DNS for the candidate domain and wait for public resolution.',
+      'Run wechat:domain-candidate and verify ready=true before configuring WeChat request合法域名.',
+    ]));
+    rmSync(temp, { recursive: true, force: true });
+  });
+
   test('checks candidate WeChat request domains without accepting preview or path URLs', () => {
     const preview = runNode('scripts/wechat-domain-candidate.mjs', [
       '--api-base-url',
