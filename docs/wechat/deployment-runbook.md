@@ -56,6 +56,7 @@ TARO_APP_RELEASE_DISCLOSURE_FILE=docs/wechat/release-disclosure.production.json
 完成 GitHub environment secrets、EdgeOne runtime environment 和微信 `request合法域名` 后，运行 go-live readiness：
 
 ```sh
+npm run wechat:domain-candidate -- --api-base-url <production-https-origin> --json
 npm run verify:wechat-go-live -- --app-id wx31dd3d7448aac8e3 --api-base-url <production-https-origin>
 ```
 
@@ -72,6 +73,8 @@ npm run wechat:configure-production-secrets -- --api-base-url <production-https-
 ```
 
 这个命令只读取公开 AppID、公开 HTTPS origin、GitHub environment 中的 secret 名称和 `/api/health` 的公开响应；它不会读取或打印 GitHub secret 值。尚未绑定稳定域名时可临时加 `--skip-health` 查看 GitHub 环境缺口，但正式上传微信草稿前必须移除该参数并通过 health 检查。
+
+`wechat:domain-candidate` 必须先报告 `ready=true`：候选域名不仅要是 HTTPS origin 根路径，还要不是 `edgeone.cool` preview/default 域名，DNS 需解析到公网地址，并且 `/api/health` 返回 SkillScope EdgeOne health contract。若 DNS 只解析到 `198.18.0.0/15`、内网、链路本地、ULA 或文档保留地址，即使“有解析”也不得作为微信正式版 `request合法域名`。
 
 GitHub 受保护的 upload workflow 会在 EdgeOne production 部署后自动执行 `npm run verify:wechat-go-live -- --from-env`，使用已注入的 protected secrets 检查部署版本、API origin、AppID 和上传私钥是否齐全，并再次验证公开 health。该步骤不调用 GitHub API 读取 secret 内容，不额外接触 EdgeOne API token，也不会打印 secret 值。
 

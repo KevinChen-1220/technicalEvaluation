@@ -440,6 +440,86 @@ describe('EdgeOne production release gates', () => {
     rmSync(temp, { recursive: true, force: true });
   });
 
+  test('checks candidate WeChat request domains without accepting preview or path URLs', () => {
+    const preview = runNode('scripts/wechat-domain-candidate.mjs', [
+      '--api-base-url',
+      'https://demo.edgeone.cool',
+      '--skip-network',
+      '--json',
+    ]);
+
+    expect(preview.status).not.toBe(0);
+    const previewReport = JSON.parse(preview.stdout);
+    expect(previewReport.ready).toBe(false);
+    expect(previewReport.checks.originRoot.ok).toBe(true);
+    expect(previewReport.checks.stableHost.ok).toBe(false);
+    expect(previewReport.checks.stableHost.message).toContain('edgeone.cool');
+
+    const pathUrl = runNode('scripts/wechat-domain-candidate.mjs', [
+      '--api-base-url',
+      'https://api.skillscope.cn/api',
+      '--skip-network',
+      '--json',
+    ]);
+
+    expect(pathUrl.status).not.toBe(0);
+    const pathReport = JSON.parse(pathUrl.stdout);
+    expect(pathReport.checks.originRoot.ok).toBe(false);
+    expect(pathReport.nextActions).toContain('Use an HTTPS origin root such as https://api.example.com, not a URL with /api, query, hash, credentials, or token.');
+  });
+
+  test('reports DNS and health evidence for a candidate WeChat request domain', () => {
+    const result = runNode('scripts/wechat-domain-candidate.mjs', [
+      '--api-base-url',
+      'https://api.skillscope.cn',
+      '--dns-result',
+      '93.184.216.34',
+      '--health-json',
+      JSON.stringify({
+        ok: true,
+        data: {
+          service: 'skillscope-edgeone',
+          configurationReady: true,
+          generationEnabled: true,
+        },
+      }),
+      '--json',
+    ]);
+
+    expect(result.status).toBe(0);
+    const report = JSON.parse(result.stdout);
+    expect(report.ready).toBe(true);
+    expect(report.origin).toBe('https://api.skillscope.cn');
+    expect(report.checks.dns.ok).toBe(true);
+    expect(report.checks.health.ok).toBe(true);
+    expect(`${result.stdout}${result.stderr}`).not.toMatch(/api[_-]?key|private[_-]?key|secret/i);
+  });
+
+  test('rejects candidate WeChat request domains that resolve only to non-public addresses', () => {
+    const result = runNode('scripts/wechat-domain-candidate.mjs', [
+      '--api-base-url',
+      'https://api.skillscope.cn',
+      '--dns-result',
+      '198.18.0.161,fdfe:dcba:9876::99',
+      '--health-json',
+      JSON.stringify({
+        ok: true,
+        data: {
+          service: 'skillscope-edgeone',
+          configurationReady: true,
+          generationEnabled: true,
+        },
+      }),
+      '--json',
+    ]);
+
+    expect(result.status).not.toBe(0);
+    const report = JSON.parse(result.stdout);
+    expect(report.ready).toBe(false);
+    expect(report.checks.dns.ok).toBe(false);
+    expect(report.checks.dns.message).toContain('public');
+  });
+
   test('verifies the EdgeOne artifact, 120-second budget, fixed 50-question contract, and public HTTPS origin', () => {
     const verifier = readFileSync(join(repoRoot, 'scripts', 'verify-edgeone-release.mjs'), 'utf8');
     const edgeoneConfig = readFileSync(join(repoRoot, 'services', 'edgeone', 'edgeone.json'), 'utf8');

@@ -21,6 +21,7 @@
 
 - [ ] EdgeOne project 已创建，Node Functions 与 Blob 已部署到 production deployment。
 - [ ] `TARO_APP_EDGEONE_API_BASE_URL` 为 production HTTPS origin 根路径，不含 `/api`、端口、查询参数或凭据。
+- [ ] `npm run wechat:domain-candidate -- --api-base-url <production-https-origin> --json` 报告 `ready=true`，DNS 解析到公网地址，且 `/api/health` 返回 SkillScope EdgeOne health contract。
 - [ ] 服务端运行时环境变量仅配置在 EdgeOne 项目中，绝不镜像到 GitHub。GitHub `wechat-production` 仅保留 `EDGEONE_API_TOKEN`、`EDGEONE_PROJECT_NAME`、`EDGEONE_DEPLOYMENT_VERSION`、`TARO_APP_EDGEONE_API_BASE_URL`、`WECHAT_APP_ID`、`WECHAT_PRIVATE_KEY_PEM` 和 release inputs。小程序只能读取 `TARO_APP_EDGEONE_API_BASE_URL`，不得把模型、微信会话、审核凭据或上传私钥写入客户端包、artifact、日志、仓库、issue、截图或 manifest。
 - [ ] Blob 命名空间、保留策略和恢复责任人已记录在 release manifest。
 - [ ] 微信公众平台已把同一个 HTTPS origin 加入 `request合法域名`，并完成域名校验。

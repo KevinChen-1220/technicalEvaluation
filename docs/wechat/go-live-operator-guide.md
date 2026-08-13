@@ -25,8 +25,9 @@
 ## 阶段 3：微信网络与构建
 
 1. 在微信后台“开发管理 -> 开发设置”添加 preview 和 production HTTPS origin 为 `request合法域名`。不要填写 `/api`；客户端会拼接 API 路径。
-2. 在发布机设置 `TARO_APP_EDGEONE_API_BASE_URL=<production HTTPS origin>`、`TARO_APP_RELEASE_PROFILE=formal`、`TARO_APP_RELEASE_FIXTURE_MODE=disabled`。
-3. 执行：
+2. 添加前先运行 `npm run wechat:domain-candidate -- --api-base-url <production HTTPS origin> --json`。只有该报告显示 `ready=true`，且 DNS 为公网地址、`/api/health` 返回 SkillScope EdgeOne contract 时，才进入微信后台配置。
+3. 在发布机设置 `TARO_APP_EDGEONE_API_BASE_URL=<production HTTPS origin>`、`TARO_APP_RELEASE_PROFILE=formal`、`TARO_APP_RELEASE_FIXTURE_MODE=disabled`。
+4. 执行：
 
 ```sh
 npm ci

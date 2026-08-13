@@ -32,6 +32,7 @@
     "verify:edgeone-release": "node scripts/verify-edgeone-release.mjs",
     "verify:wechat-go-live": "node scripts/verify-wechat-go-live.mjs",
     "wechat:go-live-status": "node scripts/wechat-go-live-status.mjs",
+    "wechat:domain-candidate": "node scripts/wechat-domain-candidate.mjs",
     "wechat:configure-production-secrets": "node scripts/configure-wechat-production-secrets.mjs",
     "edgeone:deploy": "node scripts/edgeone-deploy.mjs",
     "scan:secrets:source": "node scripts/scan-secrets.mjs --target source package.json packages apps services scripts docs",
