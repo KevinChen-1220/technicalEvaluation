@@ -50,6 +50,34 @@ describe('batched assessment generation', () => {
     expect(createIfAbsent).toHaveBeenCalledTimes(1);
   });
 
+  test('retries a malformed batch once before persisting the completed 50-question draft', async () => {
+    const complete = jest.fn(async (request: { batchNumber?: number; includeScoring?: boolean }) => {
+      if (request.batchNumber === 2 && complete.mock.calls.filter(([call]) => call.batchNumber === 2).length === 1) {
+        return '<!doctype html><html><body>temporary provider gateway</body></html>';
+      }
+      return JSON.stringify({
+        questions: makeQuestions(10, (request.batchNumber ?? 0) * 10 + 1),
+        ...(request.includeScoring ? { scoring: scoring() } : {}),
+      });
+    });
+    const createIfAbsent = jest.fn(async (record) => record);
+
+    const assessment = await generateFiftyQuestionAssessment({
+      ownerKey: 'owner-a', openId: 'private-open-id', assessmentId: 'assessment-a', topic: 'TypeScript 类型系统',
+    }, {
+      complete,
+      checkText: async () => undefined,
+      createIfAbsent,
+      now: () => fixedNow,
+    });
+
+    expect(complete).toHaveBeenCalledTimes(6);
+    expect(complete.mock.calls.map(([request]) => request.batchNumber)).toEqual([0, 1, 2, 2, 3, 4]);
+    expect(assessment.paper.questionCount).toBe(50);
+    expect(assessment.paper.questions).toHaveLength(50);
+    expect(createIfAbsent).toHaveBeenCalledTimes(1);
+  });
+
   test.each([
     ['9 questions', JSON.stringify({ questions: makeQuestions(9), scoring: scoring() })],
     ['11 questions', JSON.stringify({ questions: makeQuestions(11), scoring: scoring() })],

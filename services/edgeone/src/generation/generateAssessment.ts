@@ -8,6 +8,7 @@ import { ApiError } from '../http/errors';
 
 const batchSize = 10;
 const totalBatches = ASSESSMENT_QUESTION_COUNT / batchSize;
+const maxBatchAttempts = 2;
 
 export type GenerateAssessmentInput = {
   topic: string;
@@ -40,16 +41,14 @@ export async function generateFiftyQuestionAssessment(
   let scoring: AssessmentPaper['scoring'] | undefined;
   for (let batchNumber = 0; batchNumber < totalBatches; batchNumber += 1) {
     const includeScoring = batchNumber === 0;
-    const raw = await dependencies.complete({
+    const batch = await generateBatchWithRetry({
       topic: input.topic,
       ...(input.notes === undefined ? {} : { notes: input.notes }),
       questionCount: batchSize,
       batchNumber,
       totalBatches,
       includeScoring,
-    }, deadline);
-    if (deadline !== undefined) assertWithinDeadline(deadline);
-    const batch = parseAssessmentBatch(raw, includeScoring);
+    }, includeScoring, dependencies, deadline);
     questions.push(...batch.questions);
     if (batch.scoring !== undefined) scoring = batch.scoring;
   }
@@ -79,6 +78,33 @@ export async function generateFiftyQuestionAssessment(
     submittedAt: null,
   });
   return deadline === undefined ? await persistence : await withinDeadline(persistence, deadline);
+}
+
+async function generateBatchWithRetry(
+  completionInput: CompletionInput,
+  includeScoring: boolean,
+  dependencies: GenerateAssessmentDependencies,
+  deadline?: Deadline,
+) {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maxBatchAttempts; attempt += 1) {
+    try {
+      const raw = await dependencies.complete(completionInput, deadline);
+      if (deadline !== undefined) assertWithinDeadline(deadline);
+      return parseAssessmentBatch(raw, includeScoring);
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableBatchError(error) || attempt === maxBatchAttempts) break;
+      if (deadline !== undefined) assertWithinDeadline(deadline);
+    }
+  }
+  throw lastError;
+}
+
+function isRetryableBatchError(error: unknown): boolean {
+  return error instanceof ApiError
+    && error.retryable
+    && (error.code === 'INVALID_MODEL_RESPONSE' || error.code === 'PROVIDER_ERROR' || error.code === 'REQUEST_TIMEOUT');
 }
 
 function invalidModelResponse(): ApiError {

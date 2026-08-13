@@ -50,8 +50,12 @@ function verifyStaticContracts() {
   }
 
   const generation = readFileSync(join(repoRoot, 'services/edgeone/src/routes/generation.ts'), 'utf8');
+  const generationEngine = readFileSync(join(repoRoot, 'services/edgeone/src/generation/generateAssessment.ts'), 'utf8');
   const generatePage = readFileSync(join(repoRoot, 'apps/wechat/src/pages/generate/index.tsx'), 'utf8');
   if (!/generateFiftyQuestionAssessment|questionCount:\s*50|FIXED_QUESTION_COUNT/.test(generation)) findings.push('EdgeOne generation route must enforce exactly 50 questions');
+  if (!/const batchSize = 10/.test(generationEngine)) findings.push('EdgeOne generation engine must request batches of exactly 10 questions');
+  if (!/const totalBatches = ASSESSMENT_QUESTION_COUNT \/ batchSize/.test(generationEngine)) findings.push('EdgeOne generation engine must derive five batches from the fixed 50-question contract');
+  if (!/maxBatchAttempts = 2/.test(generationEngine) || !/generateBatchWithRetry/.test(generationEngine)) findings.push('EdgeOne generation engine must retry one malformed provider batch before failing the job');
   if (/\[\s*50\s*,\s*100\s*\]|questionCount.*100/s.test(generatePage)) findings.push('Mini Program must not expose a 50/100 question selector');
 
   const deploymentWrapper = readFileSync(join(repoRoot, 'scripts/edgeone-deploy.mjs'), 'utf8');

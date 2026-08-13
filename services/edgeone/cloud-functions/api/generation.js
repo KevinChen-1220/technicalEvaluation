@@ -1917,6 +1917,7 @@ function requestTimeout() {
 // src/generation/generateAssessment.ts
 var batchSize = 10;
 var totalBatches = ASSESSMENT_QUESTION_COUNT / batchSize;
+var maxBatchAttempts = 2;
 async function generateFiftyQuestionAssessment(input, dependencies, deadline) {
   if (deadline !== void 0) assertWithinDeadline(deadline);
   await dependencies.checkText(JSON.stringify({
@@ -1929,16 +1930,14 @@ async function generateFiftyQuestionAssessment(input, dependencies, deadline) {
   let scoring;
   for (let batchNumber = 0; batchNumber < totalBatches; batchNumber += 1) {
     const includeScoring = batchNumber === 0;
-    const raw = await dependencies.complete({
+    const batch = await generateBatchWithRetry({
       topic: input.topic,
       ...input.notes === void 0 ? {} : { notes: input.notes },
       questionCount: batchSize,
       batchNumber,
       totalBatches,
       includeScoring
-    }, deadline);
-    if (deadline !== void 0) assertWithinDeadline(deadline);
-    const batch = parseAssessmentBatch(raw, includeScoring);
+    }, includeScoring, dependencies, deadline);
     questions.push(...batch.questions);
     if (batch.scoring !== void 0) scoring = batch.scoring;
   }
@@ -1968,6 +1967,24 @@ async function generateFiftyQuestionAssessment(input, dependencies, deadline) {
     submittedAt: null
   });
   return deadline === void 0 ? await persistence : await withinDeadline(persistence, deadline);
+}
+async function generateBatchWithRetry(completionInput, includeScoring, dependencies, deadline) {
+  let lastError;
+  for (let attempt = 1; attempt <= maxBatchAttempts; attempt += 1) {
+    try {
+      const raw = await dependencies.complete(completionInput, deadline);
+      if (deadline !== void 0) assertWithinDeadline(deadline);
+      return parseAssessmentBatch(raw, includeScoring);
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableBatchError(error) || attempt === maxBatchAttempts) break;
+      if (deadline !== void 0) assertWithinDeadline(deadline);
+    }
+  }
+  throw lastError;
+}
+function isRetryableBatchError(error) {
+  return error instanceof ApiError && error.retryable && (error.code === "INVALID_MODEL_RESPONSE" || error.code === "PROVIDER_ERROR" || error.code === "REQUEST_TIMEOUT");
 }
 function invalidModelResponse2() {
   return new ApiError("INVALID_MODEL_RESPONSE", 502, true);

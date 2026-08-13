@@ -62,7 +62,7 @@ GitHub 受保护的 upload workflow 会在 EdgeOne production 部署后自动执
 在 preview deployment 完成一次完整 smoke；将相同证据在 production deployment 复测后，才能关闭 `.github/ISSUE_TEMPLATE/wechat_production_smoke.yml` 创建的 issue。
 
 - 新用户进入隐私 gate，拒绝不能生成，接受后可同步设置。
-- 固定 50 题生成：generation job 进入 queued/running/completed，本地草稿和 Blob 记录均可恢复。
+- 固定 50 题生成：服务端按 5 批生成，每批固定 10 道题；单批遇到临时 HTML/XML/非标准 JSON 响应会重试一次，全部 50 题通过校验后才写入 Blob 草稿并返回 completed。
 - 模型返回非 JSON、超大响应、HTML/XML 响应时失败为 `INVALID_MODEL_RESPONSE`，不保存残缺题目。
 - 输入和输出审核分别覆盖 allowed、blocked、timeout/fail closed。
 - 离线答题、本地 pending queue、跨设备 revision 冲突、提交评分、错题复盘和历史恢复。
