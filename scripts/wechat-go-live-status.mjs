@@ -35,6 +35,7 @@ if (!apiOrigin.productionOrigin) {
 }
 for (const action of domainCandidate.nextActions) nextActions.push(action);
 nextActions.push('Run verify:wechat-go-live without --skip-health after the production HTTPS origin is bound.');
+const nextCommands = buildNextCommands({ apiBaseUrl, appId: args.appId ?? process.env.WECHAT_APP_ID, disclosureFile });
 
 const report = {
   ready: githubEnvironment.missingSecrets.length === 0
@@ -48,6 +49,7 @@ const report = {
   domainCandidate,
   appId: { valid: appId },
   nextActions: [...new Set(nextActions)],
+  nextCommands,
 };
 
 if (args.json) {
@@ -159,6 +161,31 @@ function buildDomainNextActions(checks) {
   return actions;
 }
 
+function buildNextCommands({ apiBaseUrl, appId, disclosureFile }) {
+  const origin = isProductionEdgeOneApiBaseUrl(apiBaseUrl) && !isEdgeOnePreviewHost(apiBaseUrl)
+    ? apiBaseUrl.trim()
+    : '<production-api-origin>';
+  const miniProgramAppId = /^wx[0-9a-f]{16}$/i.test(String(appId ?? '').trim())
+    ? String(appId).trim()
+    : '<wechat-app-id>';
+  return [
+    `npm run wechat:domain-candidate -- --url ${origin} --json`,
+    `npm run wechat:configure-production-secrets -- --api-base-url ${origin} --private-key-path <wechat-upload-private-key.pem>`,
+    [
+      'npm run wechat:create-production-disclosure --',
+      '--product-version <product-version>',
+      '--privacy-policy-version <privacy-policy-version>',
+      '--service-operator <service-operator>',
+      '--model-disclosure <model-disclosure>',
+      '--generative-ai-registration <generative-ai-registration>',
+      '--mini-program-filing <mini-program-filing>',
+    ].join(' '),
+    `node scripts/verify-wechat-disclosure.mjs --file ${disclosureFile} --mode production --dist apps/wechat/dist`,
+    `npm run wechat:go-live-status -- --app-id ${miniProgramAppId} --api-base-url ${origin} --json`,
+    `npm run verify:wechat-go-live -- --app-id ${miniProgramAppId} --api-base-url ${origin}`,
+  ];
+}
+
 function isPlaceholder(value) {
   return typeof value !== 'string'
     || value.trim().length === 0
@@ -182,6 +209,8 @@ function renderText(report) {
     `Domain candidate: ${report.domainCandidate.ready ? 'ready' : 'not ready'}`,
     'Next actions:',
     ...report.nextActions.map((action) => `- ${action}`),
+    'Next commands:',
+    ...report.nextCommands.map((command) => `- ${command}`),
     '',
   ].join('\n');
 }

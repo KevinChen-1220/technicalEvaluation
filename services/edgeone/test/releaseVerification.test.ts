@@ -545,6 +545,11 @@ describe('EdgeOne production release gates', () => {
       'Create docs/wechat/release-disclosure.production.json with real non-placeholder production disclosure.',
       'Run verify:wechat-go-live without --skip-health after the production HTTPS origin is bound.',
     ]));
+    expect(report.nextCommands).toEqual(expect.arrayContaining([
+      'npm run wechat:domain-candidate -- --url https://api.skillscope.cn --json',
+      'npm run wechat:configure-production-secrets -- --api-base-url https://api.skillscope.cn --private-key-path <wechat-upload-private-key.pem>',
+      'npm run wechat:go-live-status -- --app-id wx31dd3d7448aac8e3 --api-base-url https://api.skillscope.cn --json',
+    ]));
     expect(`${result.stdout}${result.stderr}`).not.toContain('token-that-must-never-be-printed');
     expect(`${result.stdout}${result.stderr}`).not.toContain('mock-secret-private-key');
     rmSync(temp, { recursive: true, force: true });
