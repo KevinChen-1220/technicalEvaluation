@@ -228,6 +228,76 @@ describe('EdgeOne production release gates', () => {
     }
   });
 
+  test('verifies go-live readiness from public inputs and GitHub environment secret names', () => {
+    const temp = mkdtempSync(join(tmpdir(), 'wechat-go-live-'));
+    const fakeGh = join(temp, process.platform === 'win32' ? 'gh.cmd' : 'gh');
+    if (process.platform === 'win32') {
+      writeFileSync(fakeGh, '@echo off\r\necho [{"name":"EDGEONE_API_TOKEN"},{"name":"EDGEONE_DEPLOYMENT_VERSION"},{"name":"EDGEONE_PROJECT_NAME"},{"name":"WECHAT_APP_ID"}]\r\nexit /b 0\r\n');
+    } else {
+      writeFileSync(fakeGh, '#!/bin/sh\necho \'[{"name":"EDGEONE_API_TOKEN"},{"name":"EDGEONE_DEPLOYMENT_VERSION"},{"name":"EDGEONE_PROJECT_NAME"},{"name":"WECHAT_APP_ID"}]\'\nexit 0\n');
+      chmodSync(fakeGh, 0o700);
+    }
+
+    const missing = runNode('scripts/verify-wechat-go-live.mjs', [
+      '--app-id',
+      'wx31dd3d7448aac8e3',
+      '--api-base-url',
+      'https://api.skillscope.cn',
+      '--github-env',
+      'wechat-production',
+      '--skip-health',
+    ], {
+      ...process.env,
+      GH_CLI_BIN: fakeGh,
+      EDGEONE_API_TOKEN: 'token-that-must-never-be-printed',
+    });
+
+    expect(missing.status).not.toBe(0);
+    expect(`${missing.stdout}${missing.stderr}`).toContain('TARO_APP_EDGEONE_API_BASE_URL');
+    expect(`${missing.stdout}${missing.stderr}`).toContain('WECHAT_PRIVATE_KEY_PEM');
+    expect(`${missing.stdout}${missing.stderr}`).not.toContain('token-that-must-never-be-printed');
+
+    const invalidUrl = runNode('scripts/verify-wechat-go-live.mjs', [
+      '--app-id',
+      'wx31dd3d7448aac8e3',
+      '--api-base-url',
+      'not-a-url',
+      '--github-env',
+      'wechat-production',
+      '--skip-health',
+    ], {
+      ...process.env,
+      GH_CLI_BIN: fakeGh,
+    });
+    expect(invalidUrl.status).not.toBe(0);
+    expect(`${invalidUrl.stdout}${invalidUrl.stderr}`).toContain('stable public HTTPS origin root');
+    expect(`${invalidUrl.stdout}${invalidUrl.stderr}`).not.toContain('ERR_INVALID_URL');
+
+    if (process.platform === 'win32') {
+      writeFileSync(fakeGh, '@echo off\r\necho [{"name":"EDGEONE_API_TOKEN"},{"name":"EDGEONE_DEPLOYMENT_VERSION"},{"name":"EDGEONE_PROJECT_NAME"},{"name":"TARO_APP_EDGEONE_API_BASE_URL"},{"name":"WECHAT_APP_ID"},{"name":"WECHAT_PRIVATE_KEY_PEM"}]\r\nexit /b 0\r\n');
+    } else {
+      writeFileSync(fakeGh, '#!/bin/sh\necho \'[{"name":"EDGEONE_API_TOKEN"},{"name":"EDGEONE_DEPLOYMENT_VERSION"},{"name":"EDGEONE_PROJECT_NAME"},{"name":"TARO_APP_EDGEONE_API_BASE_URL"},{"name":"WECHAT_APP_ID"},{"name":"WECHAT_PRIVATE_KEY_PEM"}]\'\nexit 0\n');
+    }
+    const ready = runNode('scripts/verify-wechat-go-live.mjs', [
+      '--app-id',
+      'wx31dd3d7448aac8e3',
+      '--api-base-url',
+      'https://api.skillscope.cn',
+      '--github-env',
+      'wechat-production',
+      '--skip-health',
+    ], {
+      ...process.env,
+      GH_CLI_BIN: fakeGh,
+      EDGEONE_API_TOKEN: 'token-that-must-never-be-printed',
+    });
+
+    expect(ready.status).toBe(0);
+    expect(ready.stdout).toContain('WeChat go-live readiness passed');
+    expect(`${ready.stdout}${ready.stderr}`).not.toContain('token-that-must-never-be-printed');
+    rmSync(temp, { recursive: true, force: true });
+  });
+
   test('verifies the EdgeOne artifact, 120-second budget, fixed 50-question contract, and public HTTPS origin', () => {
     const verifier = readFileSync(join(repoRoot, 'scripts', 'verify-edgeone-release.mjs'), 'utf8');
     const edgeoneConfig = readFileSync(join(repoRoot, 'services', 'edgeone', 'edgeone.json'), 'utf8');

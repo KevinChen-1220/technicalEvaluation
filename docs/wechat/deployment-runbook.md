@@ -47,6 +47,14 @@ TARO_APP_RELEASE_DISCLOSURE_FILE=docs/wechat/release-disclosure.production.json
 
 在微信公众平台的开发管理 -> 开发设置中，把完全相同的 production HTTPS origin 加入 `request合法域名`。不允许填写 `/api` 子路径，客户端会自行拼接 API 路径。
 
+完成 GitHub environment secrets、EdgeOne runtime environment 和微信 `request合法域名` 后，运行 go-live readiness：
+
+```sh
+npm run verify:wechat-go-live -- --app-id wx31dd3d7448aac8e3 --api-base-url <production-https-origin>
+```
+
+这个命令只读取公开 AppID、公开 HTTPS origin、GitHub environment 中的 secret 名称和 `/api/health` 的公开响应；它不会读取或打印 GitHub secret 值。尚未绑定稳定域名时可临时加 `--skip-health` 查看 GitHub 环境缺口，但正式上传微信草稿前必须移除该参数并通过 health 检查。
+
 ## 4. preview 与 production smoke
 
 在 preview deployment 完成一次完整 smoke；将相同证据在 production deployment 复测后，才能关闭 `.github/ISSUE_TEMPLATE/wechat_production_smoke.yml` 创建的 issue。

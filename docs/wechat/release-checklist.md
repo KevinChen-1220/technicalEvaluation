@@ -51,6 +51,7 @@ npm ci
 npm run verify:github-workflows
 npm run verify:edgeone-release -- --check-only
 npm run edgeone:deploy -- --dry-run
+npm run verify:wechat-go-live -- --app-id wx31dd3d7448aac8e3 --api-base-url <production-https-origin>
 npm run edgeone:deploy -- --production --verify-runtime-env --verify-health
 npm run verify:wechat-release
 npm run verify:wechat-release:formal -- --disclosure-file docs/wechat/release-disclosure.production.json

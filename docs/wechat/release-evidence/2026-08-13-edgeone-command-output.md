@@ -3,7 +3,7 @@
 Profile: development/local release candidate
 Generated at: 2026-08-13T17:36:21+08:00
 Branch: `main`
-Head: `f98264ac4fd75e42d43a99ec7e9934dc1df27e02`
+Head: `3837092d5f0a681c9e3de01751914163fb9f1862`
 
 ## Review Gates
 
@@ -118,8 +118,20 @@ This confirms that runtime environment variables still need to be entered in the
 Status: exit 0
 
 ```text
-gh secret set EDGEONE_DEPLOYMENT_VERSION --env wechat-production --body f98264ac4fd75e42d43a99ec7e9934dc1df27e02
+gh secret set EDGEONE_DEPLOYMENT_VERSION --env wechat-production --body 3837092d5f0a681c9e3de01751914163fb9f1862
 ```
+
+### npm run verify:wechat-go-live -- --app-id wx31dd3d7448aac8e3 --api-base-url https://api.skillscope.cn --skip-health
+
+Status: exit 1, expected until the missing external credentials and stable HTTPS domain are configured.
+
+```text
+health check skipped; run again without --skip-health before WeChat upload
+GitHub environment wechat-production is missing TARO_APP_EDGEONE_API_BASE_URL
+GitHub environment wechat-production is missing WECHAT_PRIVATE_KEY_PEM
+```
+
+This confirms the new go-live readiness gate can inspect the protected GitHub environment by secret name without exposing secret values. The command must pass without `--skip-health` before uploading a WeChat draft.
 
 ### Typecheck
 
