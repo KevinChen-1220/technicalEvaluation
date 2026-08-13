@@ -1,15 +1,15 @@
 # 2026-08-13 EdgeOne 微信小程序发布候选验证输出
 
 Profile: development/local release candidate
-Generated at: 2026-08-13T00:00:00+08:00
+Generated at: 2026-08-13T17:36:21+08:00
 Branch: `main`
-Head: pending follow-up commit after `022969b`
+Head: `f98264ac4fd75e42d43a99ec7e9934dc1df27e02`
 
 ## Review Gates
 
 - Task 7 scoped release-engineering review: PASS after fixes `872916c` and `30037e1`.
 - Task 8 whole-branch review: PASS after fixes through `e6aa8df`.
-- Real EdgeOne deployment now builds and publishes Node Functions. Remaining production evidence is external: runtime secret configuration, stable WeChat request domain, real-device smoke, WeChat review, and final publish.
+- Real EdgeOne deployment now builds and publishes Node Functions, including the five-batch 10-question generation flow. Remaining production evidence is external: runtime secret configuration, stable WeChat request domain, real-device smoke, WeChat review, and final publish.
 
 ## Commands
 
@@ -19,7 +19,7 @@ Status: exit 0
 
 ```text
 Test Suites: 52 passed, 52 total
-Tests:       434 passed, 434 total
+Tests:       435 passed, 435 total
 Snapshots:   0 total
 ```
 
@@ -80,8 +80,9 @@ Deployment:
 
 ```text
 Project ID: makers-xt0lfsjyivza
-Deployment ID: dp59qe1zt4ff
-Console URL: https://console.cloud.tencent.com/edgeone/pages/project/makers-xt0lfsjyivza/deployment/dp59qe1zt4ff
+Deployment ID: dp87jp31mcyz
+Deploy URL: https://skillscope-wechat-7ii3kn8n.edgeone.cool?eo_token=05908f63e11ced36c7e5940eb62a4228&eo_time=1786613699
+Console URL: https://console.cloud.tencent.com/edgeone/pages/project/makers-xt0lfsjyivza/deployment/dp87jp31mcyz
 ```
 
 Remote health check:
@@ -92,6 +93,15 @@ Remote health check:
 
 The false configuration flags are expected before production runtime environment variables are configured in EdgeOne.
 The EdgeOne CLI deployment log still reported `No environment variables found`; configure production runtime variables in the EdgeOne console before enabling generation.
+The same default `edgeone.cool` origin without the deployment token returned HTTP 401, so a stable public HTTPS origin must still be bound before it can be used as the WeChat request legal domain.
+
+### GitHub environment update
+
+Status: exit 0
+
+```text
+gh secret set EDGEONE_DEPLOYMENT_VERSION --env wechat-production --body f98264ac4fd75e42d43a99ec7e9934dc1df27e02
+```
 
 ### Typecheck
 
